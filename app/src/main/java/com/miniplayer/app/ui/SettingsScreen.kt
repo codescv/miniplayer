@@ -20,8 +20,8 @@ import com.miniplayer.app.BuildConfig
 import com.miniplayer.app.ui.theme.tnum
 
 /**
- * Minimalist 5-Row Settings Screen (`DESIGN.md` §4.4) organized into 3 clean groups:
- * 1. `本地媒体库与无线连接` (PC LAN Web Studio entry, launch incremental rescan, subfolder `.nomedia`)
+ * Minimalist Settings Screen (`DESIGN.md` §4.4) organized into 3 clean groups:
+ * 1. `本地媒体库与无线连接` (PC LAN Web Studio entry, launch incremental rescan)
  * 2. `本地缓存` (local cover & waveform cache cleanup)
  * 3. `关于与自动更新` (GitHub Release checker, changelog, SHA-256 + signature verified APK updater)
  */
@@ -86,17 +86,6 @@ fun SettingsScreen(
                     checked = settings.autoRescanOnLaunch,
                     onCheckedChange = { enabled ->
                         viewModel.updateAppSettings { it.copy(autoRescanOnLaunch = enabled) }
-                    },
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp))
-
-                // Row 3: 遵循子目录 .nomedia 跳过扫描
-                SettingsSwitchRow(
-                    title = "遵循子目录 .nomedia 跳过扫描",
-                    subtitle = "显式添加的根目录始终正常扫描；开启后跳过含 .nomedia 的下级子目录",
-                    checked = settings.respectSubfolderNomedia,
-                    onCheckedChange = { enabled ->
-                        viewModel.updateAppSettings { it.copy(respectSubfolderNomedia = enabled) }
                     },
                 )
             }

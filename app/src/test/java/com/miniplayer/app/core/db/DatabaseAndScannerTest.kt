@@ -103,6 +103,7 @@ class DatabaseAndScannerTest {
                 appendLine("$stmt;")
             }
             appendLine("INSERT INTO saf_roots (root_id, tree_uri, tree_doc_id, display_name, is_writable, mount_state, last_scan_at) VALUES (1, 'content://saf/1', 'primary:Music', 'Music', 1, 'MOUNTED', 100);")
+            appendLine("INSERT INTO folder_rules (root_id, rel_path, folder_uri, is_practice_folder, exclude_from_grouping) VALUES (1, 'Archive', 'content://saf/1/doc/archive', 0, 1);")
             appendLine("INSERT INTO media_items (item_id, document_uri, root_id, parent_rel_path, file_name, mime_type, is_video, size_bytes, last_modified, duration_ms, parsed_title, fingerprint_key) VALUES (10, 'content://saf/1/doc/a', 1, 'Rock', '01 - Track.mp3', 'audio/mpeg', 0, 1024, 200, 180000, 'Track', '01 - track.mp3|1024|180000');")
             appendLine("INSERT INTO media_metadata_overrides (item_id, title, updated_at, synced_to_file) VALUES (10, 'Custom Title', 300, 1);")
             appendLine("INSERT INTO media_item_artists (item_id, artist_norm, artist_display, ord) VALUES (10, 'ac/dc', 'AC/DC', 0);")
@@ -315,9 +316,10 @@ class DatabaseAndScannerTest {
         assertEquals(MountState.PERMISSION_REVOKED, repo.safRoots.value.single().mountState)
         assertEquals(2, repo.allMediaItems.value.size)
 
-        // 4. Remount OTG, move `Jam.mp3` into `Moved/` subfolder, and enable `respectSubfolderNomedia = true`
+        // 4. Remount OTG, move `Jam.mp3` into `Moved/` subfolder; `.nomedia` in both root and `HiddenSub/.nomedia` MUST ALWAYS be ignored!
         ds.volumeProbe = SafVolumeProbe.Mounted(isWritable = true, rootDocUri = "$otgTreeUri/document/$docRoot")
         repo.updateSettings { it.copy(respectSubfolderNomedia = true) }
+        scanner.setFolderNomediaRule(rootId, "HiddenSub", "$otgTreeUri/document/$docRoot/HiddenSub", respectNomedia = true)
 
         ds.childrenByDirDocId[docRoot] = mutableListOf(
             SafChildEntry("$docRoot/.nomedia", "", ".nomedia", "application/octet-stream", 0L, 100L),
@@ -332,10 +334,12 @@ class DatabaseAndScannerTest {
         scanner.rescanRoot(rootId, incremental = true)
 
         assertEquals(MountState.MOUNTED, repo.safRoots.value.single().mountState)
-        // `HiddenSub` was skipped due to `.nomedia`, while `Jam.mp3` migrated in-place to `Moved/Jam.mp3` keeping `jamItem.itemId`!
+        assertFalse(repo.resolveRespectNomediaForFolder(rootId, "HiddenSub"))
+        // Both `Moved/Jam.mp3` AND `HiddenSub/SecretLick.mp3` remain scanned because `.nomedia` is always ignored!
         val remaining = repo.allMediaItems.value
-        assertEquals(1, remaining.size)
-        val migratedJam = remaining.single()
+        assertEquals(2, remaining.size)
+        assertEquals(setOf("Jam.mp3", "SecretLick.mp3"), remaining.map { it.fileName }.toSet())
+        val migratedJam = remaining.first { it.fileName == "Jam.mp3" }
         assertEquals("Moved file must retain original itemId via fingerprint migration", jamItem.itemId, migratedJam.itemId)
         assertEquals("Moved", migratedJam.parentRelPath)
         assertEquals(1, repo.getBookmarks(migratedJam.itemId).size)
@@ -884,5 +888,126 @@ class DatabaseAndScannerTest {
         assertEquals(setOf("Casual Album", "Guitar Etudes", "Practice Backing Vol 1"), repo.albums.value.map { it.title }.toSet())
         assertEquals(setOf("Casual Artist", "Practice Artist", "Tutor Artist"), repo.artists.value.map { it.displayName }.toSet())
         assertEquals(setOf("DrillVideo.mp4", "Etude01.mp4", "LiveConcert.mp4"), repo.videoItems.value.map { it.fileName }.toSet())
+    }
+
+    @Test
+    fun `exclude folder from auto grouping supports ancestor inheritance child override and independent practice flag preservation`() = runBlocking {
+        val backend = InMemoryMediaStoreBackend()
+        val repo = MediaRepository(backend = backend, ioDispatcher = Dispatchers.Unconfined)
+        val ds = FakeSafTreeDataSource()
+        val scanner = SafFolderScanner(repository = repo, dataSource = ds, ioDispatcher = Dispatchers.Unconfined)
+
+        val mainTreeUri = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3AMain"
+        val voiceMemosTreeUri = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3AVoiceMemos"
+
+        // Root 1 (`Main`):
+        // - `CasualHit.mp3` + `MusicVideo.mp4` at root
+        // - `Archive/RawMemo.mp3` + `Archive/RawClip.mp4`
+        // - `Archive/Curated/PolishedDemo.mp3`
+        // - `Practice/SubTakes/Take01.mp3`
+        ds.childrenByDirDocId["primary:Main"] = mutableListOf(
+            SafChildEntry("primary:Main/CasualHit.mp3", "", "CasualHit.mp3", "audio/mpeg", 4_000_000L, 100L),
+            SafChildEntry("primary:Main/MusicVideo.mp4", "", "MusicVideo.mp4", "video/mp4", 18_000_000L, 100L),
+            SafChildEntry("primary:Main/Archive", "", "Archive", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+            SafChildEntry("primary:Main/Practice", "", "Practice", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+        )
+        ds.childrenByDirDocId["primary:Main/Archive"] = mutableListOf(
+            SafChildEntry("primary:Main/Archive/RawMemo.mp3", "", "RawMemo.mp3", "audio/mpeg", 2_000_000L, 100L),
+            SafChildEntry("primary:Main/Archive/RawClip.mp4", "", "RawClip.mp4", "video/mp4", 9_000_000L, 100L),
+            SafChildEntry("primary:Main/Archive/Curated", "", "Curated", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+        )
+        ds.childrenByDirDocId["primary:Main/Archive/Curated"] = mutableListOf(
+            SafChildEntry("primary:Main/Archive/Curated/PolishedDemo.mp3", "", "PolishedDemo.mp3", "audio/mpeg", 3_500_000L, 100L),
+        )
+        ds.childrenByDirDocId["primary:Main/Practice"] = mutableListOf(
+            SafChildEntry("primary:Main/Practice/SubTakes", "", "SubTakes", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+        )
+        ds.childrenByDirDocId["primary:Main/Practice/SubTakes"] = mutableListOf(
+            SafChildEntry("primary:Main/Practice/SubTakes/Take01.mp3", "", "Take01.mp3", "audio/mpeg", 2_500_000L, 100L),
+        )
+
+        ds.probesByUri["primary:Main/CasualHit.mp3"] = ExtractedMediaProbe(200_000L, rawTitle = "Casual Hit", rawArtist = "Pop Star", rawAlbum = "Pop Album")
+        ds.probesByUri["primary:Main/MusicVideo.mp4"] = ExtractedMediaProbe(240_000L, width = 1920, height = 1080)
+        ds.probesByUri["primary:Main/Archive/RawMemo.mp3"] = ExtractedMediaProbe(60_000L, rawTitle = "Raw Memo", rawArtist = "Memo Speaker", rawAlbum = "Memos")
+        ds.probesByUri["primary:Main/Archive/RawClip.mp4"] = ExtractedMediaProbe(45_000L, width = 1280, height = 720)
+        ds.probesByUri["primary:Main/Archive/Curated/PolishedDemo.mp3"] = ExtractedMediaProbe(180_000L, rawTitle = "Polished Demo", rawArtist = "Demo Band", rawAlbum = "Demos")
+        ds.probesByUri["primary:Main/Practice/SubTakes/Take01.mp3"] = ExtractedMediaProbe(120_000L, rawTitle = "Take 01", rawArtist = "Session Player", rawAlbum = "Session Takes")
+
+        // Root 2 (`VoiceMemos`): dedicated root to mark as excluded from auto-grouping
+        ds.childrenByDirDocId["primary:VoiceMemos"] = mutableListOf(
+            SafChildEntry("primary:VoiceMemos/Idea01.mp3", "", "Idea01.mp3", "audio/mpeg", 1_000_000L, 100L),
+        )
+        ds.probesByUri["primary:VoiceMemos/Idea01.mp3"] = ExtractedMediaProbe(30_000L, rawTitle = "Idea 01", rawArtist = "Voice Note", rawAlbum = "Voice Ideas")
+
+        val mainRootId = (scanner.addSafRootFromGrant(
+            SafGrantInfo(mainTreeUri, FakeSafTreeDataSource.AUTHORITY, "primary:Main", "Main", isWritable = true),
+        ) as AddRootResult.Added).root.rootId
+        val memosRootId = (scanner.addSafRootFromGrant(
+            SafGrantInfo(voiceMemosTreeUri, FakeSafTreeDataSource.AUTHORITY, "primary:VoiceMemos", "VoiceMemos", isWritable = true),
+        ) as AddRootResult.Added).root.rootId
+
+        // Attach playlist & bookmark to an item that will be excluded
+        val rawMemo = repo.allMediaItems.value.first { it.fileName == "RawMemo.mp3" }
+        val playlistId = repo.createPlaylist("Ideas", isPracticePlaylist = false)
+        repo.addItemsToPlaylist(playlistId, listOf(rawMemo.itemId))
+        repo.saveBookmark(rawMemo.itemId, "Riff Seed", 5_000L, 15_000L, null, null)
+
+        // 1. Mark `Main/Archive` and root `VoiceMemos` as `isExcludedFromAutoGrouping = true`
+        scanner.setFolderExcludeFromGroupingRule(mainRootId, "Archive", "$mainTreeUri/document/primary:Main/Archive", isExcludedFromAutoGrouping = true)
+        scanner.setFolderExcludeFromGroupingRule(memosRootId, "", voiceMemosTreeUri, isExcludedFromAutoGrouping = true)
+
+        assertTrue(repo.isExcludedFromAutoGrouping(mainRootId, "Archive"))
+        assertTrue("Descendant Archive/Curated must inherit isExcludedFromAutoGrouping", repo.isExcludedFromAutoGrouping(mainRootId, "Archive/Curated"))
+        assertTrue(repo.safRoots.value.first { it.rootId == memosRootId }.isExcludedFromAutoGrouping)
+        assertFalse(repo.isPracticeFolder(mainRootId, "Archive"))
+        assertFalse(repo.isPracticeFolder(memosRootId, ""))
+
+        // Excluded audio & video items MUST NOT appear in albums, artists, or videoItems
+        assertEquals(setOf("Pop Album", "Session Takes"), repo.albums.value.map { it.title }.toSet())
+        assertTrue(repo.getAlbumTracks("memos|memo speaker").isEmpty())
+        assertTrue(repo.getAlbumTracks("demos|demo band").isEmpty())
+        assertTrue(repo.getAlbumTracks("voice ideas|voice note").isEmpty())
+        assertEquals(setOf("Pop Star", "Session Player"), repo.artists.value.map { it.displayName }.toSet())
+        assertEquals(null, repo.getArtistDetail("memo speaker"))
+        assertEquals(listOf("MusicVideo.mp4"), repo.videoItems.value.map { it.fileName })
+
+        // Yet folder browse, playlists, and bookmarks still retain them with casual flags (`isInPracticeFolder = false`)
+        val archiveBrowse = repo.browseFolder(mainRootId, "Archive", flat = false)!!
+        assertTrue(archiveBrowse.isCurrentExcludedFromAutoGrouping)
+        assertFalse(archiveBrowse.isCurrentPracticeFolder)
+        assertTrue(archiveBrowse.subfolders.single { it.name == "Curated" }.isExcludedFromAutoGrouping)
+        val refreshedRawMemo = archiveBrowse.mediaItems.first { it.fileName == "RawMemo.mp3" }
+        assertTrue(refreshedRawMemo.isExcludedFromAutoGrouping)
+        assertFalse(refreshedRawMemo.isInPracticeFolder)
+        assertEquals(listOf(rawMemo.itemId), repo.getPlaylistDetail(playlistId)!!.items.map { it.itemId })
+        assertEquals(listOf(rawMemo.itemId), repo.bookmarkedTracks.value.map { it.mediaItem.itemId })
+
+        // 2. Child override: explicitly set `Archive/Curated` to `isExcludedFromAutoGrouping = false`
+        scanner.setFolderExcludeFromGroupingRule(
+            mainRootId,
+            "Archive/Curated",
+            "$mainTreeUri/document/primary:Main/Archive/Curated",
+            isExcludedFromAutoGrouping = false,
+        )
+        assertFalse(repo.isExcludedFromAutoGrouping(mainRootId, "Archive/Curated"))
+        assertTrue(repo.isExcludedFromAutoGrouping(mainRootId, "Archive"))
+        assertEquals(setOf("Demos", "Pop Album", "Session Takes"), repo.albums.value.map { it.title }.toSet())
+        assertEquals(setOf("Demo Band", "Pop Star", "Session Player"), repo.artists.value.map { it.displayName }.toSet())
+
+        // 3. Independent flag preservation across parent/child:
+        // Parent `Practice` has `isPracticeFolder = true` (and `isExcludedFromAutoGrouping = false`).
+        // Toggling `isExcludedFromAutoGrouping = true` on child `Practice/SubTakes` MUST preserve inherited `isPracticeFolder = true`!
+        scanner.setFolderPracticeRule(mainRootId, "Practice", "$mainTreeUri/document/primary:Main/Practice", isPracticeFolder = true)
+        scanner.setFolderExcludeFromGroupingRule(
+            mainRootId,
+            "Practice/SubTakes",
+            "$mainTreeUri/document/primary:Main/Practice/SubTakes",
+            isExcludedFromAutoGrouping = true,
+        )
+        assertTrue("Child must preserve inherited isPracticeFolder = true", repo.isPracticeFolder(mainRootId, "Practice/SubTakes"))
+        assertTrue("Child must have isExcludedFromAutoGrouping = true", repo.isExcludedFromAutoGrouping(mainRootId, "Practice/SubTakes"))
+        val takeItem = repo.allMediaItems.value.first { it.fileName == "Take01.mp3" }
+        assertTrue(takeItem.isInPracticeFolder)
+        assertTrue(takeItem.isExcludedFromAutoGrouping)
     }
 }

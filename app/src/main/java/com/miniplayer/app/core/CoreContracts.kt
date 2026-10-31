@@ -25,6 +25,7 @@ interface MediaLibraryContract {
     suspend fun getArtistDetail(artistNorm: String): ArtistDetail?
     suspend fun getPlaylistDetail(playlistId: Long): PlaylistDetail?
     suspend fun isPracticeFolder(rootId: Long, relPath: String): Boolean
+    suspend fun isExcludedFromAutoGrouping(rootId: Long, relPath: String): Boolean
 
     suspend fun createPlaylist(name: String, isPracticePlaylist: Boolean): Long
     suspend fun renamePlaylist(playlistId: Long, newName: String)
@@ -65,6 +66,12 @@ interface FolderScannerContract {
         relPath: String,
         folderUri: String,
         isPracticeFolder: Boolean,
+    )
+    suspend fun setFolderExcludeFromGroupingRule(
+        rootId: Long,
+        relPath: String,
+        folderUri: String,
+        isExcludedFromAutoGrouping: Boolean,
     )
     suspend fun setFolderNomediaRule(
         rootId: Long,
@@ -181,6 +188,7 @@ private class FallbackStubCore(private val context: Context) : MiniPlayerCorePro
         override suspend fun getArtistDetail(artistNorm: String): ArtistDetail? = null
         override suspend fun getPlaylistDetail(playlistId: Long): PlaylistDetail? = null
         override suspend fun isPracticeFolder(rootId: Long, relPath: String): Boolean = false
+        override suspend fun isExcludedFromAutoGrouping(rootId: Long, relPath: String): Boolean = false
         override suspend fun createPlaylist(name: String, isPracticePlaylist: Boolean): Long = 1L
         override suspend fun renamePlaylist(playlistId: Long, newName: String) {}
         override suspend fun setPlaylistPracticeMode(playlistId: Long, isPracticePlaylist: Boolean) {}
@@ -220,6 +228,12 @@ private class FallbackStubCore(private val context: Context) : MiniPlayerCorePro
             relPath: String,
             folderUri: String,
             isPracticeFolder: Boolean,
+        ) {}
+        override suspend fun setFolderExcludeFromGroupingRule(
+            rootId: Long,
+            relPath: String,
+            folderUri: String,
+            isExcludedFromAutoGrouping: Boolean,
         ) {}
         override suspend fun setFolderNomediaRule(
             rootId: Long,

@@ -218,6 +218,17 @@ fun LibraryScreen(
                                     isPractice = !root.isPracticeFolder,
                                 )
                             },
+                            onToggleExcludeFromGrouping = { root ->
+                                viewModel.setFolderExcludeFromGroupingFlag(
+                                    rootId = root.rootId,
+                                    relPath = "",
+                                    folderUri = root.treeUri,
+                                    isExcluded = !root.isExcludedFromAutoGrouping,
+                                )
+                            },
+                            onAddAllRootToPlaylist = { root ->
+                                viewModel.openAddFolderToPlaylistPicker(root.rootId, "")
+                            },
                             onBatchAutoMatchRoot = { root ->
                                 val rootItems = viewModel.allMediaItems.value.filter { it.rootId == root.rootId }
                                 viewModel.startBatchAutoCompletion(rootItems)
@@ -227,13 +238,6 @@ fun LibraryScreen(
                                 viewModel.openMetadataEditor(rootItems)
                             },
                             onRescanRoot = { root -> viewModel.rescanRoot(root.rootId) },
-                            onToggleNomedia = { root ->
-                                val next = when (root.respectNomedia) {
-                                    true -> false
-                                    else -> true
-                                }
-                                viewModel.setFolderNomediaOverride(root.rootId, "", root.treeUri, next)
-                            },
                             onRemoveRoot = { root -> viewModel.removeSafRoot(root.rootId) },
                         )
                     } else {
@@ -245,6 +249,9 @@ fun LibraryScreen(
                             currentPlayingId = playback.currentItem?.itemId,
                             onNavigateUp = { viewModel.navigateFolderUp() },
                             onBreadcrumbClick = { relPath -> viewModel.openFolder(browse.root.rootId, relPath) },
+                            onAddAllCurrentFolderToPlaylist = {
+                                viewModel.openAddFolderToPlaylistPicker(browse.root.rootId, browse.currentRelPath)
+                            },
                             onToggleMode = { viewModel.toggleFolderDisplayMode() },
                             onOpenSubfolder = { sub -> viewModel.openFolder(sub.rootId, sub.relPath) },
                             onToggleSubfolderPractice = { sub ->
@@ -254,6 +261,17 @@ fun LibraryScreen(
                                     folderUri = sub.folderUri,
                                     isPractice = !sub.isPracticeFolder,
                                 )
+                            },
+                            onToggleSubfolderExcludeFromGrouping = { sub ->
+                                viewModel.setFolderExcludeFromGroupingFlag(
+                                    rootId = sub.rootId,
+                                    relPath = sub.relPath,
+                                    folderUri = sub.folderUri,
+                                    isExcluded = !sub.isExcludedFromAutoGrouping,
+                                )
+                            },
+                            onAddAllSubfolderToPlaylist = { sub ->
+                                viewModel.openAddFolderToPlaylistPicker(sub.rootId, sub.relPath)
                             },
                             onBatchAutoMatchSubfolder = { sub ->
                                 val subItems = viewModel.allMediaItems.value.filter {
@@ -268,10 +286,6 @@ fun LibraryScreen(
                                         (it.parentRelPath == sub.relPath || it.parentRelPath.startsWith("${sub.relPath}/"))
                                 }
                                 viewModel.openMetadataEditor(subItems)
-                            },
-                            onToggleSubfolderNomedia = { sub ->
-                                val next = !(sub.respectNomedia ?: false)
-                                viewModel.setFolderNomediaOverride(sub.rootId, sub.relPath, sub.folderUri, next)
                             },
                             onPlayMediaItem = { sortedItems, idx ->
                                 val item = sortedItems[idx]
@@ -343,10 +357,11 @@ private fun FoldersRootList(
     onAddFolder: () -> Unit,
     onOpenRoot: (SafRoot) -> Unit,
     onTogglePractice: (SafRoot) -> Unit,
+    onToggleExcludeFromGrouping: (SafRoot) -> Unit,
+    onAddAllRootToPlaylist: (SafRoot) -> Unit,
     onBatchAutoMatchRoot: (SafRoot) -> Unit,
     onBatchEditRoot: (SafRoot) -> Unit,
     onRescanRoot: (SafRoot) -> Unit,
-    onToggleNomedia: (SafRoot) -> Unit,
     onRemoveRoot: (SafRoot) -> Unit,
 ) {
     if (roots.isEmpty()) {
@@ -444,6 +459,9 @@ private fun FoldersRootList(
                             if (root.isPracticeFolder) {
                                 PracticeBadgePill("练习")
                             }
+                            if (root.isExcludedFromAutoGrouping) {
+                                PracticeBadgePill("不自动归类")
+                            }
                             when (root.mountState) {
                                 MountState.OFFLINE_UNMOUNTED -> OfflineWarningPill("未挂载")
                                 MountState.PERMISSION_REVOKED -> OfflineWarningPill("需重新授权")
@@ -486,6 +504,24 @@ private fun FoldersRootList(
                                 },
                             )
                             DropdownMenuItem(
+                                text = {
+                                    Text(if (root.isExcludedFromAutoGrouping) "取消不自动归类" else "设为不自动归类")
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.FolderOff, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onToggleExcludeFromGrouping(root)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("全部添加到播放列表") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onAddAllRootToPlaylist(root)
+                                },
+                            )
+                            DropdownMenuItem(
                                 text = { Text("批量自动补全标签与封面") },
                                 leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
                                 onClick = {
@@ -507,17 +543,6 @@ private fun FoldersRootList(
                                 onClick = {
                                     menuExpanded = false
                                     onRescanRoot(root)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    val enabled = root.respectNomedia == true
-                                    Text(if (enabled) "✓ 遵循子目录 .nomedia 跳过" else "遵循子目录 .nomedia 跳过")
-                                },
-                                leadingIcon = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onToggleNomedia(root)
                                 },
                             )
                             HorizontalDivider()
@@ -575,12 +600,14 @@ private fun FolderBrowseView(
     currentPlayingId: Long?,
     onNavigateUp: () -> Unit,
     onBreadcrumbClick: (String) -> Unit,
+    onAddAllCurrentFolderToPlaylist: () -> Unit,
     onToggleMode: () -> Unit,
     onOpenSubfolder: (SubfolderEntry) -> Unit,
     onToggleSubfolderPractice: (SubfolderEntry) -> Unit,
+    onToggleSubfolderExcludeFromGrouping: (SubfolderEntry) -> Unit,
+    onAddAllSubfolderToPlaylist: (SubfolderEntry) -> Unit,
     onBatchAutoMatchSubfolder: (SubfolderEntry) -> Unit,
     onBatchEditSubfolder: (SubfolderEntry) -> Unit,
-    onToggleSubfolderNomedia: (SubfolderEntry) -> Unit,
     onPlayMediaItem: (List<MediaItem>, Int) -> Unit,
     onEditTrack: (MediaItem) -> Unit,
     onAddToPlaylist: (MediaItem) -> Unit,
@@ -643,6 +670,15 @@ private fun FolderBrowseView(
                         }
                     }
                     IconButton(
+                        onClick = onAddAllCurrentFolderToPlaylist,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
+                            contentDescription = "全部添加到播放列表",
+                        )
+                    }
+                    IconButton(
                         onClick = onToggleMode,
                         modifier = Modifier.size(48.dp),
                     ) {
@@ -682,6 +718,30 @@ private fun FolderBrowseView(
                                 text = "当前为练习文件夹：点播任意曲目/视频将自动展开练习工作台",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+                    }
+                } else if (browse.isCurrentExcludedFromAutoGrouping) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.FolderOff,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                text = "当前文件夹已开启「不自动归类」：此目录下的文件不会显示在专辑、歌手、视频中",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
                             )
                         }
                     }
@@ -729,8 +789,8 @@ private fun FolderBrowseView(
                             if (sub.isPracticeFolder) {
                                 PracticeBadgePill("练习")
                             }
-                            if (sub.hasNomedia) {
-                                OfflineWarningPill(".nomedia")
+                            if (sub.isExcludedFromAutoGrouping) {
+                                PracticeBadgePill("不自动归类")
                             }
                         }
                         Text(
@@ -761,6 +821,24 @@ private fun FolderBrowseView(
                                 },
                             )
                             DropdownMenuItem(
+                                text = {
+                                    Text(if (sub.isExcludedFromAutoGrouping) "取消不自动归类" else "设为不自动归类")
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.FolderOff, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    onToggleSubfolderExcludeFromGrouping(sub)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("全部添加到播放列表") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    onAddAllSubfolderToPlaylist(sub)
+                                },
+                            )
+                            DropdownMenuItem(
                                 text = { Text("批量自动补全标签与封面") },
                                 leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
                                 onClick = {
@@ -774,17 +852,6 @@ private fun FolderBrowseView(
                                 onClick = {
                                     menuOpen = false
                                     onBatchEditSubfolder(sub)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    val active = sub.respectNomedia == true
-                                    Text(if (active) "✓ 遵循 .nomedia 跳过" else "遵循 .nomedia 跳过")
-                                },
-                                leadingIcon = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
-                                onClick = {
-                                    menuOpen = false
-                                    onToggleSubfolderNomedia(sub)
                                 },
                             )
                         }
@@ -859,7 +926,7 @@ private fun AlbumsGridContent(
                 val maxByPair = HashMap<String, Long>()
                 val maxByTitle = HashMap<String, Long>()
                 for (item in allMediaItems) {
-                    if (item.isVideo || item.isInPracticeFolder) continue
+                    if (item.isVideo || item.isInPracticeFolder || item.isExcludedFromAutoGrouping) continue
                     val albumName = item.album?.trim()?.takeIf { it.isNotEmpty() } ?: continue
                     val artistName = (item.albumArtist?.takeIf { it.isNotBlank() } ?: item.artist).trim()
                     val pairKey = "${albumName.lowercase()}|${artistName.lowercase()}"

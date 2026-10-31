@@ -19,6 +19,7 @@ data class SafRoot(
     val mountState: MountState = MountState.MOUNTED,
     val itemCount: Int = 0,
     val isPracticeFolder: Boolean = false,
+    val isExcludedFromAutoGrouping: Boolean = false,
     val respectNomedia: Boolean? = null,
     val lastScanAt: Long = 0L,
 )
@@ -28,6 +29,7 @@ data class FolderRule(
     val rootId: Long,
     val relPath: String,
     val isPracticeFolder: Boolean,
+    val isExcludedFromAutoGrouping: Boolean = false,
     val respectNomedia: Boolean? = null,
 )
 
@@ -38,6 +40,7 @@ data class SubfolderEntry(
     val name: String,
     val itemCount: Int,
     val isPracticeFolder: Boolean,
+    val isExcludedFromAutoGrouping: Boolean = false,
     val hasNomedia: Boolean = false,
     val respectNomedia: Boolean? = null,
 )
@@ -49,6 +52,7 @@ data class FolderBrowseState(
     val subfolders: List<SubfolderEntry>,
     val mediaItems: List<MediaItem>,
     val isCurrentPracticeFolder: Boolean,
+    val isCurrentExcludedFromAutoGrouping: Boolean = false,
 )
 
 sealed class AddRootResult {
@@ -89,6 +93,7 @@ data class MediaItem(
     val isBackingTrack: Boolean = false,
     val isRootWritable: Boolean = false,
     val isInPracticeFolder: Boolean = false,
+    val isExcludedFromAutoGrouping: Boolean = false,
     val lastPositionMs: Long = 0L,
     val bookmarkCount: Int = 0,
     val hasPracticeRecord: Boolean = false,

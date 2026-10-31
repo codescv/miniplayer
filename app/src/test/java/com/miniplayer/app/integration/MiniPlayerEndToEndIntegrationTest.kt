@@ -930,6 +930,124 @@ class MiniPlayerEndToEndIntegrationTest {
     }
 
     // -----------------------------------------------------------------------------------------
+    // 6. Exclude Folder from Auto-Grouping + Always Ignore .nomedia + Casual vs Practice Context
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun excludeFromAutoGroupingAndAlwaysIgnoreNomedia_endToEndAcrossScannerLanAndPlayer() = runBlocking {
+        val env = buildIntegratedEnvironment(
+            durationOverrides = mapOf(
+                "pop_single.mp3" to 210_000L,
+                "chapter_01.mp3" to 600_000L,
+                "ost_theme.mp3" to 180_000L,
+            ),
+        )
+
+        // Create directory hierarchy with `.nomedia` markers at root and subfolder (must ALWAYS be ignored!)
+        File(mediaRootDir, ".nomedia").writeBytes(ByteArray(0))
+        val casualDir = File(mediaRootDir, "Casual").apply { mkdirs() }
+        val sciFiDir = File(mediaRootDir, "Audiobooks/SciFi").apply { mkdirs() }
+        File(sciFiDir, ".nomedia").writeBytes(ByteArray(0))
+        val ostDir = File(mediaRootDir, "Audiobooks/OST").apply { mkdirs() }
+
+        writeSyntheticMp3(File(casualDir, "pop_single.mp3"), frameCount = 30)
+        writeSyntheticMp3(File(sciFiDir, "chapter_01.mp3"), frameCount = 40)
+        File(sciFiDir, "lecture_clip.mp4").writeBytes(ByteArray(4096) { (it and 0xFF).toByte() })
+        writeSyntheticMp3(File(ostDir, "ost_theme.mp3"), frameCount = 25)
+
+        val addRes = env.scanner.addSafRootFromGrant(env.rootGrant) as AddRootResult.Added
+        val rootId = addRes.root.rootId
+
+        // 1. `.nomedia` is always ignored -> all 4 media files are scanned
+        assertEquals(4, env.repository.allMediaItems.value.size)
+        assertEquals(1, env.repository.videoItems.value.size)
+        assertEquals(3, env.repository.albums.value.sumOf { it.trackCount })
+
+        val lanServer = LanStudioServer(
+            config = LanServerConfig(port = 0, bindAddress = "127.0.0.1"),
+            core = env.coreProvider,
+            storage = LocalLanStorageGateway(mapOf(rootId to mediaRootDir)),
+        )
+        lanServer.start()
+        try {
+            val lanBase = "http://127.0.0.1:${lanServer.boundPort}"
+
+            // 2. Mark `Audiobooks` as `不自动归类` via LAN `/api/folders/rule` -> `SciFi` & `OST` inherit exclusion
+            val ruleResp = LanJson.parseObject(
+                postJson("$lanBase/api/folders/rule", """{"rootId":$rootId,"relPath":"Audiobooks","isExcludedFromAutoGrouping":true}"""),
+            )
+            assertTrue(ruleResp.bool("isExcludedFromAutoGrouping"))
+            assertFalse(ruleResp.bool("isPracticeFolder"))
+
+            assertTrue(env.repository.isExcludedFromAutoGrouping(rootId, "Audiobooks"))
+            assertTrue(env.repository.isExcludedFromAutoGrouping(rootId, "Audiobooks/SciFi"))
+            assertTrue(env.repository.isExcludedFromAutoGrouping(rootId, "Audiobooks/OST"))
+
+            // Excluded audio & video disappear from `albums`, `artists`, and `videoItems`
+            assertTrue(env.repository.videoItems.value.isEmpty())
+            assertEquals(1, env.repository.albums.value.sumOf { it.trackCount })
+            assertEquals(1, env.repository.artists.value.sumOf { it.trackCount })
+
+            // Child override: re-enable auto-grouping on `Audiobooks/OST` -> `ost_theme.mp3` returns to albums/artists!
+            env.scanner.setFolderExcludeFromGroupingRule(
+                rootId = rootId,
+                relPath = "Audiobooks/OST",
+                folderUri = ostDir.toURI().toString(),
+                isExcludedFromAutoGrouping = false,
+            )
+            assertFalse(env.repository.isExcludedFromAutoGrouping(rootId, "Audiobooks/OST"))
+            assertTrue(env.repository.isExcludedFromAutoGrouping(rootId, "Audiobooks/SciFi"))
+            assertEquals(2, env.repository.albums.value.sumOf { it.trackCount })
+
+            // 3. `Audiobooks/SciFi` remains browsable in `browseFolder` and plays in `PlayContext.CASUAL` (not practice mode)
+            val sciFiBrowse = env.repository.browseFolder(rootId, "Audiobooks/SciFi", flat = false)!!
+            assertTrue(sciFiBrowse.isCurrentExcludedFromAutoGrouping)
+            assertFalse(sciFiBrowse.isCurrentPracticeFolder)
+            assertEquals(2, sciFiBrowse.mediaItems.size)
+            val chapterItem = sciFiBrowse.mediaItems.first { it.fileName == "chapter_01.mp3" }
+            assertTrue(chapterItem.isExcludedFromAutoGrouping)
+            assertFalse(chapterItem.isInPracticeFolder)
+
+            val port = RecordingLoopPlayerPort(durationMs = 600_000L)
+            val metronome = CountInMetronome(playerScope)
+            val loopEngine = PracticeLoopEngine(port = port, metronome = metronome, onStatePersisted = {})
+            port.attachedEngine = loopEngine
+
+            val casualCtx = if (sciFiBrowse.isCurrentPracticeFolder || chapterItem.isInPracticeFolder) {
+                PlayContext.PRACTICE_FOLDER
+            } else {
+                PlayContext.CASUAL
+            }
+            assertEquals(PlayContext.CASUAL, casualCtx)
+            loopEngine.bindTrack(
+                state = env.repository.getPracticeState(chapterItem.itemId),
+                isVideo = false,
+                activatePracticeMode = PracticeMath.shouldAutoActivatePracticeMode(casualCtx),
+            )
+            assertFalse("Excluded-only folder must play in casual mode without auto-opening practice deck", loopEngine.isPracticeModeActive.value)
+
+            // If ALSO marked as a Practice Folder, both flags coexist and playback enters `PlayContext.PRACTICE_FOLDER`
+            env.scanner.setFolderPracticeRule(
+                rootId = rootId,
+                relPath = "Audiobooks/SciFi",
+                folderUri = sciFiDir.toURI().toString(),
+                isPracticeFolder = true,
+            )
+            val bothBrowse = env.repository.browseFolder(rootId, "Audiobooks/SciFi", flat = false)!!
+            assertTrue(bothBrowse.isCurrentPracticeFolder)
+            assertTrue(bothBrowse.isCurrentExcludedFromAutoGrouping)
+            loopEngine.bindTrack(
+                state = env.repository.getPracticeState(chapterItem.itemId),
+                isVideo = false,
+                activatePracticeMode = PracticeMath.shouldAutoActivatePracticeMode(PlayContext.PRACTICE_FOLDER),
+            )
+            assertTrue(loopEngine.isPracticeModeActive.value)
+        } finally {
+            lanServer.stop()
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Test Harness Helpers
     // -----------------------------------------------------------------------------------------
 

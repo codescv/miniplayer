@@ -239,6 +239,64 @@ class LanStudioServerTest {
     }
 
     @Test
+    fun folderExcludeFromAutoGroupingRuleSerializesAndFiltersAlbumsArtistsAndVideos() {
+        // Initially video & album/artist endpoints include items in Tutorials/ and root
+        assertEquals(1, LanJson.parseObject(httpRequest("GET", "/api/items?filter=video").bodyUtf8).int("count"))
+        assertEquals(1, LanJson.parseObject(httpRequest("GET", "/api/items?filter=albums").bodyUtf8).int("count"))
+        assertEquals(1, LanJson.parseObject(httpRequest("GET", "/api/items?filter=artists").bodyUtf8).int("count"))
+
+        // 1. Mark subfolder where video lives (determine its relPath from initial items) as excluded from auto-grouping
+        val initialItems = LanJson.parseObject(httpRequest("GET", "/api/items").bodyUtf8).arr("items")!!.items
+            .map { it as JsonValue.Obj }
+        val videoObj = initialItems.first { it.bool("isVideo") }
+        val videoSubRel = videoObj.str("parentRelPath").orEmpty()
+
+        val subRuleResp = httpRequest(
+            "POST",
+            "/api/folders/rule",
+            jsonBody = """{"rootId":1,"relPath":"$videoSubRel","isExcludedFromAutoGrouping":true}""",
+        )
+        assertEquals(200, subRuleResp.status)
+        val subRuleJson = LanJson.parseObject(subRuleResp.bodyUtf8)
+        assertTrue(subRuleJson.bool("isExcludedFromAutoGrouping"))
+        assertFalse(subRuleJson.bool("isPracticeFolder"))
+
+        // Video item is now excluded from /api/items?filter=video, while still visible in /api/folders
+        assertEquals(0, LanJson.parseObject(httpRequest("GET", "/api/items?filter=video").bodyUtf8).int("count"))
+        val browseSubJson = LanJson.parseObject(httpRequest("GET", "/api/folders?rootId=1&relPath=$videoSubRel").bodyUtf8)
+        assertTrue(browseSubJson.bool("isCurrentExcludedFromAutoGrouping"))
+        val browsedVideo = browseSubJson.arr("mediaItems")!!.items.single() as JsonValue.Obj
+        assertTrue(browsedVideo.bool("isExcludedFromAutoGrouping"))
+
+        // Browse root shows subfolder with isExcludedFromAutoGrouping = true
+        val browseRootJson = LanJson.parseObject(httpRequest("GET", "/api/folders?rootId=1").bodyUtf8)
+        val subEntryObj = browseRootJson.arr("subfolders")!!.items
+            .map { it as JsonValue.Obj }
+            .first { it.str("relPath") == videoSubRel }
+        assertTrue(subEntryObj.bool("isExcludedFromAutoGrouping"))
+
+        // 2. Mark root folder as excluded from auto-grouping -> albums & artists filters now return 0 items
+        val rootRuleResp = httpRequest(
+            "POST",
+            "/api/folders/rule",
+            jsonBody = """{"rootId":1,"relPath":"","isExcludedFromAutoGrouping":true}""",
+        )
+        assertEquals(200, rootRuleResp.status)
+        assertEquals(0, LanJson.parseObject(httpRequest("GET", "/api/items?filter=albums").bodyUtf8).int("count"))
+        assertEquals(0, LanJson.parseObject(httpRequest("GET", "/api/items?filter=artists").bodyUtf8).int("count"))
+        val browseRootAfter = LanJson.parseObject(httpRequest("GET", "/api/folders?rootId=1").bodyUtf8)
+        assertTrue(browseRootAfter.obj("root")!!.bool("isExcludedFromAutoGrouping"))
+        assertTrue(browseRootAfter.bool("isCurrentExcludedFromAutoGrouping"))
+
+        // 3. Unmark root and subfolder -> items reappear in albums, artists, and video
+        httpRequest("POST", "/api/folders/rule", jsonBody = """{"rootId":1,"relPath":"","isExcludedFromAutoGrouping":false}""")
+        httpRequest("POST", "/api/folders/rule", jsonBody = """{"rootId":1,"relPath":"$videoSubRel","isExcludedFromAutoGrouping":false}""")
+        assertEquals(1, LanJson.parseObject(httpRequest("GET", "/api/items?filter=video").bodyUtf8).int("count"))
+        assertEquals(1, LanJson.parseObject(httpRequest("GET", "/api/items?filter=albums").bodyUtf8).int("count"))
+        assertEquals(1, LanJson.parseObject(httpRequest("GET", "/api/items?filter=artists").bodyUtf8).int("count"))
+    }
+
+    @Test
     fun metadataSingleUpdateBatchUpdateAndOnlineAutoMatchPersistCorrectly() {
         val initialItems = LanJson.parseObject(httpRequest("GET", "/api/items").bodyUtf8).arr("items")!!.items
         val firstObj = initialItems[0] as JsonValue.Obj
@@ -733,6 +791,7 @@ private class FakeTestMiniPlayerCore(
     private val nextBookmarkId = AtomicLong(1L)
 
     private val folderPracticeRules = LinkedHashMap<String, Boolean>()
+    private val folderExcludeRules = LinkedHashMap<String, Boolean>()
     private val itemsByPath = LinkedHashMap<String, MediaItem>()
     private val practiceStates = LinkedHashMap<Long, PracticeState>()
     private val bookmarksByItem = LinkedHashMap<Long, MutableList<PracticeBookmark>>()
@@ -778,12 +837,14 @@ private class FakeTestMiniPlayerCore(
                     val key = if (relPrefix.isEmpty()) f.name else "$relPrefix/${f.name}"
                     seenKeys.add(key)
                     val inPractice = isPracticeRelPathSync(relPrefix)
+                    val inExcluded = isExcludedRelPathSync(relPrefix)
                     val existing = itemsByPath[key]
                     if (existing != null) {
                         itemsByPath[key] = existing.copy(
                             sizeBytes = f.length(),
                             lastModified = f.lastModified(),
                             isInPracticeFolder = inPractice,
+                            isExcludedFromAutoGrouping = inExcluded,
                         )
                     } else {
                         val id = nextItemId.incrementAndGet()
@@ -807,6 +868,7 @@ private class FakeTestMiniPlayerCore(
                             isBackingTrack = f.name.contains("backing", ignoreCase = true),
                             isRootWritable = true,
                             isInPracticeFolder = inPractice,
+                            isExcludedFromAutoGrouping = inExcluded,
                         )
                     }
                 }
@@ -827,6 +889,16 @@ private class FakeTestMiniPlayerCore(
         return false
     }
 
+    private fun isExcludedRelPathSync(relPath: String): Boolean {
+        var cur = relPath
+        while (true) {
+            folderExcludeRules[cur]?.let { return it }
+            if (cur.isEmpty()) break
+            cur = cur.substringBeforeLast('/', "")
+        }
+        return false
+    }
+
     @Synchronized
     private fun refreshDerivedFlows() {
         val list = itemsByPath.values.map { item ->
@@ -834,21 +906,24 @@ private class FakeTestMiniPlayerCore(
             val pState = practiceStates[item.itemId]
             item.copy(
                 isInPracticeFolder = isPracticeRelPathSync(item.parentRelPath),
+                isExcludedFromAutoGrouping = isExcludedRelPathSync(item.parentRelPath),
                 bookmarkCount = bms.size,
                 hasPracticeRecord = bms.isNotEmpty() || (pState?.isNonDefault == true),
                 savedPracticeSpeed = pState?.practiceSpeed ?: 1.0f,
                 savedSemitones = pState?.pitchSemitones ?: 0,
             )
         }
+        val groupableList = list.filter { !it.isInPracticeFolder && !it.isExcludedFromAutoGrouping }
         itemsFlow.value = list
-        videosFlow.value = list.filter { it.isVideo }
+        videosFlow.value = groupableList.filter { it.isVideo }
         rootsFlow.value = rootsFlow.value.map {
             it.copy(
                 itemCount = list.size,
                 isPracticeFolder = isPracticeRelPathSync(""),
+                isExcludedFromAutoGrouping = isExcludedRelPathSync(""),
             )
         }
-        albumsFlow.value = list.groupBy { it.album?.takeIf(String::isNotBlank) ?: AlbumSummary.UNKNOWN_ALBUM_KEY }
+        albumsFlow.value = groupableList.groupBy { it.album?.takeIf(String::isNotBlank) ?: AlbumSummary.UNKNOWN_ALBUM_KEY }
             .map { (key, tracks) ->
                 val isUnk = key == AlbumSummary.UNKNOWN_ALBUM_KEY
                 AlbumSummary(
@@ -859,7 +934,7 @@ private class FakeTestMiniPlayerCore(
                     isUnknownAlbum = isUnk,
                 )
             }
-        artistsFlow.value = list.groupBy { it.artist.lowercase(Locale.ROOT) }
+        artistsFlow.value = groupableList.groupBy { it.artist.lowercase(Locale.ROOT) }
             .map { (norm, tracks) ->
                 ArtistSummary(
                     artistNorm = norm,
@@ -892,13 +967,16 @@ private class FakeTestMiniPlayerCore(
 
         override suspend fun getAlbumTracks(albumKey: String): List<MediaItem> =
             itemsFlow.value.filter {
-                if (albumKey == AlbumSummary.UNKNOWN_ALBUM_KEY) it.album.isNullOrBlank()
-                else it.album == albumKey
+                !it.isInPracticeFolder && !it.isExcludedFromAutoGrouping &&
+                    (if (albumKey == AlbumSummary.UNKNOWN_ALBUM_KEY) it.album.isNullOrBlank() else it.album == albumKey)
             }
 
         override suspend fun getArtistDetail(artistNorm: String): ArtistDetail? {
             val summary = artistsFlow.value.find { it.artistNorm == artistNorm } ?: return null
-            val tracks = itemsFlow.value.filter { it.artist.lowercase(Locale.ROOT) == artistNorm }
+            val tracks = itemsFlow.value.filter {
+                !it.isInPracticeFolder && !it.isExcludedFromAutoGrouping &&
+                    it.artist.lowercase(Locale.ROOT) == artistNorm
+            }
             return ArtistDetail(summary, emptyList(), tracks)
         }
 
@@ -911,6 +989,9 @@ private class FakeTestMiniPlayerCore(
 
         override suspend fun isPracticeFolder(rootId: Long, relPath: String): Boolean =
             synchronized(this@FakeTestMiniPlayerCore) { isPracticeRelPathSync(relPath) }
+
+        override suspend fun isExcludedFromAutoGrouping(rootId: Long, relPath: String): Boolean =
+            synchronized(this@FakeTestMiniPlayerCore) { isExcludedRelPathSync(relPath) }
 
         override suspend fun createPlaylist(name: String, isPracticePlaylist: Boolean): Long =
             synchronized(this@FakeTestMiniPlayerCore) {
@@ -1049,6 +1130,16 @@ private class FakeTestMiniPlayerCore(
             isPracticeFolder: Boolean,
         ) = synchronized(this@FakeTestMiniPlayerCore) {
             folderPracticeRules[relPath] = isPracticeFolder
+            refreshDerivedFlows()
+        }
+
+        override suspend fun setFolderExcludeFromGroupingRule(
+            rootId: Long,
+            relPath: String,
+            folderUri: String,
+            isExcludedFromAutoGrouping: Boolean,
+        ) = synchronized(this@FakeTestMiniPlayerCore) {
+            folderExcludeRules[relPath] = isExcludedFromAutoGrouping
             refreshDerivedFlows()
         }
 

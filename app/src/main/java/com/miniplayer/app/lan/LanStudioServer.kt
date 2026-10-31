@@ -681,6 +681,7 @@ class LanStudioServer(
             "root" to serializeSafRoot(state.root),
             "currentRelPath" to JsonValue.Str(state.currentRelPath),
             "isCurrentPracticeFolder" to JsonValue.Bool(state.isCurrentPracticeFolder),
+            "isCurrentExcludedFromAutoGrouping" to JsonValue.Bool(state.isCurrentExcludedFromAutoGrouping),
             "breadcrumbs" to JsonValue.Arr(
                 state.breadcrumbs.map { (label, rel) ->
                     LanJson.obj("label" to JsonValue.Str(label), "relPath" to JsonValue.Str(rel))
@@ -701,6 +702,7 @@ class LanStudioServer(
         val root = core.library.safRoots.value.find { it.rootId == rootId } ?: return null
         val allInRoot = core.library.allMediaItems.value.filter { it.rootId == rootId }
         val isPractice = core.library.isPracticeFolder(rootId, cleanRelPath)
+        val isExcluded = core.library.isExcludedFromAutoGrouping(rootId, cleanRelPath)
 
         val directItems = if (flat) {
             allInRoot.filter {
@@ -737,6 +739,7 @@ class LanStudioServer(
                 name = name,
                 itemCount = count,
                 isPracticeFolder = core.library.isPracticeFolder(rootId, subRel),
+                isExcludedFromAutoGrouping = core.library.isExcludedFromAutoGrouping(rootId, subRel),
             )
         }
 
@@ -757,6 +760,7 @@ class LanStudioServer(
             subfolders = subfolders,
             mediaItems = directItems,
             isCurrentPracticeFolder = isPractice,
+            isCurrentExcludedFromAutoGrouping = isExcluded,
         )
     }
 
@@ -809,19 +813,36 @@ class LanStudioServer(
         val cleanRelPath = LanPathUtils.normalizeRelPath(json.str("relPath") ?: query["relPath"].orEmpty())
         val isPractice = json.boolOrNull("isPracticeFolder")
             ?: query["isPracticeFolder"]?.let { it == "1" || it.equals("true", ignoreCase = true) }
-            ?: throw LanHttpException(400, "Bad Request", "Missing 'isPracticeFolder'")
+        val isExcluded = json.boolOrNull("isExcludedFromAutoGrouping")
+            ?: query["isExcludedFromAutoGrouping"]?.let { it == "1" || it.equals("true", ignoreCase = true) }
+        if (isPractice == null && isExcluded == null) {
+            throw LanHttpException(400, "Bad Request", "Missing 'isPracticeFolder' or 'isExcludedFromAutoGrouping'")
+        }
 
         val root = findRootOrThrow(rootId)
         val resolvedFolderUri = json.str("folderUri")?.takeIf { it.isNotBlank() }
             ?: query["folderUri"]?.takeIf { it.isNotBlank() }
             ?: resolveFolderUri(root, cleanRelPath)
 
-        core.scanner.setFolderPracticeRule(
-            rootId = rootId,
-            relPath = cleanRelPath,
-            folderUri = resolvedFolderUri,
-            isPracticeFolder = isPractice,
-        )
+        if (isPractice != null) {
+            core.scanner.setFolderPracticeRule(
+                rootId = rootId,
+                relPath = cleanRelPath,
+                folderUri = resolvedFolderUri,
+                isPracticeFolder = isPractice,
+            )
+        }
+        if (isExcluded != null) {
+            core.scanner.setFolderExcludeFromGroupingRule(
+                rootId = rootId,
+                relPath = cleanRelPath,
+                folderUri = resolvedFolderUri,
+                isExcludedFromAutoGrouping = isExcluded,
+            )
+        }
+
+        val effectivePractice = isPractice ?: core.library.isPracticeFolder(rootId, cleanRelPath)
+        val effectiveExcluded = isExcluded ?: core.library.isExcludedFromAutoGrouping(rootId, cleanRelPath)
 
         recordRequest(clientIp, "POST", "/api/folders/rule", 200)
         return writeJsonOk(
@@ -831,7 +852,8 @@ class LanStudioServer(
                 "rootId" to JsonValue.Num(rootId),
                 "relPath" to JsonValue.Str(cleanRelPath),
                 "folderUri" to JsonValue.Str(resolvedFolderUri),
-                "isPracticeFolder" to JsonValue.Bool(isPractice),
+                "isPracticeFolder" to JsonValue.Bool(effectivePractice),
+                "isExcludedFromAutoGrouping" to JsonValue.Bool(effectiveExcluded),
             ),
             headOnly = false,
             close = closeConnection || mustClose,
@@ -1061,7 +1083,7 @@ class LanStudioServer(
                 if (albumKey.isNotEmpty()) {
                     core.library.getAlbumTracks(albumKey)
                 } else {
-                    core.library.allMediaItems.value.filter { !it.isVideo && !it.isInPracticeFolder }
+                    core.library.allMediaItems.value.filter { !it.isVideo && !it.isInPracticeFolder && !it.isExcludedFromAutoGrouping }
                 }
             }
 
@@ -1070,7 +1092,7 @@ class LanStudioServer(
                 if (artistNorm.isNotEmpty()) {
                     core.library.getArtistDetail(artistNorm)?.tracks.orEmpty()
                 } else {
-                    core.library.allMediaItems.value.filter { !it.isVideo && !it.isInPracticeFolder }
+                    core.library.allMediaItems.value.filter { !it.isVideo && !it.isInPracticeFolder && !it.isExcludedFromAutoGrouping }
                 }
             }
 
@@ -2668,6 +2690,7 @@ class LanStudioServer(
             "mountState" to JsonValue.Str(r.mountState.name),
             "itemCount" to JsonValue.Num(r.itemCount),
             "isPracticeFolder" to JsonValue.Bool(r.isPracticeFolder),
+            "isExcludedFromAutoGrouping" to JsonValue.Bool(r.isExcludedFromAutoGrouping),
             "lastScanAt" to JsonValue.Num(r.lastScanAt),
         )
 
@@ -2678,6 +2701,7 @@ class LanStudioServer(
             "name" to JsonValue.Str(sf.name),
             "itemCount" to JsonValue.Num(sf.itemCount),
             "isPracticeFolder" to JsonValue.Bool(sf.isPracticeFolder),
+            "isExcludedFromAutoGrouping" to JsonValue.Bool(sf.isExcludedFromAutoGrouping),
             "hasNomedia" to JsonValue.Bool(sf.hasNomedia),
         )
 
@@ -2707,6 +2731,7 @@ class LanStudioServer(
             "isBackingTrack" to JsonValue.Bool(it.isBackingTrack),
             "isRootWritable" to JsonValue.Bool(it.isRootWritable),
             "isInPracticeFolder" to JsonValue.Bool(it.isInPracticeFolder),
+            "isExcludedFromAutoGrouping" to JsonValue.Bool(it.isExcludedFromAutoGrouping),
             "lastPositionMs" to JsonValue.Num(it.lastPositionMs),
             "bookmarkCount" to JsonValue.Num(it.bookmarkCount),
             "hasPracticeRecord" to JsonValue.Bool(it.hasPracticeRecord),

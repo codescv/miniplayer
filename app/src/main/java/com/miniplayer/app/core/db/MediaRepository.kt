@@ -51,17 +51,21 @@ class MediaRepository(
             return false
         }
 
+        fun resolveIsExcludedFromAutoGrouping(rulesByRelPath: Map<String, FolderRuleRow>, relPath: String): Boolean {
+            if (rulesByRelPath.isEmpty()) return false
+            for (anc in ancestorChainMostSpecificFirst(relPath)) {
+                val rule = rulesByRelPath[anc]
+                if (rule != null) return rule.isExcludedFromAutoGrouping
+            }
+            return false
+        }
+
+        @Suppress("UNUSED_PARAMETER")
         fun resolveRespectNomedia(
             rulesByRelPath: Map<String, FolderRuleRow>,
             relPath: String,
             globalDefault: Boolean,
-        ): Boolean {
-            for (anc in ancestorChainMostSpecificFirst(relPath)) {
-                val rule = rulesByRelPath[anc]
-                if (rule?.respectNomedia != null) return rule.respectNomedia
-            }
-            return globalDefault
-        }
+        ): Boolean = false
 
         fun computeAlbumKey(album: String?, albumArtist: String?, trackArtist: String): String {
             val cleanAlbum = album?.trim()?.takeIf { it.isNotEmpty() } ?: return AlbumSummary.UNKNOWN_ALBUM_KEY
@@ -150,14 +154,17 @@ class MediaRepository(
     fun getFolderRule(rootId: Long, relPath: String): FolderRuleRow? =
         computedFlow.value.rulesByRootAndPath[rootId]?.get(normalizeRelPath(relPath))
 
-    fun resolveRespectNomediaForFolder(rootId: Long, relPath: String): Boolean {
-        val rules = computedFlow.value.rulesByRootAndPath[rootId].orEmpty()
-        return resolveRespectNomedia(rules, relPath, _settings.value.respectSubfolderNomedia)
-    }
+    @Suppress("UNUSED_PARAMETER")
+    fun resolveRespectNomediaForFolder(rootId: Long, relPath: String): Boolean = false
 
     override suspend fun isPracticeFolder(rootId: Long, relPath: String): Boolean = withContext(ioDispatcher) {
         val rules = computedFlow.value.rulesByRootAndPath[rootId].orEmpty()
         resolveIsPracticeFolder(rules, relPath)
+    }
+
+    override suspend fun isExcludedFromAutoGrouping(rootId: Long, relPath: String): Boolean = withContext(ioDispatcher) {
+        val rules = computedFlow.value.rulesByRootAndPath[rootId].orEmpty()
+        resolveIsExcludedFromAutoGrouping(rules, relPath)
     }
 
     override suspend fun browseFolder(
@@ -185,6 +192,7 @@ class MediaRepository(
         }
 
         val isCurrentPractice = resolveIsPracticeFolder(rulesMap, normPath)
+        val isCurrentExcluded = resolveIsExcludedFromAutoGrouping(rulesMap, normPath)
 
         if (flat) {
             val matchingItems = rootItems.filter { item ->
@@ -199,6 +207,7 @@ class MediaRepository(
                 subfolders = emptyList(),
                 mediaItems = matchingItems,
                 isCurrentPracticeFolder = isCurrentPractice,
+                isCurrentExcludedFromAutoGrouping = isCurrentExcluded,
             )
         }
 
@@ -246,6 +255,7 @@ class MediaRepository(
                     name = childName,
                     itemCount = recursiveCount,
                     isPracticeFolder = resolveIsPracticeFolder(rulesMap, childRel),
+                    isExcludedFromAutoGrouping = resolveIsExcludedFromAutoGrouping(rulesMap, childRel),
                     hasNomedia = scanned?.hasNomedia ?: false,
                     respectNomedia = explicitRule?.respectNomedia,
                 )
@@ -262,6 +272,7 @@ class MediaRepository(
             subfolders = subfolders,
             mediaItems = directItems,
             isCurrentPracticeFolder = isCurrentPractice,
+            isCurrentExcludedFromAutoGrouping = isCurrentExcluded,
         )
     }
 
@@ -500,6 +511,7 @@ class MediaRepository(
             }
 
             val inPracticeFolder = resolveIsPracticeFolder(rulesForRoot, row.parentRelPath)
+            val excludedFromGrouping = resolveIsExcludedFromAutoGrouping(rulesForRoot, row.parentRelPath)
             val hasPracticeRec = bms.isNotEmpty() || (pState?.isNonDefault == true)
 
             val item = MediaItem(
@@ -526,6 +538,7 @@ class MediaRepository(
                 isBackingTrack = row.isBackingTrack,
                 isRootWritable = root.isWritable,
                 isInPracticeFolder = inPracticeFolder,
+                isExcludedFromAutoGrouping = excludedFromGrouping,
                 lastPositionMs = row.lastPositionMs,
                 bookmarkCount = bms.size,
                 hasPracticeRecord = hasPracticeRec,
@@ -552,19 +565,21 @@ class MediaRepository(
                 mountState = r.mountState,
                 itemCount = countPerRoot[r.rootId] ?: 0,
                 isPracticeFolder = rootRule?.isPracticeFolder ?: false,
+                isExcludedFromAutoGrouping = rootRule?.isExcludedFromAutoGrouping ?: false,
                 respectNomedia = rootRule?.respectNomedia,
                 lastScanAt = r.lastScanAt,
             )
         }
 
-        // Practice Folder isolation (§v1.0.1 #4): items inside a Practice Folder (root or inherited subfolder)
+        // Practice Folder & Exclude-from-Grouping isolation (§v1.0.1 #4, §v1.0.4 #1):
+        // items inside a Practice Folder or Excluded-from-Auto-Grouping Folder (root or inherited subfolder)
         // appear ONLY in `文件夹 (Folders)` (`safRoots` + `browseFolder`) and explicit `播放列表` / `bookmarkedTracks`,
         // and MUST NOT pollute `专辑 (Albums)`, `歌手 (Artists)`, or `视频 (Videos)`.
         val videoItems = allItems
-            .filter { it.isVideo && !it.isInPracticeFolder }
+            .filter { it.isVideo && !it.isInPracticeFolder && !it.isExcludedFromAutoGrouping }
             .sortedWith { a, b -> SmartFilenameParser.naturalCompare(a.fileName, b.fileName) }
 
-        val audioItems = allItems.filter { !it.isVideo && !it.isInPracticeFolder }
+        val audioItems = allItems.filter { !it.isVideo && !it.isInPracticeFolder && !it.isExcludedFromAutoGrouping }
 
         // --- Album Aggregation (`(Album, AlbumArtist)` + trailing `未知专辑`) ---
         val tracksByAlbumKey = LinkedHashMap<String, MutableList<MediaItem>>()

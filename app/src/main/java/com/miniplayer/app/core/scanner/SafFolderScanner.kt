@@ -631,6 +631,8 @@ class SafFolderScanner(
     ) = withContext(ioDispatcher) {
         val normPath = MediaRepository.normalizeRelPath(relPath)
         val existing = repository.getFolderRule(rootId, normPath)
+        val currentExcluded = existing?.isExcludedFromAutoGrouping
+            ?: repository.isExcludedFromAutoGrouping(rootId, normPath)
         val effectiveUri = folderUri.ifBlank {
             existing?.folderUri ?: "${repository.backend.getSafRootRow(rootId)?.treeUri.orEmpty()}#rel=$normPath"
         }
@@ -641,6 +643,33 @@ class SafFolderScanner(
                 relPath = normPath,
                 isPracticeFolder = isPracticeFolder,
                 respectNomedia = existing?.respectNomedia,
+                isExcludedFromAutoGrouping = currentExcluded,
+            ),
+        )
+        repository.refreshNow()
+    }
+
+    override suspend fun setFolderExcludeFromGroupingRule(
+        rootId: Long,
+        relPath: String,
+        folderUri: String,
+        isExcludedFromAutoGrouping: Boolean,
+    ) = withContext(ioDispatcher) {
+        val normPath = MediaRepository.normalizeRelPath(relPath)
+        val existing = repository.getFolderRule(rootId, normPath)
+        val currentPractice = existing?.isPracticeFolder
+            ?: repository.isPracticeFolder(rootId, normPath)
+        val effectiveUri = folderUri.ifBlank {
+            existing?.folderUri ?: "${repository.backend.getSafRootRow(rootId)?.treeUri.orEmpty()}#rel=$normPath"
+        }
+        repository.backend.upsertFolderRule(
+            FolderRuleRow(
+                folderUri = effectiveUri,
+                rootId = rootId,
+                relPath = normPath,
+                isPracticeFolder = currentPractice,
+                respectNomedia = existing?.respectNomedia,
+                isExcludedFromAutoGrouping = isExcludedFromAutoGrouping,
             ),
         )
         repository.refreshNow()
@@ -655,6 +684,7 @@ class SafFolderScanner(
         val normPath = MediaRepository.normalizeRelPath(relPath)
         val existing = repository.getFolderRule(rootId, normPath)
         val currentPractice = existing?.isPracticeFolder ?: repository.isPracticeFolder(rootId, normPath)
+        val currentExcluded = existing?.isExcludedFromAutoGrouping ?: repository.isExcludedFromAutoGrouping(rootId, normPath)
         val effectiveUri = folderUri.ifBlank {
             existing?.folderUri ?: "${repository.backend.getSafRootRow(rootId)?.treeUri.orEmpty()}#rel=$normPath"
         }
@@ -665,11 +695,10 @@ class SafFolderScanner(
                 relPath = normPath,
                 isPracticeFolder = currentPractice,
                 respectNomedia = respectNomedia,
+                isExcludedFromAutoGrouping = currentExcluded,
             ),
         )
         repository.refreshNow()
-        // Re-scan root incrementally so newly skipped/unskipped .nomedia subfolders update immediately
-        rescanRoot(rootId, incremental = true)
     }
 
     // --- Core Single-Pass Incremental Traversal with Offline Volume Guard ---
@@ -741,10 +770,6 @@ class SafFolderScanner(
                             hasNomedia = hasNomedia,
                         ),
                     )
-                    // Musician-friendly .nomedia policy: root is ALWAYS scanned; subfolders follow effective rule
-                    if (hasNomedia && repository.resolveRespectNomediaForFolder(root.rootId, dir.relPath)) {
-                        continue
-                    }
                 }
 
                 // Identify best folder cover image & sidecar .lrc files in this directory in the same single pass

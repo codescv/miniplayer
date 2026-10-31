@@ -8,7 +8,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.miniplayer.app.core.CoreRegistry
 import com.miniplayer.app.core.MiniPlayerCoreProvider
+import com.miniplayer.app.core.db.MediaRepository
 import com.miniplayer.app.core.metadata.DefaultMetadataEngine
+import com.miniplayer.app.core.metadata.SmartFilenameParser
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.player.PlayerController
 import java.io.File
@@ -386,16 +388,31 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun setFolderNomediaOverride(
+    fun setFolderExcludeFromGroupingFlag(
         rootId: Long,
         relPath: String,
         folderUri: String,
-        respectNomedia: Boolean?,
+        isExcluded: Boolean,
     ) {
         viewModelScope.launch {
-            core.scanner.setFolderNomediaRule(rootId, relPath, folderUri, respectNomedia)
-            core.scanner.rescanRoot(rootId, incremental = true)
+            core.scanner.setFolderExcludeFromGroupingRule(rootId, relPath, folderUri, isExcluded)
             refreshActiveDrillDowns()
+            emitMessage(if (isExcluded) "已设为「不自动归类」（该目录下的文件不显示在专辑、歌手、视频中）" else "已取消「不自动归类」")
+        }
+    }
+
+    fun openAddFolderToPlaylistPicker(rootId: Long, relPath: String = "") {
+        val normRel = MediaRepository.normalizeRelPath(relPath)
+        val folderItems = allMediaItems.value
+            .filter { item ->
+                item.rootId == rootId &&
+                    (normRel.isEmpty() || item.parentRelPath == normRel || item.parentRelPath.startsWith("$normRel/"))
+            }
+            .sortedWith { a, b -> SmartFilenameParser.naturalCompare(a.title, b.title) }
+        if (folderItems.isEmpty()) {
+            emitMessage("该文件夹暂无可添加的媒体文件")
+        } else {
+            openAddToPlaylistPicker(folderItems)
         }
     }
 

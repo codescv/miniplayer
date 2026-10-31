@@ -31,6 +31,7 @@ data class FolderRuleRow(
     val relPath: String,
     val isPracticeFolder: Boolean,
     val respectNomedia: Boolean?,
+    val isExcludedFromAutoGrouping: Boolean = false,
 )
 
 data class ScannedFolderRow(
@@ -266,7 +267,7 @@ class MiniPlayerDatabase(
 
     companion object {
         const val DATABASE_NAME = "miniplayer.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
 
         val SCHEMA_STATEMENTS: List<String> = listOf(
             """
@@ -286,6 +287,7 @@ class MiniPlayerDatabase(
                 root_id INTEGER NOT NULL REFERENCES saf_roots(root_id) ON DELETE CASCADE,
                 rel_path TEXT NOT NULL,
                 is_practice_folder INTEGER NOT NULL DEFAULT 0,
+                exclude_from_grouping INTEGER NOT NULL DEFAULT 0,
                 respect_nomedia INTEGER
             )
             """.trimIndent(),
@@ -443,6 +445,35 @@ class MiniPlayerDatabase(
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         onCreate(db)
+        if (oldVersion < 2) {
+            runCatching {
+                db.execSQL("ALTER TABLE folder_rules ADD COLUMN exclude_from_grouping INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+    }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        if (!db.isReadOnly) {
+            val hasExcludeCol = runCatching {
+                db.rawQuery("PRAGMA table_info(folder_rules)", null).use { c ->
+                    val nameIdx = c.getColumnIndex("name")
+                    var found = false
+                    while (c.moveToNext()) {
+                        if (nameIdx >= 0 && c.getString(nameIdx) == "exclude_from_grouping") {
+                            found = true
+                            break
+                        }
+                    }
+                    found
+                }
+            }.getOrDefault(true)
+            if (!hasExcludeCol) {
+                runCatching {
+                    db.execSQL("ALTER TABLE folder_rules ADD COLUMN exclude_from_grouping INTEGER NOT NULL DEFAULT 0")
+                }
+            }
+        }
     }
 
     fun openBackend(): MediaStoreBackend {
@@ -629,6 +660,7 @@ class SqliteMediaStoreBackend(
                     put("root_id", newRootId)
                     put("rel_path", joinRelSegments(spec.relPathPrefix, rule.relPath))
                     put("is_practice_folder", if (rule.isPracticeFolder) 1 else 0)
+                    put("exclude_from_grouping", if (rule.isExcludedFromAutoGrouping) 1 else 0)
                     if (rule.respectNomedia != null) put("respect_nomedia", if (rule.respectNomedia) 1 else 0) else putNull("respect_nomedia")
                 }
                 db.insertWithOnConflict("folder_rules", null, ruleCv, SQLiteDatabase.CONFLICT_REPLACE)
@@ -686,6 +718,7 @@ class SqliteMediaStoreBackend(
             put("root_id", rule.rootId)
             put("rel_path", rule.relPath)
             put("is_practice_folder", if (rule.isPracticeFolder) 1 else 0)
+            put("exclude_from_grouping", if (rule.isExcludedFromAutoGrouping) 1 else 0)
             if (rule.respectNomedia != null) put("respect_nomedia", if (rule.respectNomedia) 1 else 0) else putNull("respect_nomedia")
         }
         db.insertWithOnConflict("folder_rules", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
@@ -1287,12 +1320,14 @@ class SqliteMediaStoreBackend(
 
     private fun readFolderRuleCursor(c: Cursor): FolderRuleRow {
         val nomediaIdx = c.getColumnIndexOrThrow("respect_nomedia")
+        val exIdx = c.getColumnIndex("exclude_from_grouping")
         return FolderRuleRow(
             folderUri = c.getString(c.getColumnIndexOrThrow("folder_uri")),
             rootId = c.getLong(c.getColumnIndexOrThrow("root_id")),
             relPath = c.getString(c.getColumnIndexOrThrow("rel_path")),
             isPracticeFolder = c.getInt(c.getColumnIndexOrThrow("is_practice_folder")) != 0,
             respectNomedia = if (c.isNull(nomediaIdx)) null else c.getInt(nomediaIdx) != 0,
+            isExcludedFromAutoGrouping = exIdx >= 0 && !c.isNull(exIdx) && c.getInt(exIdx) != 0,
         )
     }
 
