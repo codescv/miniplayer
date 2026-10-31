@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.miniplayer.app.core.model.MediaItem
 import java.io.File
@@ -54,12 +55,235 @@ class WaveformExtractor(private val context: Context) {
         extracted ?: buildFallbackPreview(item)
     }
 
+    suspend fun loadOrDetectBpm(item: MediaItem): Int? = withContext(Dispatchers.IO) {
+        val cacheFile = bpmCacheFileFor(item)
+        readCachedBpm(cacheFile)?.let { return@withContext it }
+
+        decodeSemaphore.withPermit {
+            readCachedBpm(cacheFile)?.let { return@withPermit it }
+            val detected = extractEmbeddedBpm(item) ?: decodeAndDetectBpm(item)
+            if (detected != null) {
+                writeCachedBpm(cacheFile, detected)
+            }
+            detected
+        }
+    }
+
     private fun cacheFileFor(item: MediaItem): File {
         val dir = File(context.cacheDir, "waveforms")
         if (!dir.exists()) {
             dir.mkdirs()
         }
         return File(dir, "${item.itemId}_${item.lastModified}.bin")
+    }
+
+    private fun bpmCacheFileFor(item: MediaItem): File {
+        val dir = File(context.cacheDir, "waveforms")
+        if (!dir.exists()) {
+            dir.mkdirs()
+        }
+        return File(dir, "bpm_${item.itemId}_${item.lastModified}.dat")
+    }
+
+    private fun readCachedBpm(file: File): Int? {
+        if (!file.isFile || file.length() !in 1L..16L) return null
+        return try {
+            file.readText(Charsets.UTF_8).trim().toIntOrNull()?.takeIf { it in 30..300 }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun writeCachedBpm(file: File, bpm: Int) {
+        if (bpm !in 30..300) return
+        try {
+            val tmp = File(file.parentFile, "${file.name}.tmp")
+            tmp.writeText(bpm.toString(), Charsets.UTF_8)
+            tmp.renameTo(file)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun extractEmbeddedBpm(item: MediaItem): Int? {
+        val uri = try {
+            Uri.parse(item.documentUri)
+        } catch (_: Throwable) {
+            return null
+        }
+
+        // 1. Check ID3v2 TBPM / TBP and FLAC BPM / TEMPO header tags
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val header = ByteArray(64 * 1024)
+                var totalRead = 0
+                while (totalRead < header.size) {
+                    val r = input.read(header, totalRead, header.size - totalRead)
+                    if (r <= 0) break
+                    totalRead += r
+                }
+                if (totalRead > 0) {
+                    BpmDetector.extractEmbeddedBpmFromHeader(header, totalRead)?.let { return it }
+                }
+            }
+        } catch (_: Throwable) {
+        }
+
+        // 2. Check MediaMetadataRetriever if the platform exposes an explicit METADATA_KEY_BPM constant
+        val bpmKeyCode = VENDOR_METADATA_KEY_BPM
+        if (bpmKeyCode != null) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(context, uri)
+                val raw = retriever.extractMetadata(bpmKeyCode)
+                BpmDetector.parseBpmTagString(raw)?.let { return it }
+            } catch (_: Throwable) {
+            } finally {
+                try {
+                    retriever.release()
+                } catch (_: Throwable) {
+                }
+            }
+        }
+        return null
+    }
+
+    private fun decodeAndDetectBpm(item: MediaItem): Int? {
+        val uri = try {
+            Uri.parse(item.documentUri)
+        } catch (_: Throwable) {
+            return null
+        }
+
+        val pfd = try {
+            context.contentResolver.openFileDescriptor(uri, "r")
+        } catch (_: Throwable) {
+            null
+        } ?: return null
+
+        val extractor = MediaExtractor()
+        var codec: MediaCodec? = null
+        try {
+            extractor.setDataSource(pfd.fileDescriptor)
+            var audioTrackIndex = -1
+            var audioFormat: MediaFormat? = null
+            for (i in 0 until extractor.trackCount) {
+                val fmt = extractor.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME).orEmpty()
+                if (mime.startsWith("audio/")) {
+                    audioTrackIndex = i
+                    audioFormat = fmt
+                    break
+                }
+            }
+            if (audioTrackIndex < 0 || audioFormat == null) return null
+
+            // Check container MediaFormat for embedded bpm/tempo metadata before decoding PCM
+            for (key in listOf("bpm", "tempo", "tbpm")) {
+                if (audioFormat.containsKey(key)) {
+                    val strVal = runCatching { audioFormat.getString(key) }.getOrNull()
+                    BpmDetector.parseBpmTagString(strVal)?.let { return it }
+                    val intVal = runCatching { audioFormat.getInteger(key) }.getOrNull()
+                    if (intVal != null && intVal in 30..300) return intVal
+                }
+            }
+
+            extractor.selectTrack(audioTrackIndex)
+            val mime = audioFormat.getString(MediaFormat.KEY_MIME) ?: return null
+            val durationUs = when {
+                audioFormat.containsKey(MediaFormat.KEY_DURATION) ->
+                    audioFormat.getLong(MediaFormat.KEY_DURATION)
+                item.durationMs > 0L -> item.durationMs * 1000L
+                else -> 0L
+            }
+
+            if (durationUs > 30_000_000L) {
+                val seekStartUs = minOf(durationUs / 4L, 15_000_000L)
+                extractor.seekTo(seekStartUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            }
+
+            audioFormat.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+            codec = MediaCodec.createDecoderByType(mime)
+            codec.configure(audioFormat, null, null, 0)
+            codec.start()
+
+            val initialSampleRate = runCatching { audioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) }
+                .getOrDefault(44_100)
+            val initialChannels = runCatching { audioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }
+                .getOrDefault(2)
+            var accumulator = OnsetFluxAccumulator(initialSampleRate, initialChannels)
+            var outputPcmEncoding = readPcmEncodingOrDefault(codec.outputFormat)
+
+            val bufferInfo = MediaCodec.BufferInfo()
+            var inputDone = false
+            var outputDone = false
+            var safetyLoops = 0
+            while (!outputDone && accumulator.accumulatedSeconds < BPM_DECODE_WINDOW_SECONDS && safetyLoops < 8_000) {
+                safetyLoops++
+                if (!inputDone) {
+                    val inIdx = codec.dequeueInputBuffer(4_000L)
+                    if (inIdx >= 0) {
+                        val inBuf = codec.getInputBuffer(inIdx)
+                        val read = if (inBuf != null) extractor.readSampleData(inBuf, 0) else -1
+                        if (read < 0) {
+                            codec.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        } else {
+                            val pts = extractor.sampleTime.coerceAtLeast(0L)
+                            codec.queueInputBuffer(inIdx, 0, read, pts, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+                val outIdx = codec.dequeueOutputBuffer(bufferInfo, 4_000L)
+                if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    val outFmt = codec.outputFormat
+                    outputPcmEncoding = readPcmEncodingOrDefault(outFmt)
+                    if (accumulator.accumulatedHopCount == 0) {
+                        val realSr = runCatching { outFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) }
+                            .getOrDefault(initialSampleRate)
+                        val realCh = runCatching { outFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }
+                            .getOrDefault(initialChannels)
+                        if (realSr != accumulator.safeSampleRate || realCh != accumulator.safeChannelCount) {
+                            accumulator = OnsetFluxAccumulator(realSr, realCh)
+                        }
+                    }
+                } else if (outIdx >= 0) {
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        outputDone = true
+                    }
+                    val outBuf = codec.getOutputBuffer(outIdx)
+                    if (outBuf != null && bufferInfo.size > 0) {
+                        accumulator.feedPcmByteBuffer(
+                            buffer = outBuf,
+                            offset = bufferInfo.offset,
+                            size = bufferInfo.size,
+                            pcmEncoding = outputPcmEncoding,
+                        )
+                    }
+                    codec.releaseOutputBuffer(outIdx, false)
+                }
+            }
+            return accumulator.computeBpm()
+        } catch (_: Throwable) {
+            return null
+        } finally {
+            try {
+                codec?.stop()
+            } catch (_: Throwable) {
+            }
+            try {
+                codec?.release()
+            } catch (_: Throwable) {
+            }
+            try {
+                extractor.release()
+            } catch (_: Throwable) {
+            }
+            try {
+                pfd.close()
+            } catch (_: Throwable) {
+            }
+        }
     }
 
     private fun readCachedBars(file: File): List<Float>? {
@@ -287,6 +511,15 @@ class WaveformExtractor(private val context: Context) {
     companion object {
         const val BAR_COUNT = 240
         const val MIN_BAR_HEIGHT = 0.08f
+        private const val BPM_DECODE_WINDOW_SECONDS = 20.0
+
+        private val VENDOR_METADATA_KEY_BPM: Int? by lazy {
+            runCatching {
+                MediaMetadataRetriever::class.java.fields
+                    .firstOrNull { it.name == "METADATA_KEY_BPM" }
+                    ?.getInt(null)
+            }.getOrNull()
+        }
 
         internal fun accumulatePcmRms(
             outBuf: ByteBuffer,

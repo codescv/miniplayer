@@ -77,6 +77,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     val activeBookmarkId = playerController.loopEngine.activeBookmarkId
     val countInProgress = playerController.metronome.progress
     val waveformBars = playerController.waveformBars
+    val detectedBpm: StateFlow<Int?> = playerController.detectedBpm
+    val isDetectingBpm: StateFlow<Boolean> = playerController.isDetectingBpm
     val hapticTicks = playerController.hapticTicks
 
     // Navigation & View States
@@ -583,6 +585,10 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             core.library.deleteBookmark(bookmarkId)
             emitMessage("已删除段落书签")
         }
+    }
+
+    fun autoDetectBpm() {
+        playerController.autoDetectBpm()
     }
 
     fun fetchLyricsOnlineIfNeeded() {

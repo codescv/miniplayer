@@ -31,6 +31,11 @@ internal object SharedExoPlayerHolder {
     @Volatile
     private var player: ExoPlayer? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val realTimeSonicProcessor = RealTimeSonicAudioProcessor()
+
+    fun updateSpeedAndPitch(speed: Float, pitch: Float) {
+        realTimeSonicProcessor.setTargetSpeedAndPitch(speed, pitch)
+    }
 
     fun getOrCreate(context: Context): ExoPlayer {
         val existing = player
@@ -51,12 +56,12 @@ internal object SharedExoPlayerHolder {
                     enableFloatOutput: Boolean,
                     enableAudioTrackPlaybackParams: Boolean,
                 ): AudioSink {
-                    // Force 16-bit PCM + SonicAudioProcessor deterministically (disabling float output
-                    // and platform AudioTrack playback params) so pitch shifting never hits
-                    // UnhandledAudioFormatException or device-specific AudioTrack mute bugs.
+                    // Force 16-bit PCM + always-active RealTimeSonicAudioProcessor so rapid speed/pitch
+                    // changes never reconfigure AudioProcessingPipeline or tear down AudioTrack.
                     return DefaultAudioSink.Builder(appContext)
                         .setEnableFloatOutput(false)
                         .setEnableAudioTrackPlaybackParams(false)
+                        .setAudioProcessorChain(RealTimeAudioProcessorChain(realTimeSonicProcessor))
                         .build()
                 }
             }

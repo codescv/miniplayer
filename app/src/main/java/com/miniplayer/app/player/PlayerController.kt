@@ -9,6 +9,7 @@ import android.view.TextureView
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
@@ -89,6 +90,7 @@ class PlayerController(
     private var internalSeekDepth: Int = 0
     private var lastAppliedSpeed: Float = 1.0f
     private var lastAppliedPitch: Float = 1.0f
+    private var consecutiveErrorRecoveryCount: Int = 0
 
     val metronome = CountInMetronome(mainScope)
     val waveformExtractor = WaveformExtractor(appContext)
@@ -102,6 +104,14 @@ class PlayerController(
     private val _waveformBars = MutableStateFlow<List<Float>>(emptyList())
     val waveformBars: StateFlow<List<Float>> = _waveformBars.asStateFlow()
     private var waveformJob: Job? = null
+
+    private val _detectedBpm = MutableStateFlow<Int?>(null)
+    val detectedBpm: StateFlow<Int?> = _detectedBpm.asStateFlow()
+
+    private val _isDetectingBpm = MutableStateFlow(false)
+    val isDetectingBpm: StateFlow<Boolean> = _isDetectingBpm.asStateFlow()
+    private var bpmJob: Job? = null
+    private var forceApplyPendingBpmItemId: Long? = null
 
     private val loopPort = object : LoopPlayerPort {
         override val currentPositionMs: Long
@@ -161,18 +171,15 @@ class PlayerController(
                     previousSpeed = lastAppliedSpeed,
                     previousPitch = lastAppliedPitch,
                 )
-                exoPlayer.playbackParameters = PlaybackParameters(decision.safeSpeed, decision.safePitch)
+                SharedExoPlayerHolder.updateSpeedAndPitch(decision.safeSpeed, decision.safePitch)
+                if (decision.shouldUpdateExoPlaybackParameters) {
+                    exoPlayer.playbackParameters = PlaybackParameters(
+                        decision.exoPlaybackSpeed,
+                        decision.exoPlaybackPitch,
+                    )
+                }
                 lastAppliedSpeed = decision.safeSpeed
                 lastAppliedPitch = decision.safePitch
-                if (decision.shouldFlushAudioSink &&
-                    exoPlayer.mediaItemCount > 0 &&
-                    exoPlayer.playbackState != Player.STATE_IDLE
-                ) {
-                    performInternalSeek {
-                        exoPlayer.seekTo(exoPlayer.currentPosition.coerceAtLeast(0L))
-                    }
-                    updateSnapshotFromPlayer()
-                }
                 syncEffectiveRepeatModeOnPlayerThread()
             }
         }
@@ -279,9 +286,23 @@ class PlayerController(
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_READY) {
+                consecutiveErrorRecoveryCount = 0
                 loopEngine.onVideoFrameOrReadyRendered()
             } else if (playbackState == Player.STATE_ENDED) {
                 saveCurrentTrackPosition()
+            }
+            updateSnapshotFromPlayer()
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            if (exoPlayer.mediaItemCount > 0 && consecutiveErrorRecoveryCount < MAX_AUTO_RECOVERY_ATTEMPTS) {
+                consecutiveErrorRecoveryCount++
+                val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                exoPlayer.prepare()
+                performInternalSeek {
+                    exoPlayer.seekTo(pos)
+                }
+                exoPlayer.play()
             }
             updateSnapshotFromPlayer()
         }
@@ -342,10 +363,26 @@ class PlayerController(
                                 jumpBookmark = null,
                                 autoTriggerInitialLoop = loopEngine.isPracticeModeActive.value && exoPlayer.playWhenReady,
                             )
+                            val cachedBpm = _detectedBpm.value
+                            val shouldForce = forceApplyPendingBpmItemId == targetItemId
+                            if (shouldForce && cachedBpm != null) {
+                                forceApplyPendingBpmItemId = null
+                            }
+                            if (cachedBpm != null &&
+                                loopEngine.practiceState.value.itemId == targetItemId &&
+                                (shouldForce || loopEngine.practiceState.value.bpm == DEFAULT_UNSET_BPM)
+                            ) {
+                                loopEngine.applyAutoDetectedBpm(cachedBpm)
+                            }
                             syncEffectiveRepeatModeOnPlayerThread()
                         }
                     }
                 } else {
+                    bpmJob?.cancel()
+                    bpmJob = null
+                    _detectedBpm.value = null
+                    _isDetectingBpm.value = false
+                    forceApplyPendingBpmItemId = null
                     loopEngine.bindTrack(
                         state = PracticeState(itemId = -1L),
                         isVideo = false,
@@ -360,7 +397,8 @@ class PlayerController(
     init {
         runOnPlayerThread {
             lastAppliedSpeed = exoPlayer.playbackParameters.speed
-            lastAppliedPitch = exoPlayer.playbackParameters.pitch
+            lastAppliedPitch = 1.0f
+            SharedExoPlayerHolder.updateSpeedAndPitch(lastAppliedSpeed, 1.0f)
             exoPlayer.addListener(playerListener)
             exoPlayer.repeatMode = Player.REPEAT_MODE_ALL
             ensureMediaServiceBound()
@@ -402,9 +440,9 @@ class PlayerController(
         trackTransitionJob?.cancel()
         trackTransitionJob = null
         metronome.cancel()
-        loadWaveformFor(targetItem)
 
         runOnPlayerThread {
+            consecutiveErrorRecoveryCount = 0
             ensureMediaServiceBound()
             suppressAutoTransitionLoad = true
             try {
@@ -455,6 +493,7 @@ class PlayerController(
                     jumpBookmark = targetBookmark,
                     autoTriggerInitialLoop = true,
                 )
+                loadWaveformFor(targetItem)
                 syncEffectiveRepeatModeOnPlayerThread()
 
                 if (!metronome.isRunning) {
@@ -668,10 +707,26 @@ class PlayerController(
         )
     }
 
+    fun autoDetectBpm() {
+        runOnPlayerThread {
+            val item = _snapshot.value.currentItem ?: return@runOnPlayerThread
+            val existing = _detectedBpm.value
+            if (existing != null) {
+                loopEngine.applyAutoDetectedBpm(existing)
+                _hapticTicks.tryEmit(Unit)
+            } else if (bpmJob?.isActive == true) {
+                forceApplyPendingBpmItemId = item.itemId
+            } else {
+                startBpmDetectionFor(item, forceApply = true)
+            }
+        }
+    }
+
     fun releaseUiResources() {
         positionTickerJob?.cancel()
         sleepTimerJob?.cancel()
         waveformJob?.cancel()
+        bpmJob?.cancel()
         trackTransitionJob?.cancel()
         metronome.cancel()
         runOnPlayerThread {
@@ -691,6 +746,46 @@ class PlayerController(
             val extracted = waveformExtractor.loadOrExtract(item)
             if (_snapshot.value.currentItem?.itemId == item.itemId) {
                 _waveformBars.value = extracted
+            }
+        }
+        startBpmDetectionFor(item, forceApply = false)
+    }
+
+    private fun startBpmDetectionFor(item: MediaItem, forceApply: Boolean) {
+        bpmJob?.cancel()
+        _detectedBpm.value = null
+        _isDetectingBpm.value = true
+        if (forceApply) {
+            forceApplyPendingBpmItemId = item.itemId
+        } else if (forceApplyPendingBpmItemId != item.itemId) {
+            forceApplyPendingBpmItemId = null
+        }
+        bpmJob = mainScope.launch {
+            var detected: Int? = null
+            try {
+                detected = waveformExtractor.loadOrDetectBpm(item)
+            } finally {
+                runOnPlayerThread {
+                    if (_snapshot.value.currentItem?.itemId == item.itemId) {
+                        _detectedBpm.value = detected
+                        _isDetectingBpm.value = false
+                        val shouldForce = forceApplyPendingBpmItemId == item.itemId
+                        if (shouldForce) {
+                            forceApplyPendingBpmItemId = null
+                        }
+                        if (detected != null &&
+                            loopEngine.practiceState.value.itemId == item.itemId &&
+                            (shouldForce || loopEngine.practiceState.value.bpm == DEFAULT_UNSET_BPM)
+                        ) {
+                            loopEngine.applyAutoDetectedBpm(detected)
+                            if (shouldForce) {
+                                _hapticTicks.tryEmit(Unit)
+                            }
+                        }
+                    } else if (_snapshot.value.currentItem == null) {
+                        _isDetectingBpm.value = false
+                    }
+                }
             }
         }
     }
@@ -799,6 +894,8 @@ class PlayerController(
 
     companion object {
         private const val SONIC_IDENTITY_EPSILON = 0.0001f
+        private const val DEFAULT_UNSET_BPM = 120
+        private const val MAX_AUTO_RECOVERY_ATTEMPTS = 3
 
         private val FAST_VIDEO_KEYFRAME_SEEK = SeekParameters(
             /* toleranceBeforeUs = */ 1_500_000L,
@@ -808,7 +905,10 @@ class PlayerController(
         internal data class PlaybackParamsDecision(
             val safeSpeed: Float,
             val safePitch: Float,
-            val shouldFlushAudioSink: Boolean,
+            val exoPlaybackSpeed: Float,
+            val exoPlaybackPitch: Float,
+            val shouldUpdateExoPlaybackParameters: Boolean,
+            val shouldFlushAudioSink: Boolean = false,
         )
 
         internal fun evaluatePlaybackParametersUpdate(
@@ -819,15 +919,14 @@ class PlayerController(
         ): PlaybackParamsDecision {
             val safeSpeed = requestedSpeed.coerceIn(0.25f, 2.0f)
             val safePitch = requestedPitch.coerceIn(0.5f, 2.0f)
-            val wasIdentity = kotlin.math.abs(previousSpeed - 1.0f) < SONIC_IDENTITY_EPSILON &&
-                kotlin.math.abs(previousPitch - 1.0f) < SONIC_IDENTITY_EPSILON
-            val isIdentity = kotlin.math.abs(safeSpeed - 1.0f) < SONIC_IDENTITY_EPSILON &&
-                kotlin.math.abs(safePitch - 1.0f) < SONIC_IDENTITY_EPSILON
-            val pitchChanged = kotlin.math.abs(safePitch - previousPitch) > SONIC_IDENTITY_EPSILON
+            val speedChanged = kotlin.math.abs(safeSpeed - previousSpeed) > SONIC_IDENTITY_EPSILON
             return PlaybackParamsDecision(
                 safeSpeed = safeSpeed,
                 safePitch = safePitch,
-                shouldFlushAudioSink = pitchChanged || (wasIdentity != isIdentity),
+                exoPlaybackSpeed = safeSpeed,
+                exoPlaybackPitch = 1.0f,
+                shouldUpdateExoPlaybackParameters = speedChanged,
+                shouldFlushAudioSink = false,
             )
         }
     }

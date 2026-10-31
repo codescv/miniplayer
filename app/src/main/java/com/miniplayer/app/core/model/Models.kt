@@ -380,6 +380,8 @@ object PracticeMath {
         return (clamped * 100f).roundToInt() / 100f
     }
 
+    fun clampBpm(bpm: Int): Int = bpm.coerceIn(30, 300)
+
     fun computePitchFactor(semitones: Int, cents: Int): Float {
         val st = semitones.coerceIn(-6, 6)
         val ct = cents.coerceIn(-50, 50)
@@ -387,7 +389,7 @@ object PracticeMath {
     }
 
     fun computeClickIntervalMs(bpm: Int, practiceSpeed: Float): Long {
-        val safeBpm = bpm.coerceIn(30, 300)
+        val safeBpm = clampBpm(bpm)
         val safeSpeed = practiceSpeed.coerceIn(0.25f, 2.00f)
         return (60_000.0 / (safeBpm * safeSpeed)).roundToLong().coerceAtLeast(80L)
     }
@@ -403,7 +405,7 @@ object PracticeMath {
         } else {
             (sorted[sorted.size / 2 - 1] + sorted[sorted.size / 2]) / 2.0
         }
-        return (60_000.0 / medianMs).roundToInt().coerceIn(30, 300)
+        return clampBpm((60_000.0 / medianMs).roundToInt())
     }
 
     fun normalizeLoopPoints(aMs: Long, bMs: Long, durationMs: Long): Pair<Long, Long>? {

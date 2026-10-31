@@ -403,7 +403,12 @@ class PracticeLoopEngine(
     }
 
     fun setBpm(bpm: Int) {
-        val safe = bpm.coerceIn(30, 300)
+        val safe = PracticeMath.clampBpm(bpm)
+        updatePracticeState { it.copy(bpm = safe) }
+    }
+
+    fun applyAutoDetectedBpm(bpm: Int) {
+        val safe = PracticeMath.clampBpm(bpm)
         updatePracticeState { it.copy(bpm = safe) }
     }
 

@@ -374,42 +374,55 @@ class PracticeLoopEngineTest {
     }
 
     @Test
-    fun pitchShiftFlushDecisionAndDefaultClickSound_behaveDeterministically() {
+    fun pitchShiftDecisionAndAutoDetectedBpm_behaveDeterministically() {
         assertTrue(AppSettings().countInClickSound)
         assertTrue(engine.isClickSoundEnabled)
 
-        // 1. Identity -> Identity: no flush needed
+        // 1. Identity -> Identity: no flush, no ExoPlayer speed update
         val idToId = PlayerController.evaluatePlaybackParametersUpdate(1.0f, 1.0f, 1.0f, 1.0f)
         assertFalse(idToId.shouldFlushAudioSink)
+        assertFalse(idToId.shouldUpdateExoPlaybackParameters)
+        assertEquals(1.0f, idToId.exoPlaybackPitch, 0.0001f)
 
-        // 2. Identity -> +1 semitone: Sonic activates & pitch changed -> flush required
+        // 2. Identity -> +1 semitone: RealTimeSonicAudioProcessor handles pitch directly without ExoPlayer flush or pitch update
         val plusOnePitch = PracticeMath.computePitchFactor(1, 0)
         val idToPitch = PlayerController.evaluatePlaybackParametersUpdate(1.0f, plusOnePitch, 1.0f, 1.0f)
-        assertTrue(idToPitch.shouldFlushAudioSink)
+        assertFalse(idToPitch.shouldFlushAudioSink)
+        assertFalse(idToPitch.shouldUpdateExoPlaybackParameters)
         assertEquals(plusOnePitch, idToPitch.safePitch, 0.0001f)
+        assertEquals(1.0f, idToPitch.exoPlaybackPitch, 0.0001f)
 
-        // 3. +1 semitone -> +2 semitones: pitch changed while Sonic active -> flush required
+        // 3. +1 semitone -> +2 semitones: still zero sink flush and pitch=1.0f on ExoPlayer
         val plusTwoPitch = PracticeMath.computePitchFactor(2, 0)
         val pitchToPitch = PlayerController.evaluatePlaybackParametersUpdate(1.0f, plusTwoPitch, 1.0f, plusOnePitch)
-        assertTrue(pitchToPitch.shouldFlushAudioSink)
+        assertFalse(pitchToPitch.shouldFlushAudioSink)
+        assertFalse(pitchToPitch.shouldUpdateExoPlaybackParameters)
+        assertEquals(1.0f, pitchToPitch.exoPlaybackPitch, 0.0001f)
 
-        // 4. Identity -> 0.85x speed (pitch 1.0): Sonic active state flips false -> true -> flush required
-        val idToSlow = PlayerController.evaluatePlaybackParametersUpdate(0.85f, 1.0f, 1.0f, 1.0f)
-        assertTrue(idToSlow.shouldFlushAudioSink)
+        // 4. Identity -> 0.85x speed: ExoPlayer speed updates (with pitch=1.0f), zero manual seek flush
+        val idToSlow = PlayerController.evaluatePlaybackParametersUpdate(0.85f, plusTwoPitch, 1.0f, plusTwoPitch)
+        assertFalse(idToSlow.shouldFlushAudioSink)
+        assertTrue(idToSlow.shouldUpdateExoPlaybackParameters)
+        assertEquals(0.85f, idToSlow.exoPlaybackSpeed, 0.0001f)
+        assertEquals(1.0f, idToSlow.exoPlaybackPitch, 0.0001f)
 
-        // 5. 0.85x -> 0.80x speed (pitch constant 1.0): Sonic remains active, pitch unchanged -> no flush needed
-        val slowToSlower = PlayerController.evaluatePlaybackParametersUpdate(0.80f, 1.0f, 0.85f, 1.0f)
-        assertFalse(slowToSlower.shouldFlushAudioSink)
-
-        // 6. 0.80x -> 1.0x speed (pitch 1.0): Sonic active state flips true -> false -> flush required
-        val slowToId = PlayerController.evaluatePlaybackParametersUpdate(1.0f, 1.0f, 0.80f, 1.0f)
-        assertTrue(slowToId.shouldFlushAudioSink)
-
-        // 7. Out-of-bounds clamping
+        // 5. Out-of-bounds clamping
         val clamped = PlayerController.evaluatePlaybackParametersUpdate(0.05f, 4.0f, 1.0f, 1.0f)
         assertEquals(0.25f, clamped.safeSpeed, 0.0001f)
         assertEquals(2.0f, clamped.safePitch, 0.0001f)
-        assertTrue(clamped.shouldFlushAudioSink)
+        assertFalse(clamped.shouldFlushAudioSink)
+
+        // 6. Auto-detected BPM updates PracticeLoopEngine and persists state
+        engine.bindTrack(
+            state = PracticeState(itemId = 77L, bpm = 120),
+            isVideo = false,
+            activatePracticeMode = true,
+        )
+        persistedStates.clear()
+        engine.applyAutoDetectedBpm(138)
+        assertEquals(138, engine.practiceState.value.bpm)
+        assertEquals(1, persistedStates.size)
+        assertEquals(138, persistedStates.last().bpm)
     }
 
     private class FakeLoopPlayerPort(override var durationMs: Long) : LoopPlayerPort {
