@@ -2,23 +2,24 @@
 
 **Version:** `1.0.3` (`versionCode = 10003`, `applicationId = "com.miniplayer.app"`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch Verified (`v1.0.3`):** `wt/coder-ui-4`
+**Branch Verified (`v1.0.3`):** `wt/coder-ui-4` (`e111d07`) → `wt/tester-4`
 
 ---
 
-## 1. Build, Lint & APK Verification (`v1.0.3`)
+## 1. Build, Lint & Signed APK Verification (`v1.0.3`)
 
 All Android builds, pure-JVM unit/integration tests, and Android Lint checks succeeded **100% offline** (`--offline`) with zero errors.
 
 | Check | Details / Result | Status |
 |---|---|---|
 | **Toolchain** | JDK `21` (`JAVA_HOME`), Android `compileSdk = 35`, `targetSdk = 35`, `minSdk = 26`, Build-Tools `35.0.0`, Gradle `8.11.1`, AGP `8.7.1`, Kotlin `2.0.21`, Jetpack Compose Material 3, AndroidX Media3 `1.5.1` | **PASS** |
-| **Offline Verification Command** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug` | **PASS** |
+| **Offline Verification Command** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug assembleRelease` | **PASS** |
 | **Android Lint (`lintDebug`)** | `0 errors, 36 warnings` (zero `MissingPermission`, `ExportedService`, `UnsafeOptInUsageError`, or `NewApi` errors; informational warnings are SDK/dependency version suggestions) | **PASS** |
 | **Zero Broad Storage Permissions** | Strictly **0** `READ_MEDIA_AUDIO`, `READ_MEDIA_VIDEO`, `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`, or `MANAGE_EXTERNAL_STORAGE` permissions in `AndroidManifest.xml`; pure SAF (`ACTION_OPEN_DOCUMENT_TREE`) folder grants | **PASS** |
 | **Network Surface Hygiene** | `android:usesCleartextTraffic="false"` in `AndroidManifest.xml`; outbound traffic restricted strictly to HTTPS keyless metadata APIs (MusicBrainz / Cover Art Archive / iTunes CDN / LRCLIB) and HTTPS GitHub Releases auto-updater, plus user-started on-demand LAN/loopback Web Studio (`:8088`) | **PASS** |
 | **Terminology & Emoji-Free UI Hygiene** | Strictly **0** `练琴` strings across `app/src/main/**` and user-facing documentation; **0** runtime emojis across Compose screens (`LibraryScreen`, `PlaylistsScreen`, `NowPlayingSheet`, `PracticeDeck`, `VideoPracticeSurface`, `SettingsScreen`, `LanStudioSheet`) and `LanStudioWebApp` | **PASS** |
 | **Debug APK (`v1.0.3`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,402,102` bytes, `versionName = "1.0.3-DEBUG"`, `versionCode = 10003`) | **PASS** |
+| **Signed Release APK (`v1.0.3`)** | `MiniPlayer-v1.0.3.apk` (`14,278,802` bytes, SHA-256 `452b7a415dd386b4f90b4c4d389a66cd25a41c70afe1b1429d4b854723ccb1d8`, `zipalign -c 4` verified, APK Signature Scheme v2 + v3 verified, Signer #1 Certificate SHA-256 `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5` — 100% certificate continuity with `v1.0.0`–`v1.0.2`) | **PASS** |
 
 ---
 
