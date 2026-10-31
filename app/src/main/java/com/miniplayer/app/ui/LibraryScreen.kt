@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.miniplayer.app.core.model.*
+import com.miniplayer.app.ui.components.GuitarIcon
 import com.miniplayer.app.ui.components.MediaArtwork
 import com.miniplayer.app.ui.theme.tnum
 
@@ -550,7 +551,7 @@ private fun FoldersRootList(
                                 text = {
                                     Text(if (root.isPracticeFolder) "取消练习文件夹" else "设为练习文件夹")
                                 },
-                                leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+                                leadingIcon = { Icon(GuitarIcon, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
                                     onTogglePractice(root)
@@ -744,7 +745,7 @@ private fun FolderBrowseView(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.Tune,
+                                imageVector = GuitarIcon,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onTertiaryContainer,
                                 modifier = Modifier.size(18.dp),
@@ -825,7 +826,7 @@ private fun FolderBrowseView(
                                 text = {
                                     Text(if (sub.isPracticeFolder) "取消练习文件夹" else "设为练习文件夹")
                                 },
-                                leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+                                leadingIcon = { Icon(GuitarIcon, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
                                     onToggleSubfolderPractice(sub)
@@ -1245,7 +1246,7 @@ private fun VideosListContent(
                         ) {
                             DropdownMenuItem(
                                 text = { Text("以练习模式打开") },
-                                leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+                                leadingIcon = { Icon(GuitarIcon, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
                                     onPracticeVideo(sortedVideos, idx)
@@ -1418,7 +1419,7 @@ private fun AlbumDetailContent(
                             onClick = onPracticePlayAll,
                             modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
                         ) {
-                            Icon(Icons.Outlined.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Icon(GuitarIcon, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("练习播放")
                         }

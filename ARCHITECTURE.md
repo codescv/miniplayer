@@ -1,6 +1,6 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.0 (`versionCode = 10000`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.2 (`versionCode = 10002`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
 > **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · SQLite (`SQLiteOpenHelper` + Kotlin `StateFlow`)
 
@@ -13,9 +13,9 @@
 ```mermaid
 flowchart TD
     subgraph UI_Player["feat/ui-player (@coder-ui)"]
-        UI["com.miniplayer.app.ui.*\nM3 Screens · PracticeDeck · VideoPracticeSurface\nMetadataEditorSheet · SettingsScreen"]
+        UI["com.miniplayer.app.ui.*\nM3 Screens · GuitarIcon · PracticeDeck · VideoPracticeSurface\nMetadataEditorSheet · SettingsScreen"]
         VM["MiniPlayerViewModel"]
-        PL["com.miniplayer.app.player.*\nPlaybackService · PlayerController\nPracticeLoopEngine · CountInMetronome · WaveformExtractor"]
+        PL["com.miniplayer.app.player.*\nPlaybackService · RealTimeSonicAudioProcessor · PlayerController\nPracticeLoopEngine · CountInMetronome · WaveformExtractor · BpmDetector"]
     end
 
     subgraph LAN_Studio["feat/lan-studio (@coder-lan)"]
@@ -252,17 +252,21 @@ CREATE TABLE app_settings (
 
 ## 5. `feat/ui-player` 关键工程实现契约 (`@coder-ui`)
 
-1. **`PlaybackService.kt` (`MediaSessionService`)**：
+1. **`PlaybackService.kt` (`MediaSessionService`) & `RealTimeSonicAudioProcessor.kt` (`v1.0.2`)**：
    - Manifest 声明 `android:foregroundServiceType="mediaPlayback"` 与 `androidx.media3.session.MediaSessionService` Intent Filter。
    - `ExoPlayer.Builder(this)` 配置 `AudioAttributes` (`USAGE_MEDIA`, `AUDIO_CONTENT_TYPE_MUSIC`)、`handleAudioFocus = true`、**`setHandleAudioBecomingNoisy(true)`**。
+   - **零寻址实时变调管线 (`RealTimeSonicAudioProcessor` + `RealTimeAudioProcessorChain`)**：`DefaultAudioSink` 关闭浮点输出与硬件 `AudioTrack` 倍速参数，注入常驻激活（`isActive() == true`）的 `RealTimeSonicAudioProcessor`。连续点击升降调时，处理器在 `queueInput` 内将旧 `SonicAudioProcessor` 残余采样排空拼接至直接内存 `stagingBuffer` 并原地切换参数，`PlayerController` 绝不调用 `exoPlayer.seekTo`、亦不在 `exoPlayer.playbackParameters` 上变动 `pitch`，从而避免 `AudioTrack` 重建与解码器冲洗。
    - 视频熄屏续播：当 Activity 进入后台/熄屏时仅调用 `exoPlayer.clearVideoTextureView(surface)` 而不调用 `pause()`，使视频音轨在后台零中断继续播放；Activity 回到前台时重新绑定 `TextureView`。
-2. **`PracticeLoopEngine.kt` & 线程安全铁律**：
+2. **`PracticeLoopEngine.kt`、`WaveformLoopRuler` & `BpmDetector.kt` (`v1.0.2`)**：
    - 所有 `ExoPlayer` API 调用严格运行在主线程 (`exoPlayer.applicationLooper`)。
    - A-B 循环边界通过 `exoPlayer.createMessage { _, _ -> handleLoopWrap() }.setLooper(exoPlayer.applicationLooper).setPosition(bMs).setDeleteAfterDelivery(false).send()` 注册；任何修改 `aMs`/`bMs`、挂起循环、切换曲目或手动 `seekTo` 前必须先执行 `activeMessage?.cancel()`。
+   - **1:1 浮点手柄拖拽 (`WaveformLoopRuler`)**：`.pointerInput(safeDuration)` 严格仅以 `safeDuration` 为 Key，内部通过 `rememberUpdatedState` 读取实时 `activeAMs`/`activeBMs` 并记录手指抓取偏移 `dragGrabOffsetPx`，拖拽中调用 `setLoopPointsFromDrag(..., commitPersist = false)` 实时移动标尺，松手时 `commitPersist = true` 落库并重排 `PlayerMessage`。
+   - **自动 BPM 检测 (`BpmDetector` + `WaveformExtractor.loadOrDetectBpm`)**：优先命中 `cacheDir/waveforms/bpm_<id>_<mtime>.dat` 缓存或内嵌 `TBPM` 标签；否则利用 `MediaExtractor` + `MediaCodec` 跳过前奏截取最多约 20 秒 16-bit PCM 送入 `OnsetFluxAccumulator`（`100 Hz` 能量差分包络 + `45–220 BPM` 自相关与倍频谐波加权），当曲目处于默认 `120 BPM` 时自动回填，并支持 UI 随时展开 `BpmQuickBar` 一键点击 `"自动"` 重测。
    - 视频连续循环（`countInMode == OFF`）：记录 `seekStartRealtimeMs` 至 `Player.Listener.onRenderedFirstFrame`（或 `onPlaybackStateChanged(STATE_READY)`）耗时；若 `> 80 ms` 且 `videoSeekMode == AUTO`，自动将 `exoPlayer.setSeekParameters(SeekParameters(1_500_000L, 0L))` 应用于后续循环绕回。
-3. **练习模式确定性状态机 (`MiniPlayerViewModel.kt`)**：
+3. **练习模式确定性状态机与专属视觉标识 (`MiniPlayerViewModel.kt` & `GuitarIcon.kt`)**：
+   - 全应用（日常播放页、练习顶栏、横屏视频 HUD、曲库/列表菜单）统一采用自绘矢量吉他图标 **`GuitarIcon`** 标识练习模式，屏幕常亮采用带文字标签的 **`常亮` 胶囊按钮 (`KeepScreenOnPillButton`)**。
    - 点播入口携带 `PlayContext` 枚举：`PRACTICE_PLAYLIST` | `PRACTICE_FOLDER` | `BOOKMARK_JUMP(bookmarkId)` | `CASUAL`。
-   - 前三者立即置 `isPracticeModeActive = true`、展开 `PracticeDeck` 并应用 `PracticeState`（倍速 + 半音/音分 + A/B 区间）；`CASUAL` 置 `isPracticeModeActive = false`、播放参数保持 `(1.0f, 1.0f)`，同时若该曲存有书签或非默认练习状态则在播放页显示 `[ 🎯 练习模式 · 含 N 段 ]` 胶囊。
+   - 前三者立即置 `isPracticeModeActive = true`、展开 `PracticeDeck` 并应用 `PracticeState`（倍速 + 半音/音分 + BPM + A/B 区间）；`CASUAL` 置 `isPracticeModeActive = false`、播放参数保持 `(1.0f, 1.0f)`。
 
 ---
 

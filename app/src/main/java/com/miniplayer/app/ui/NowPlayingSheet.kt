@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.ui.components.ArtworkLoader
 import com.miniplayer.app.ui.components.GuitarIcon
@@ -43,7 +44,6 @@ import com.miniplayer.app.ui.theme.AlbumPaletteExtractor
 import com.miniplayer.app.ui.theme.rememberAnimatedColorScheme
 import com.miniplayer.app.ui.theme.tnum
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -51,9 +51,6 @@ fun NowPlayingSheet(
     viewModel: MiniPlayerViewModel,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    detectedBpm: Int? = null,
-    isDetectingBpm: Boolean = false,
-    onAutoDetectBpm: () -> Unit = { viewModel.invokeAutoDetectBpm() },
 ) {
     val snapshot by viewModel.playbackSnapshot.collectAsState()
     val item = snapshot.currentItem ?: run {
@@ -71,13 +68,8 @@ fun NowPlayingSheet(
     val waveformBars by viewModel.waveformBars.collectAsState()
     val lyrics by viewModel.currentLyrics.collectAsState()
     val isLoadingLyrics by viewModel.isLoadingLyrics.collectAsState()
-
-    val vmDetectedBpmFlow = remember(viewModel) { viewModel.resolveDetectedBpmFlow() }
-    val vmIsDetectingBpmFlow = remember(viewModel) { viewModel.resolveIsDetectingBpmFlow() }
-    val vmDetectedBpm = vmDetectedBpmFlow?.collectAsState()?.value
-    val vmIsDetectingBpm = vmIsDetectingBpmFlow?.collectAsState()?.value ?: false
-    val effectiveDetectedBpm = detectedBpm ?: vmDetectedBpm
-    val effectiveIsDetectingBpm = isDetectingBpm || vmIsDetectingBpm
+    val detectedBpm by viewModel.detectedBpm.collectAsStateWithLifecycle()
+    val isDetectingBpm by viewModel.isDetectingBpm.collectAsStateWithLifecycle()
 
     val playerController = viewModel.playerController
     val loopEngine = playerController.loopEngine
@@ -173,9 +165,9 @@ fun NowPlayingSheet(
                 waveformBars = waveformBars,
                 countInProgress = countInProgress,
                 keepScreenOn = settings.keepScreenOnInPractice,
-                detectedBpm = effectiveDetectedBpm,
-                isDetectingBpm = effectiveIsDetectingBpm,
-                onAutoDetectBpm = onAutoDetectBpm,
+                detectedBpm = detectedBpm,
+                isDetectingBpm = isDetectingBpm,
+                onAutoDetectBpm = viewModel::autoDetectBpm,
                 onToggleKeepScreenOn = {
                     viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
                 },
@@ -646,9 +638,9 @@ fun NowPlayingSheet(
                                 currentPositionMs = snapshot.positionMs,
                                 keepScreenOn = settings.keepScreenOnInPractice,
                                 isVideo = item.isVideo,
-                                detectedBpm = effectiveDetectedBpm,
-                                isDetectingBpm = effectiveIsDetectingBpm,
-                                onAutoDetectBpm = onAutoDetectBpm,
+                                detectedBpm = detectedBpm,
+                                isDetectingBpm = isDetectingBpm,
+                                onAutoDetectBpm = viewModel::autoDetectBpm,
                                 onToggleKeepScreenOn = {
                                     viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
                                 },
@@ -1146,37 +1138,6 @@ private fun SleepTimerBottomSheet(
                     Text("关闭睡眠定时")
                 }
             }
-        }
-    }
-}
-
-@Suppress("UNCHECKED_CAST")
-private fun MiniPlayerViewModel.resolveDetectedBpmFlow(): StateFlow<Int?>? =
-    runCatching {
-        javaClass.getMethod("getDetectedBpm").invoke(this) as? StateFlow<Int?>
-    }.getOrNull() ?: runCatching {
-        playerController.javaClass.getMethod("getDetectedBpm").invoke(playerController) as? StateFlow<Int?>
-    }.getOrNull()
-
-@Suppress("UNCHECKED_CAST")
-private fun MiniPlayerViewModel.resolveIsDetectingBpmFlow(): StateFlow<Boolean>? =
-    runCatching {
-        val m = runCatching { javaClass.getMethod("isDetectingBpm") }.getOrNull()
-            ?: javaClass.getMethod("getIsDetectingBpm")
-        m.invoke(this) as? StateFlow<Boolean>
-    }.getOrNull() ?: runCatching {
-        val m = runCatching { playerController.javaClass.getMethod("isDetectingBpm") }.getOrNull()
-            ?: playerController.javaClass.getMethod("getIsDetectingBpm")
-        m.invoke(playerController) as? StateFlow<Boolean>
-    }.getOrNull()
-
-private fun MiniPlayerViewModel.invokeAutoDetectBpm() {
-    val invokedOnVm = runCatching {
-        javaClass.getMethod("autoDetectBpm").invoke(this)
-    }.isSuccess
-    if (!invokedOnVm) {
-        runCatching {
-            playerController.javaClass.getMethod("autoDetectBpm").invoke(playerController)
         }
     }
 }

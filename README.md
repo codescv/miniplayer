@@ -13,11 +13,12 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
   - **2 Bottom Tabs + 4 Pure-Text M3 Views**: `文件夹` (icon-only tree `⇄` flat view toggle and icon-only Add Folder FAB), `专辑` (`(Album, AlbumArtist)` grouping + `未知专辑` bucket), `歌手` (multi-artist `/` · `;` · `、` · `feat.` splitting with band allowlist like `AC/DC`), and `视频` (16:9 keyframe thumbnails, resolution badges, bookmark counts, and watch progress).
 
 - **Unified Audio/Video Player & Compact 2-Row Practice Deck (`练习模式 / 练习工作台`)**:
-  - **Deterministic Progressive Disclosure**: Everyday albums/folders play in **Casual Mode** (`1.0x`, clean cover/video canvas, synced `.lrc` lyrics via dead-centered `词` toggle, icon-only Practice Mode & Add-to-Playlist buttons, sleep timer, and symmetric 5-button transport). Playing from a **`练习列表`**, **`练习文件夹`**, or **`含段落书签`** automatically opens the **Practice Deck** and restores saved speed, pitch, and A-B loops.
+  - **Deterministic Progressive Disclosure & Guitar Icon (`GuitarIcon`)**: Everyday albums/folders play in **Casual Mode** (`1.0x`, clean cover/video canvas, synced `.lrc` lyrics via dead-centered `词` toggle, custom **Guitar Icon (`GuitarIcon`)** Practice Mode toggle, icon-only Add-to-Playlist button, sleep timer, and symmetric 5-button transport). Playing from a **`练习列表`**, **`练习文件夹`**, or **`含段落书签`** automatically opens the **Practice Deck** and restores saved speed, pitch, BPM, and A-B loops.
   - **Ergonomic 2-Row Practice Deck (`360 dp` portrait friendly)**:
-    - **Row 1 — Sample-Accurate A-B Loop & Bookmarks**: Media3 `PlayerMessage` scheduled directly on `exoPlayer.applicationLooper`, `44 dp` 240-bar RMS waveform with `48×48 dp` waterdrop handles, compact `A` / `B` set buttons, `A -` / `+ A` and `B -` / `+ B` (`±0.5s` coarse / `±0.1s` long-press fine) nudges, instant restart-from-`A` (`⏮` single-tap guard with `400 ms` double-tap to `00:00`/previous), non-destructive loop suspend/clear, and an icon-only **Save Bookmark** button (`Intro`, `Verse`, `Pre-Chorus`, `Chorus`, `Bridge`, `Solo 1`, `Solo 2`, `Outro`, or custom label).
-    - **Row 2 — Speed Stepper & Icon-Only Practice Toggles**: `0.25x–2.00x` pitch-preserving speed stepper (`[-5%]` · `1.00x` reset/slider · `[+5%]`) paired with icon-only toggles for **Pitch Shift (`升降调`)**, **Tempo-Scaled Count-In (`预备倒计时`: `关 / 1s / 2s / 4拍`, woodblock click enabled by default + inline Tap Tempo & Pre-Roll)**, **Keep Screen On (`保持常亮`)**, and **Video Mirror (`水平镜像`)**.
-    - **Zero-Silence Sonic Pitch Shift (`升降调零静音管线`)**: `-6` to `+6` semitones + `-50` to `+50` cents fine tuning backed by a 16-bit PCM `DefaultAudioSink` (`enableFloatOutput = false`, `enableAudioTrackPlaybackParams = false`) and in-place `SonicAudioProcessor` audio sink flush on pitch transitions—preventing audio dropout on 24-bit/float FLAC/WAV/MP4 tracks.
+    - **Row 1 — Butter-Smooth A-B Loop & Bookmarks**: Media3 `PlayerMessage` scheduled directly on `exoPlayer.applicationLooper`, `44 dp` 240-bar RMS waveform with `48×48 dp` rounded pill handles and **1:1 float finger tracking** (`pointerInput(safeDuration)` keyed strictly on track duration so active playback never interrupts handle drags), clean **`[A]` / `[B]`** timestamp buttons (tap anytime to mark or update `A` / `B` at current playhead), instant restart-from-`A` (`⏮` single-tap guard with `400 ms` double-tap to `00:00`/previous), non-destructive loop suspend/clear, and an icon-only **Save Bookmark** button (`Intro`, `Verse`, `Pre-Chorus`, `Chorus`, `Bridge`, `Solo 1`, `Solo 2`, `Outro`, or custom label).
+    - **Row 2 — Speed Stepper, Anytime BPM Auto-Detect & Labeled `"常亮"` Pill**: `0.25x–2.00x` pitch-preserving speed stepper (`[-5%]` · `1.00x` reset/slider · `[+5%]`) paired with **Pitch Shift (`升降调`)**, **Tempo-Scaled Count-In (`预备倒计时`: `关 / 1s / 2s / 4拍`)**, anytime **`BPM <bpm>`** chip (expands `BpmQuickBar` with 1-tap **`"自动"`** auto-detection + `Tap` tempo), clear **`"常亮"`** labeled pill button (`KeepScreenOnPillButton`), and **Video Mirror (`水平镜像`)**.
+    - **Zero-Seek Real-Time Sonic Pitch Shift (`RealTimeSonicAudioProcessor`)**: `-6` to `+6` semitones + `-50` to `+50` cents fine tuning backed by a custom always-active 16-bit PCM `RealTimeSonicAudioProcessor` (`RealTimeAudioProcessorChain`). Rapid multi-click pitch shifts (`-1 半音` / `+1 半音` / `-5c` / `+5c`) drain outgoing `SonicAudioProcessor` frames seamlessly into a direct staging buffer and swap parameters in-place—**zero `exoPlayer.seekTo` calls, zero `AudioTrack` / `MediaCodec` resets, and zero audio dropouts**.
+    - **Automatic BPM Detection (`BpmDetector` + `WaveformExtractor.loadOrDetectBpm`)**: Automatically populates `practiceState.bpm` when a track loads at default `120` BPM (checking disk cache, embedded `TBPM`, or 100 Hz onset-envelope autocorrelation over decoded PCM skipping silent intros), with 1-tap **`"自动"`** re-detection anytime in `BpmQuickBar`.
   - **Video Practice Enhancements**: `1.0x–4.0x` pinch-to-zoom & pan on fretboard/tab details, horizontal mirror flip, adaptive long-GOP video loop seeking (`>80 ms` keyframe fallback with `AUTO/EXACT` toggle), top/bottom dockable translucent landscape HUD, per-mode `FLAG_KEEP_SCREEN_ON`, and seamless screen-off audio-only continuation.
 
 - **Dual-Layer Metadata Editor & Zero-Key Online Auto-Completion**:
@@ -35,6 +36,16 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 - **Verified In-App GitHub Auto-Updater**:
   - Checks [`codescv/miniplayer` Releases](https://github.com/codescv/miniplayer/releases/latest) over HTTPS (`≤ 5` manual redirect hops, zero HTTP downgrade), verifies `SHA256SUMS.txt` digests, runs 4-stage `ApkValidator` checks (`PK\x03\x04` + `AndroidManifest.xml`, `com.miniplayer.app` package match, strict `versionCode > installed` anti-downgrade, and signing certificate SHA-256 equality), and launches `FileProvider` installation.
+
+---
+
+## What's New in `v1.0.2` (`versionCode = 10002`)
+
+1. **Guitar Icon for Practice Mode (`GuitarIcon.kt`, `NowPlayingSheet.kt`, `VideoPracticeSurface.kt`, `LibraryScreen.kt`, `PlaylistsScreen.kt`)**: Replaced generic slider/tune icons with a custom Material-styled diagonal acoustic/electric **Guitar Icon (`GuitarIcon`)** across Casual Mode, Practice Mode top bar, landscape video HUD, and Practice Folder / Practice Playlist actions.
+2. **Zero-Seek Multi-Click Pitch Shift (`RealTimeSonicAudioProcessor.kt`, `PlaybackService.kt`, `PlayerController.kt`)**: Introduced an always-active `RealTimeSonicAudioProcessor` (`RealTimeAudioProcessorChain`) that drains outgoing `SonicAudioProcessor` tail samples into a direct staging buffer and updates pitch/speed in-place—eliminating `exoPlayer.seekTo` pipeline flushes and `AudioTrack` re-creations so rapid multi-click `-1 半音` / `+1 半音` / `-5c` / `+5c` adjustments never stall playback.
+3. **Labeled `"常亮"` Keep-Screen-On Pill (`PracticeDeck.kt`, `VideoPracticeSurface.kt`)**: Replaced the bare sun icon with a self-explanatory **`"常亮"`** pill button (`KeepScreenOnPillButton` with `Role.Switch` semantics) in both portrait Practice Deck and landscape video HUD.
+4. **Simplified `[A]` `[B]` Strip & Butter-Smooth Handle Dragging (`PracticeDeck.kt`, `VideoPracticeSurface.kt`)**: Removed cluttered `A+ / A- / B+ / B-` nudge buttons and the left `Replay` button in favor of clean `[A]` / `[B]` timestamp buttons, and keyed `WaveformLoopRuler` `.pointerInput(safeDuration)` strictly on duration with 1:1 float grab-offset tracking so dragging `A` and `B` handles stays rock-steady during active loop playback.
+5. **Automatic BPM Detection & Anytime BPM Bar (`BpmDetector.kt`, `WaveformExtractor.kt`, `PracticeDeck.kt`)**: Added 100 Hz onset-envelope autocorrelation BPM detection (`loadOrDetectBpm` with disk cache and silent-intro skip) that auto-populates `practiceState.bpm` when loading tracks at default `120` BPM, plus an anytime `BPM <bpm>` chip and 1-tap **`"自动"`** button in `BpmQuickBar`.
 
 ---
 
@@ -56,7 +67,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.1.apk` | Signed Android Release APK (`versionCode = 10001`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.2.apk` | Signed Android Release APK (`versionCode = 10002`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `app-release.apk` | Identical signed Android Release APK artifact |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -73,7 +84,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 export JAVA_HOME="/path/to/jdk21"
 export ANDROID_HOME="/path/to/Android/Sdk"
 
-# Run full pure-JVM unit & cross-module integration tests (52/52), debug/release APK builds, and Android Lint
+# Run full pure-JVM unit & cross-module integration tests (64/64), debug/release APK builds, and Android Lint
 ./gradlew --offline testDebugUnitTest assembleDebug assembleRelease lintDebug
 ```
 
@@ -85,6 +96,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine & `v1.0.1` 2-row ergonomics)
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL, Media3 threading/GOP/Sonic specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`52/52` tests), Lint, and `v1.0.1` verification report
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine & `v1.0.2` 2-row ergonomics)
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL, Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`BpmDetector` specs, LAN Web Studio & Auto-Updater security invariants
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`64/64` tests), Lint, and `v1.0.2` verification report

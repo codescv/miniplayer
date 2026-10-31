@@ -13,6 +13,7 @@ local.properties
 # Android Studio / Release artifacts
 .DS_Store
 *.apk
+*.idsig
 *.aab
 *.ap_
 *.jks

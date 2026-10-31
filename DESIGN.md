@@ -294,7 +294,7 @@ flowchart TD
 │ 缓存维护                                     │
 │   清理本地封面与波形缓存 (18.4 MB) … [清理]  │
 │ 关于与自动更新                               │
-│   版本 v1.0.1 · [检查 GitHub 更新] · 开源许可│
+│   版本 v1.0.2 · [检查 GitHub 更新] · 开源许可│
 └──────────────────────────────────────────────┘
 ```
 
@@ -375,11 +375,11 @@ stateDiagram-v2
 
 | 功能模块 | 触控尺寸与交互机制 | 边界规则与记忆策略 |
 |---|---|---|
-| **1. 音频波形 + 高精度 A-B 循环标尺** | 进度条高度扩展为 `44 dp` 振幅包络波形（直观辨识前奏鼓点、安静间奏与高能量 Solo 起点）；已激活 `A–B` 区间渲染 `tertiaryContainer` 半透明底色，`A` 与 `B` 竖线底部挂载 **`48×48 dp` 水滴形拖拽手柄**（手指拖柄时不遮挡上方波形与毫秒读数）。 | 波形由后台异步解码采样生成（240 柱 RMS 包络），落盘缓存至 `cacheDir/waveforms/`；未生成完前平滑显示标准高精度进度条，绝不阻塞起播。 |
-| **2. 三态无歧义 A-B 循环与纯图标书签 (`Row 1`, `44 dp` 高, `v1.0.1`)** | - **状态 0（未设点）**：通栏主按钮 **`A`**<br>- **状态 1（已设 A 点，继续播放中）**：`A mm:ss.d` + 主按钮 **`B`** + 清除图标<br>- **状态 2（已设 A-B 区间，单排紧凑排布）**：回 `A` 图标 · **`A -` \| `+ A`** · **`B -` \| `+ B`**（短按 `±0.5s`，长按精细 `±0.1s`）· 挂起/恢复循环图标 · 清除循环图标 · **纯图标「保存段落书签」按钮**。<br>- **底部 `⏮` 键防误跳保护**：在 `练习模式` 且存在激活 A-B 循环时，**单击底部 `⏮` 等同于回 `A`**（跳回 `A` 点并触发预备倒计时）；**`400 ms` 内双击 `⏮`** 才跳至 `00:00` / 切上一首。 | 最小合法循环跨度为 **`0.5s` (`500 ms`)**；若在 `playhead < A` 时点设 B，自动交换 `A`/`B` 保证 `A < B`；`loop_enabled`（开/挂起）与 `active_a_ms/b_ms` 分别持久化。 |
+| **1. 音频波形 + 1:1 顺滑 A-B 循环标尺 (`v1.0.2`)** | 进度条高度扩展为 `44 dp` 振幅包络波形（直观辨识前奏鼓点、安静间奏与高能量 Solo 起点）；已激活 `A–B` 区间渲染 `tertiaryContainer` 半透明底色，`A` 与 `B` 竖线底部挂载高辨识度圆角胶囊拖拽手柄；`.pointerInput(safeDuration)` 仅以曲目总时长为 Key，结合 `rememberUpdatedState` 与 1:1 浮点抓取偏移追踪，确保循环播放中拖拽 `A`/`B` 手柄丝滑跟手不中断。 | 波形由后台异步解码采样生成（240 柱 RMS 包络），落盘缓存至 `cacheDir/waveforms/`；未生成完前平滑显示标准高精度进度条，绝不阻塞起播。 |
+| **2. 极简无歧义 `[A]` `[B]` 循环栏与纯图标书签 (`Row 1`, `44 dp` 高, `v1.0.2`)** | 移除繁琐的 `A+/A-/B+/B-` 微调键与冗余左侧回放键，全状态统一为直观单排：<br>- **`[A]` 按钮**（显示 `A` 或 `A mm:ss.d`，点按即在当前播放头设/更新 A 点）+ **`[B]` 按钮**（显示 `B` 或 `B mm:ss.d`，点按即设/更新 B 点并激活循环）+ **挂起/恢复循环图标 (`Repeat`)** + **清除循环图标 (`Close`)** + **纯图标「保存段落书签」按钮 (`BookmarkAdd`)**。<br>- **底部 `⏮` 键防误跳保护**：在 `练习模式` 且存在激活 A-B 循环时，**单击底部 `⏮` 等同于回 `A`**（跳回 `A` 点并触发预备倒计时）；**`400 ms` 内双击 `⏮`** 才跳至 `00:00` / 切上一首。 | 最小合法循环跨度为 **`0.5s` (`500 ms`)**；若在 `playhead < A` 时点设 B，自动交换 `A`/`B` 保证 `A < B`；`loop_enabled`（开/挂起）与 `active_a_ms/b_ms` 分别持久化。 |
 | **3. 段落书签 (`段落书签 Section Bookmarks`)** | 波形条上方横向滚动 Chip 栏（存在书签时展示）：<br>`[ Intro 00:00–00:18 ]` · `[ Verse 1 ]` · `[ Solo 1 02:14–02:38 ]`<br>- **免打字一键命名**：点击工作台第 1 行右侧纯图标「保存段落书签」按钮弹出预设曲式标签组（`Intro` / `Verse` / `Pre-Chorus` / `Chorus` / `Bridge` / `Solo 1` / `Solo 2` / `Outro`），单手点一下标签即完成保存，也可输入自定义备注。<br>- **单击书签**：立即加载其 `A–B` 区间（及关联倍速）并跳至 `A` 点循环；长按书签支持更新范围 / 重命名 / 删除。 | 单曲支持保存无限个命名段落书签，按起始时间 `aMs` 自动升序排列，跨应用重启永久保存在本地数据库。 |
-| **4. 变速不变调步进 (`Row 2` 左侧, `0.25x – 2.00x`, `v1.0.1`)** | 基于 Media3 `SonicAudioProcessor` 实现高保真时域伸缩（移除独立预设胶囊排与渐进加速模块，保持严格 2 行极简布局）：<br>- 左侧固定三联步进组：左 **`[-5%]`** + 中央 **`0.85x`**（单击复位 `1.00x`，长按呼出 `0.25x–2.0x` 连续滑杆弹窗）+ 右 **`[+5%]`**。 | 按单曲独立记忆上次练习倍速；关闭练习模式回日常态时临时切回 `1.0x`，重开练习模式即恢复该曲记忆倍速。 |
-| **5. 纯图标练习开关组 (`Row 2` 右侧：`升降调` · `预备倒计时` · `保持常亮` · `视频镜像`)** | 第 2 行右侧以 `44×44 dp` 纯图标开关承载全部辅助功能：<br>- **`预备倒计时` (`Timer` 图标 + `1s`/`2s`/`4` 角标)**：单击循环切换 `关 → 1s → 2s → 4拍`（木鱼轻击提示音默认常开 `true`；长按切换 `2s` 原声前导 `Pre-Roll`；选中 `4拍` 时展开内联 BPM 步进与 `点按测速` 条，间隔按 $\text{round}(60000 / (\text{bpm} \times \text{practice\_speed}))$ 自动伸缩）。<br>- **`升降调` (`MusicNote` 图标)**：单击展开/收起内联半音（`-6 ~ +6 st`）与音分（`-50c ~ +50c`）调节条；非原调时图标高亮。<br>- **`保持常亮` (`LightMode` 图标)**：直接在练习工作台与横屏 HUD 一键开关练习期间的屏幕常亮（`FLAG_KEEP_SCREEN_ON`）。<br>- **`视频水平镜像` (`Flip` 图标，仅视频显示)**：一键水平翻转视频画面（`scaleX = -zoom`），按单条视频独立记忆。 | 倒计时期间任意点击可立即跳过等待；每首歌的 `bpm`、半音/音分偏移与视频镜像状态独立持久化。 |
+| **4. 变速不变调步进 (`Row 2` 左侧, `0.25x – 2.00x`, `v1.0.1+`)** | 基于自研实时 `RealTimeSonicAudioProcessor` 实现高保真时域伸缩（保持严格 2 行极简布局）：<br>- 左侧固定三联步进组：左 **`[-5%]`** + 中央 **`0.85x`**（单击复位 `1.00x`，长按呼出 `0.25x–2.0x` 连续滑杆弹窗）+ 右 **`[+5%]`**。 | 按单曲独立记忆上次练习倍速；关闭练习模式回日常态时临时切回 `1.0x`，重开练习模式即恢复该曲记忆倍速。 |
+| **5. 练习辅助控件组 (`Row 2` 右侧：`升降调` · `预备` · `BPM 自动测速` · `常亮` · `视频镜像`, `v1.0.2`)** | 第 2 行右侧以 `44 dp` 高控件承载全部辅助功能（播放页与曲库/列表统一使用专属**吉他图标 `GuitarIcon`** 代表练习模式）：<br>- **`升降调` (`MusicNote` 图标)**：单击展开/收起内联半音（`-6 ~ +6 半音`）与音分（`-50c ~ +50c`）调节条；连续多点变调零寻址卡顿。<br>- **`预备倒计时` (`Timer` 图标 + `1s`/`2s`/`4` 角标)**：单击循环切换 `关 → 1s → 2s → 4拍`（木鱼轻击提示音默认常开 `true`；长按亦可展开/收起 BPM 面板）。<br>- **`BPM <数值>` 胶囊与一键 `自动` 测速**：练习模式下随时点按 `BPM` 胶囊展开 `BpmQuickBar`（支持新曲加载自动检测填充默认 `120 BPM`，并提供一键 **`自动`** 重新检测与 `Tap` 点按测速）。<br>- **`常亮` 带字胶囊 (`KeepScreenOnPillButton`)**：以清晰的太阳图标 + **`常亮`** 文字胶囊直观表达屏幕常亮开关（`FLAG_KEEP_SCREEN_ON`），告别含义不明的裸太阳图标。<br>- **`视频水平镜像` (`Flip` 图标，仅视频显示)**：一键水平翻转视频画面（`scaleX = -zoom`），按单条视频独立记忆。 | 倒计时期间任意点击可立即跳过等待；每首歌的 `bpm`、半音/音分偏移与视频镜像状态独立持久化。 |
 
 ---
 
@@ -539,11 +539,12 @@ flowchart LR
    - **视频曲目 (`.mp4/.mkv/.webm`) 分场景寻帧策略**：
      - **场景 A（开启 `1s / 2s / 4拍` `Count-In` 预备倒计时）**：在进入倒计时的第 `0 ms` 立即以 `SeekParameters.EXACT` 执行 `seekTo(aPointMs)` + `pause()`，利用倒计时窗口期后台完成 GOP 内前置参考帧解码并停在精准 `A` 帧，**倒计时归零瞬间调用 `play()` 实现 `0 ms` 零延迟起播**。
      - **场景 B（`Count-In == 关`，无停顿连续 A-B 循环）**：针对 2–5 秒长 GOP 的 H.264/HEVC 视频若强行每次 `EXACT` 从前序 I 帧重解会导致 `200–600 ms` 音画顿挫，引擎内置**自适应寻帧探测**：默认先以 `SeekParameters.EXACT`（开启硬件 `MediaCodec` 高优先级预滚）执行首次绕回并实测首帧渲染耗时 $\Delta t_{\text{seek}}$；若 $\Delta t_{\text{seek}} \le 80\text{ ms}$ 则保持帧级精准；若遇到超长 GOP 重编码视频导致 $\Delta t_{\text{seek}} > 80\text{ ms}$，自动平滑降级为 `SeekParameters(toleranceBeforeUs = 1_500_000L, toleranceAfterUs = 0L)`（对齐 `A` 点前最近关键帧 `CLOSEST_SYNC` 极速瞬跳，零卡顿不断拍），同时在视频顶栏 `⋮` 提供「视频循环寻帧：自动极速 / 强制精准帧」手动覆盖选项。
-3. **变速不变调、独立升降调与 16-bit PCM 零静音管线 (`SonicAudioProcessor`, `v1.0.1`)**：
-   - 统一通过 Media3 原生 `PlaybackParameters(speed, pitch)` 驱动底层 `Sonic` 时域伸缩与重采样管线：
+3. **零寻址实时变速升降调 (`RealTimeSonicAudioProcessor`) 与自动 BPM 检测 (`BpmDetector`, `v1.0.2`)**：
+   - 统一通过自研常驻激活的 16-bit PCM `RealTimeSonicAudioProcessor`（挂载于 `DefaultAudioSink` 的 `RealTimeAudioProcessorChain`）驱动底层 `Sonic` 时域伸缩与重采样管线：
      $$\text{speed} \in [0.25,\ 2.00], \qquad \text{pitch} = 2^{\frac{\text{semitones} + (\text{cents} / 100.0)}{12.0}}$$
-   - 其中 `semitones` $\in [-6, +6]$，`cents` $\in [-50, +50]$。例如将标准调弦原曲降半音（`-1 st, 0 c`）并以 `0.75x` 慢放跟练时，`PlaybackParameters(0.75f, 0.9438743f)` 保证节奏精准放慢至 `75%` 的同时，音高稳定锁死在 `Eb` 调。
-   - **16-bit PCM 渲染管线与即时冲刷保护 (`PlaybackService.kt` & `PlayerController.kt`)**：Media3 的 `SonicAudioProcessor` 仅接受 `ENCODING_PCM_16BIT` 输入，当 `DefaultRenderersFactory` 开启浮点输出解码 24-bit/32-bit float FLAC/WAV/MP4 或交由平台 `AudioTrack.setPlaybackParams` 处理时，动态切换 `pitch != 1.0f` 会导致 `UnhandledAudioFormatException` 或管线静音。因此 `PlaybackService` 显式通过 `DefaultAudioSink.Builder(context).setEnableFloatOutput(false).setEnableAudioTrackPlaybackParams(false)` 统一收敛为 16-bit PCM `Sonic` 管线，并在 `PlayerController` 检测到 `pitch` 变化或 `Sonic` 激活态翻转时执行原地 `performInternalSeek` 冲刷音频接收器缓冲区，彻底消除变调无声问题。
+   - 其中 `semitones` $\in [-6, +6]$，`cents` $\in [-50, +50]$。例如将标准调弦原曲降半音（`-1 st, 0 c`）并以 `0.75x` 慢放跟练时，节奏精准放慢至 `75%` 的同时音高稳定锁死在 `Eb` 调。
+   - **零 `seekTo` 无缝排空切换 (`RealTimeSonicAudioProcessor.kt` & `PlayerController.kt`)**：`RealTimeSonicAudioProcessor.isActive()` 对 16-bit PCM 恒返回 `true`（`AudioProcessingPipeline` 绝不中途拆装处理器），且 `ExoPlayer.playbackParameters` 始终保持 `pitch = 1.0f`（避免触发 `DefaultAudioSink` 的 `afterDrainParameters` 停顿）；连续多次点击升降调时，处理器在 `queueInput` 内将旧 `SonicAudioProcessor` 残余采样无缝排空至 `stagingBuffer` 并原地切换新参数，**彻底杜绝连续点击升降调导致的 `AudioTrack` 重建、解码器冲洗或静音停播**。
+   - **自动 BPM 检测 (`BpmDetector.kt` & `WaveformExtractor.loadOrDetectBpm`)**：曲目加载时异步读取缓存或解码中段约 20 秒音频（自动跳过静音前奏），通过 `100 Hz` 起始能量通量包络自相关与倍频/半频谐波评分精准估算节奏（`60–180 BPM` 主区间，钳位 `30–300 BPM`），在曲目处于默认 `120 BPM` 时自动填入，并支持在 `BpmQuickBar` 一键点击 **`自动`** 随时重测。
 4. **后台播放服务与音频焦点卫生 (`MediaSessionService`)**：
    - 音视频统一托管于前台 `MediaSessionService`，配置 `AudioAttributes`（`USAGE_MEDIA` + `AUDIO_CONTENT_TYPE_MUSIC`）、`handleAudioFocus = true` 以及 **`setHandleAudioBecomingNoisy(true)`**（拔出有线监听耳机或断开蓝牙声卡瞬间立即暂停，防止深夜练习外放扰民）。
 

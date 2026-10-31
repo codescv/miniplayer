@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.miniplayer.app.core.model.*
+import com.miniplayer.app.ui.components.GuitarIcon
 import com.miniplayer.app.ui.components.MediaArtwork
 import com.miniplayer.app.ui.theme.tnum
 
@@ -346,7 +347,7 @@ private fun PlaylistSummaryCard(
                         text = {
                             Text(if (playlist.isPracticePlaylist) "切换为普通播放列表" else "设为练习列表")
                         },
-                        leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+                        leadingIcon = { Icon(GuitarIcon, contentDescription = null) },
                         onClick = {
                             menuOpen = false
                             onTogglePractice()
