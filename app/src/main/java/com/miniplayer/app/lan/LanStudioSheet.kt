@@ -238,6 +238,7 @@ data class LanStudioUiState(
 class LanStudioController(
     context: Context,
     private val coreProvider: () -> MiniPlayerCoreProvider = { CoreRegistry.get(context.applicationContext) },
+    @Volatile var currentlyPlayingItemIdProvider: () -> Long? = { null },
 ) {
     private val appContext = context.applicationContext
     private val detector = LanAddressDetector(appContext)
@@ -269,6 +270,7 @@ class LanStudioController(
         val cfg = LanServerConfig(
             port = port,
             sessionPin = pin,
+            currentlyPlayingItemIdProvider = { currentlyPlayingItemIdProvider() },
         )
         val instance = LanStudioServer(
             config = cfg,
@@ -367,14 +369,12 @@ class LanStudioController(
         } else {
             null
         }
-        val wasRunning = server?.isRunning == true
-        val activePort = server?.boundPort?.takeIf { it > 0 } ?: LanStudioServer.DEFAULT_PORT
-        if (wasRunning) {
-            stopServer()
-        }
-        _uiState.update { it.copy(sessionPin = newPin) }
-        if (wasRunning) {
-            startServer(activePort)
+        server?.sessionPin = newPin
+        _uiState.update {
+            it.copy(
+                sessionPin = newPin,
+                lastActivity = if (newPin != null) "已启用访问 PIN 码保护" else "已关闭访问 PIN 码保护",
+            )
         }
     }
 
