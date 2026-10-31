@@ -637,10 +637,12 @@ fun LandscapeVideoPlayerView(
                                     )
                                 }
                                 item {
-                                    KeepScreenOnPillButton(
-                                        keepScreenOn = keepScreenOn,
+                                    DeckIconToggleButton(
+                                        icon = Icons.Outlined.LightMode,
+                                        contentDescription = if (keepScreenOn) "练习常亮：已开启" else "练习常亮：已关闭",
+                                        highlighted = keepScreenOn,
                                         onClick = { bumpInteraction(); onToggleKeepScreenOn() },
-                                        modifier = Modifier.height(44.dp),
+                                        modifier = Modifier.size(44.dp),
                                     )
                                 }
                                 items(bookmarks, key = { it.bookmarkId }) { bm ->

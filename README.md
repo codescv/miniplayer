@@ -10,13 +10,13 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
   - **Zero `MediaStore` spam & zero broad storage permissions**: Never requests `READ_MEDIA_AUDIO`, `READ_MEDIA_VIDEO`, or `MANAGE_EXTERNAL_STORAGE`—no ringtones, call recordings, or chat voice notes polluting your library.
   - Mount specific folders on internal storage, SD cards, or USB OTG drives via Android SAF (`ACTION_OPEN_DOCUMENT_TREE`) with ancestor/child overlap deduplication, `<10ms` incremental cursor rescans, sidecar `.lrc` & `cover.jpg` indexing, moved-file fingerprint bookmark migration, and **Offline Volume Guard (`未挂载`)** that preserves playlists and A-B bookmarks when OTG drives are unplugged.
   - **Practice Folder Isolation (`练习文件夹隔离`)**: Marking any SAF root or subfolder as a **Practice Folder (`练习文件夹`)** (inherited automatically by descendant subfolders) keeps backing tracks and tutorial clips cleanly accessible in **`文件夹`**, **`播放列表`**, and **`含段落书签`**, while automatically excluding them from **`专辑`**, **`歌手`**, and **`视频`** so everyday listening stays completely uncluttered.
-  - **2 Bottom Tabs + 4 Pure-Text M3 Views**: `文件夹` (icon-only tree `⇄` flat view toggle and icon-only Add Folder FAB), `专辑` (`(Album, AlbumArtist)` grouping + `未知专辑` bucket), `歌手` (multi-artist `/` · `;` · `、` · `feat.` splitting with band allowlist like `AC/DC`), and `视频` (16:9 keyframe thumbnails, resolution badges, bookmark counts, and watch progress).
+  - **2 Bottom Tabs + 4 Pure-Text M3 Views**: Ultra-clean `LibraryScreen` top bar keeping **only** the `设置` icon button and sorting strictly by natural name order (`Track 2 < Track 10`), clean `PlaylistsScreen` top bar with zero action icons, `文件夹` (icon-only tree `⇄` flat view toggle and icon-only Add Folder FAB), `专辑` (`(Album, AlbumArtist)` grouping + `未知专辑` bucket), `歌手` (multi-artist `/` · `;` · `、` · `feat.` splitting with band allowlist like `AC/DC`), and `视频` (16:9 keyframe thumbnails, resolution badges, bookmark counts, and watch progress).
 
 - **Unified Audio/Video Player & Compact 2-Row Practice Deck (`练习模式 / 练习工作台`)**:
   - **Deterministic Progressive Disclosure & Guitar Icon (`GuitarIcon`)**: Everyday albums/folders play in **Casual Mode** (`1.0x`, clean cover/video canvas, synced `.lrc` lyrics via dead-centered `词` toggle, custom **Guitar Icon (`GuitarIcon`)** Practice Mode toggle, icon-only Add-to-Playlist button, sleep timer, and symmetric 5-button transport). Playing from a **`练习列表`**, **`练习文件夹`**, or **`含段落书签`** automatically opens the **Practice Deck** and restores saved speed, pitch, BPM, and A-B loops.
   - **Ergonomic 2-Row Practice Deck (`360 dp` portrait friendly)**:
     - **Row 1 — Butter-Smooth A-B Loop & Bookmarks**: Media3 `PlayerMessage` scheduled directly on `exoPlayer.applicationLooper`, `44 dp` 240-bar RMS waveform with `48×48 dp` rounded pill handles and **1:1 float finger tracking** (`pointerInput(safeDuration)` keyed strictly on track duration so active playback never interrupts handle drags), clean **`[A]` / `[B]`** timestamp buttons (tap anytime to mark or update `A` / `B` at current playhead), instant restart-from-`A` (`⏮` single-tap guard with `400 ms` double-tap to `00:00`/previous), non-destructive loop suspend/clear, and an icon-only **Save Bookmark** button (`Intro`, `Verse`, `Pre-Chorus`, `Chorus`, `Bridge`, `Solo 1`, `Solo 2`, `Outro`, or custom label).
-    - **Row 2 — Speed Stepper, Anytime BPM Auto-Detect & Labeled `"常亮"` Pill**: `0.25x–2.00x` pitch-preserving speed stepper (`[-5%]` · `1.00x` reset/slider · `[+5%]`) paired with **Pitch Shift (`升降调`)**, **Tempo-Scaled Count-In (`预备倒计时`: `关 / 1s / 2s / 4拍`)**, anytime **`BPM <bpm>`** chip (expands `BpmQuickBar` with 1-tap **`"自动"`** auto-detection + `Tap` tempo), clear **`"常亮"`** labeled pill button (`KeepScreenOnPillButton`), and **Video Mirror (`水平镜像`)**.
+    - **Row 2 — Speed Stepper, Anytime BPM Auto-Detect & Icon-Only Toggles**: `0.25x–2.00x` pitch-preserving speed stepper (`[-5%]` · `1.00x` reset · `[+5%]`) paired with **Pitch Shift (`升降调`)**, **Tempo-Scaled Count-In (`预备倒计时`: `关 / 1s / 2s / 4拍`)**, anytime **`BPM <bpm>`** chip (expands `BpmQuickBar` with 1-tap **`"自动"`** auto-detection + `Tap` tempo), icon-only **Keep-Screen-On (`练习常亮` `DeckIconToggleButton`)**, and **Video Mirror (`水平镜像`)**.
     - **Zero-Seek Real-Time Sonic Pitch Shift (`RealTimeSonicAudioProcessor`)**: `-6` to `+6` semitones + `-50` to `+50` cents fine tuning backed by a custom always-active 16-bit PCM `RealTimeSonicAudioProcessor` (`RealTimeAudioProcessorChain`). Rapid multi-click pitch shifts (`-1 半音` / `+1 半音` / `-5c` / `+5c`) drain outgoing `SonicAudioProcessor` frames seamlessly into a direct staging buffer and swap parameters in-place—**zero `exoPlayer.seekTo` calls, zero `AudioTrack` / `MediaCodec` resets, and zero audio dropouts**.
     - **Automatic BPM Detection (`BpmDetector` + `WaveformExtractor.loadOrDetectBpm`)**: Automatically populates `practiceState.bpm` when a track loads at default `120` BPM (checking disk cache, embedded `TBPM`, or 100 Hz onset-envelope autocorrelation over decoded PCM skipping silent intros), with 1-tap **`"自动"`** re-detection anytime in `BpmQuickBar`.
   - **Video Practice Enhancements**: `1.0x–4.0x` pinch-to-zoom & pan on fretboard/tab details, horizontal mirror flip, adaptive long-GOP video loop seeking (`>80 ms` keyframe fallback with `AUTO/EXACT` toggle), top/bottom dockable translucent landscape HUD, per-mode `FLAG_KEEP_SCREEN_ON`, and seamless screen-off audio-only continuation.
@@ -36,6 +36,15 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 - **Verified In-App GitHub Auto-Updater**:
   - Checks [`codescv/miniplayer` Releases](https://github.com/codescv/miniplayer/releases/latest) over HTTPS (`≤ 5` manual redirect hops, zero HTTP downgrade), verifies `SHA256SUMS.txt` digests, runs 4-stage `ApkValidator` checks (`PK\x03\x04` + `AndroidManifest.xml`, `com.miniplayer.app` package match, strict `versionCode > installed` anti-downgrade, and signing certificate SHA-256 equality), and launches `FileProvider` installation.
+
+---
+
+## What's New in `v1.0.3` (`versionCode = 10003`)
+
+1. **Icon-Only Keep-Screen-On Toggle (`PracticeDeck.kt`, `VideoPracticeSurface.kt`)**: Removed the `"常亮"` text label from the Keep-Screen-On button in both portrait `PracticeDeck` and landscape `LandscapeVideoPlayerView`, converting it to a clean icon-only `DeckIconToggleButton` (`Icons.Outlined.LightMode`) with `"练习常亮：已开启"` / `"练习常亮：已关闭"` accessibility semantics.
+2. **Zero-Icon `PlaylistsScreen` Top Bar (`PlaylistsScreen.kt`)**: Removed all 3 top-bar action icons (`Search`, `.m3u8` `FileOpen`, and `Settings`) from `PlaylistsScreen` (`actions = {}`) for an uncluttered playlist hub.
+3. **Single-Icon `LibraryScreen` Top Bar & Default Natural Name Sort (`LibraryScreen.kt`)**: Simplified `LibraryScreen`'s `TopAppBar` to keep **only** the `设置` (`Settings`) icon button (removing `Search`, `Web Studio`, `Sort`, and `Refresh`), and unified all 4 library views on deterministic natural name sorting (`SortOrder.NAME_ASC`, `Track 2 < Track 10`).
+4. **Streamlined `SettingsScreen` with Dedicated Web Studio Entry (`SettingsScreen.kt`)**: Removed the redundant `"管理已添加的文件夹"` row and `SafRootsManagerSheet` from Settings (folders are managed directly in `媒体库 -> 文件夹`) while keeping a dedicated **`PC 局域网 Web 管理台`** (`打开`) row under `本地媒体库与无线连接`.
 
 ---
 
@@ -67,7 +76,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.2.apk` | Signed Android Release APK (`versionCode = 10002`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.3.apk` | Signed Android Release APK (`versionCode = 10003`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `app-release.apk` | Identical signed Android Release APK artifact |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -96,6 +105,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine & `v1.0.2` 2-row ergonomics)
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine & `v1.0.3` minimalist top bars / 2-row ergonomics)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL, Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`BpmDetector` specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`64/64` tests), Lint, and `v1.0.2` verification report
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`64/64` tests), Lint, and `v1.0.3` verification report

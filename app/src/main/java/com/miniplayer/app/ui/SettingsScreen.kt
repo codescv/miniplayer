@@ -9,7 +9,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,28 +17,25 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.miniplayer.app.BuildConfig
-import com.miniplayer.app.core.model.SafRoot
 import com.miniplayer.app.ui.theme.tnum
 
 /**
- * Strict 8-Row Minimalist Settings Screen (`DESIGN.md` §4.4) organized into 4 clean groups,
- * including Row 8 `关于与自动更新` (GitHub Release checker, changelog, SHA-256 verified APK
- * downloader, 1-tap installer, and PC LAN Web Studio entry).
+ * Minimalist 5-Row Settings Screen (`DESIGN.md` §4.4) organized into 3 clean groups:
+ * 1. `本地媒体库与无线连接` (PC LAN Web Studio entry, launch incremental rescan, subfolder `.nomedia`)
+ * 2. `本地缓存` (local cover & waveform cache cleanup)
+ * 3. `关于与自动更新` (GitHub Release checker, changelog, SHA-256 + signature verified APK updater)
  */
 @Composable
 fun SettingsScreen(
     viewModel: MiniPlayerViewModel,
-    onAddFolderClick: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val settings by viewModel.settings.collectAsState()
-    val safRoots by viewModel.safRoots.collectAsState()
     val cacheBytes by viewModel.cacheSizeBytes.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
     val context = LocalContext.current
 
-    var showFoldersManagerSheet by remember { mutableStateOf(false) }
     var showLicensesDialog by remember { mutableStateOf(false) }
 
     BackHandler(onBack = onBack)
@@ -67,22 +63,19 @@ fun SettingsScreen(
         ) {
             // === Group 1: 本地媒体库与无线连接 ===
             SettingsSectionCard(title = "本地媒体库与无线连接") {
-                // Row 1: 管理已添加的文件夹
+                // Row 1: PC 局域网 Web 管理台
                 SettingsClickableRow(
-                    title = "管理已添加的文件夹 (${safRoots.size} 个目录)",
-                    subtitle = "仅扫描授权目录 · 支持 PC 局域网 Web 管理台无线传歌",
+                    title = "PC 局域网 Web 管理台",
+                    subtitle = "在同一 Wi-Fi 下用电脑浏览器无线传歌、批量改标签与管理播放列表",
                     trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(
-                                onClick = { viewModel.setLanStudioVisible(true) },
-                                modifier = Modifier.defaultMinSize(minHeight = 44.dp),
-                            ) {
-                                Text("Web 管理台")
-                            }
-                            Icon(Icons.Outlined.ChevronRight, contentDescription = null)
+                        FilledTonalButton(
+                            onClick = { viewModel.setLanStudioVisible(true) },
+                            modifier = Modifier.defaultMinSize(minHeight = 44.dp),
+                        ) {
+                            Text("打开")
                         }
                     },
-                    onClick = { showFoldersManagerSheet = true },
+                    onClick = { viewModel.setLanStudioVisible(true) },
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp))
 
@@ -265,19 +258,6 @@ fun SettingsScreen(
         }
     }
 
-    if (showFoldersManagerSheet) {
-        SafRootsManagerSheet(
-            roots = safRoots,
-            onAddFolder = {
-                showFoldersManagerSheet = false
-                onAddFolderClick()
-            },
-            onRescanRoot = { viewModel.rescanRoot(it.rootId) },
-            onRemoveRoot = { viewModel.removeSafRoot(it.rootId) },
-            onDismiss = { showFoldersManagerSheet = false },
-        )
-    }
-
     if (showLicensesDialog) {
         AlertDialog(
             onDismissRequest = { showLicensesDialog = false },
@@ -376,79 +356,6 @@ private fun SettingsClickableRow(
                 )
             }
             trailing()
-        }
-    }
-}
-
-@Composable
-private fun SafRootsManagerSheet(
-    roots: List<SafRoot>,
-    onAddFolder: () -> Unit,
-    onRescanRoot: (SafRoot) -> Unit,
-    onRemoveRoot: (SafRoot) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("已授权的本地目录 (${roots.size})", style = MaterialTheme.typography.titleMedium)
-                Button(
-                    onClick = onAddFolder,
-                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                ) {
-                    Text("+ 添加文件夹")
-                }
-            }
-            if (roots.isEmpty()) {
-                Text(
-                    text = "暂未添加任何本地目录。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                roots.forEach { root ->
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerLow,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(root.displayName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                                Text(
-                                    text = "${root.itemCount} 首媒体 · ${root.mountState.name}",
-                                    style = MaterialTheme.typography.labelMedium.tnum(),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            IconButton(onClick = { onRescanRoot(root) }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.Refresh, contentDescription = "重新扫描")
-                            }
-                            IconButton(onClick = { onRemoveRoot(root) }, modifier = Modifier.size(48.dp)) {
-                                Icon(
-                                    Icons.Outlined.DeleteOutline,
-                                    contentDescription = "移除目录",
-                                    tint = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

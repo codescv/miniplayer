@@ -94,8 +94,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     private val _sortOrders = MutableStateFlow(
         mapOf(
             LibraryView.FOLDERS to SortOrder.NAME_ASC,
-            LibraryView.ALBUMS to SortOrder.ALBUM_ASC,
-            LibraryView.ARTISTS to SortOrder.ARTIST_ASC,
+            LibraryView.ALBUMS to SortOrder.NAME_ASC,
+            LibraryView.ARTISTS to SortOrder.NAME_ASC,
             LibraryView.VIDEOS to SortOrder.NAME_ASC,
         ),
     )

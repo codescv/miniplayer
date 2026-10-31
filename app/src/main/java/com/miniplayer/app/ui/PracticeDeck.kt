@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -614,7 +613,7 @@ private enum class ExpandedDeckDrawer {
 /**
  * Compact 2-Row `练习工作台 (Practice Deck)` (`surfaceContainer`, `24dp` corners):
  * - Row 1: Unified A-B Loop strip (`[A]`, `[B]`, Loop toggle, Clear loop, Save Bookmark).
- * - Row 2: `[-5%] [1.00x] [+5%]` speed stepper + Pitch Shift, Count-In, BPM drawer chip, `常亮` pill, and Video Mirror.
+ * - Row 2: `[-5%] [1.00x] [+5%]` speed stepper + Pitch Shift, Count-In, BPM drawer chip, icon-only Keep-Screen-On toggle, and Video Mirror.
  */
 @Composable
 fun PracticeDeck(
@@ -948,8 +947,8 @@ private fun SpeedAndSecondaryStrip(
     onToggleKeepScreenOn: () -> Unit,
     onToggleVideoMirror: () -> Unit,
 ) {
-    val toggleWidth = if (isVideo) 35.dp else 38.dp
-    val spacing = if (isVideo) 3.dp else 4.dp
+    val toggleWidth = if (isVideo) 36.dp else 40.dp
+    val spacing = if (isVideo) 4.dp else 5.dp
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1033,7 +1032,7 @@ private fun SpeedAndSecondaryStrip(
             }
         }
 
-        // Right: Pitch, Count-In, BPM, Keep Screen On ("常亮"), and optional Video Mirror
+        // Right: Pitch, Count-In, BPM, icon-only Keep Screen On, and optional Video Mirror
         Row(
             horizontalArrangement = Arrangement.spacedBy(spacing),
             verticalAlignment = Alignment.CenterVertically,
@@ -1071,11 +1070,12 @@ private fun SpeedAndSecondaryStrip(
                 modifier = Modifier.height(44.dp),
             )
 
-            KeepScreenOnPillButton(
-                keepScreenOn = keepScreenOn,
+            DeckIconToggleButton(
+                icon = Icons.Outlined.LightMode,
+                contentDescription = if (keepScreenOn) "练习常亮：已开启" else "练习常亮：已关闭",
+                highlighted = keepScreenOn,
                 onClick = onToggleKeepScreenOn,
-                compact = isVideo,
-                modifier = Modifier.height(44.dp),
+                modifier = Modifier.size(width = toggleWidth, height = 44.dp),
             )
 
             if (isVideo) {
@@ -1144,61 +1144,6 @@ internal fun BpmCompactChipButton(
                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                 ),
                 fontWeight = FontWeight.Bold,
-                color = contentColor,
-                maxLines = 1,
-                softWrap = false,
-            )
-        }
-    }
-}
-
-@Composable
-internal fun KeepScreenOnPillButton(
-    keepScreenOn: Boolean,
-    onClick: () -> Unit,
-    compact: Boolean = false,
-    modifier: Modifier = Modifier,
-) {
-    val containerColor = if (keepScreenOn) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.surfaceContainerHigh
-    }
-    val contentColor = if (keepScreenOn) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = containerColor,
-        modifier = modifier
-            .defaultMinSize(minHeight = 44.dp)
-            .semantics {
-                role = Role.Switch
-                contentDescription = if (keepScreenOn) "屏幕常亮：已开启" else "屏幕常亮：已关闭"
-            },
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = if (compact) 6.dp else 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 4.dp),
-        ) {
-            Icon(
-                imageVector = if (keepScreenOn) Icons.Filled.LightMode else Icons.Outlined.LightMode,
-                contentDescription = null,
-                tint = contentColor,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                text = "常亮",
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontSize = if (compact) 11.sp else 12.sp,
-                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                ),
-                fontWeight = FontWeight.SemiBold,
                 color = contentColor,
                 maxLines = 1,
                 softWrap = false,

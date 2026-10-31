@@ -24,7 +24,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
-import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -48,7 +47,6 @@ fun LibraryScreen(
 ) {
     val activeView by viewModel.libraryView.collectAsState()
     val folderMode by viewModel.folderDisplayMode.collectAsState()
-    val sortOrders by viewModel.sortOrders.collectAsState()
     val searchQuery by viewModel.librarySearchQuery.collectAsState()
     val safRoots by viewModel.safRoots.collectAsState()
     val folderBrowse by viewModel.folderBrowseState.collectAsState()
@@ -62,8 +60,11 @@ fun LibraryScreen(
     val scanProgress by viewModel.scanProgress.collectAsState()
     val playback by viewModel.playbackSnapshot.collectAsState()
 
-    var searchExpanded by remember { mutableStateOf(false) }
-    var showSortSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (searchQuery.isNotEmpty()) {
+            viewModel.setLibrarySearchQuery("")
+        }
+    }
 
     // Preserve independent scroll positions per FilterChip view (§4.1)
     val folderListState = rememberLazyListState()
@@ -72,12 +73,8 @@ fun LibraryScreen(
     val videoListState = rememberLazyListState()
 
     // Predictive Back handling for secondary drill-down views
-    BackHandler(enabled = activeAlbum != null || activeArtist != null || folderBrowse != null || searchExpanded) {
+    BackHandler(enabled = activeAlbum != null || activeArtist != null || folderBrowse != null) {
         when {
-            searchExpanded -> {
-                searchExpanded = false
-                viewModel.setLibrarySearchQuery("")
-            }
             activeAlbum != null -> viewModel.closeAlbum()
             activeArtist != null -> viewModel.closeArtist()
             folderBrowse != null -> viewModel.navigateFolderUp()
@@ -125,7 +122,7 @@ fun LibraryScreen(
         return
     }
 
-    val currentSort = sortOrders[activeView] ?: SortOrder.NAME_ASC
+    val currentSort = SortOrder.NAME_ASC
 
     Scaffold(
         modifier = modifier,
@@ -133,66 +130,9 @@ fun LibraryScreen(
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
                 TopAppBar(
                     title = {
-                        if (searchExpanded) {
-                            OutlinedTextField(
-                                value = searchQuery,
-                                onValueChange = { viewModel.setLibrarySearchQuery(it) },
-                                placeholder = { Text("搜索曲名、歌手、专辑或文件名…") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                trailingIcon = {
-                                    IconButton(
-                                        onClick = {
-                                            if (searchQuery.isNotEmpty()) {
-                                                viewModel.setLibrarySearchQuery("")
-                                            } else {
-                                                searchExpanded = false
-                                            }
-                                        },
-                                    ) {
-                                        Icon(Icons.Outlined.Close, contentDescription = "关闭搜索")
-                                    }
-                                },
-                            )
-                        } else {
-                            Text("MiniPlayer", style = MaterialTheme.typography.titleLarge)
-                        }
+                        Text("MiniPlayer", style = MaterialTheme.typography.titleLarge)
                     },
                     actions = {
-                        if (!searchExpanded) {
-                            IconButton(
-                                onClick = { searchExpanded = true },
-                                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                            ) {
-                                Icon(Icons.Outlined.Search, contentDescription = "页内搜索")
-                            }
-                        }
-                        IconButton(
-                            onClick = { viewModel.setLanStudioVisible(true) },
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.Outlined.Devices, contentDescription = "PC 局域网 Web 管理台")
-                        }
-                        IconButton(
-                            onClick = { showSortSheet = true },
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = "排序方式")
-                        }
-                        IconButton(
-                            onClick = { viewModel.rescanAll() },
-                            enabled = !scanProgress.isScanning,
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            if (scanProgress.isScanning) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                            } else {
-                                Icon(Icons.Outlined.Refresh, contentDescription = "增量重新扫描")
-                            }
-                        }
                         IconButton(
                             onClick = { viewModel.setSettingsVisible(true) },
                             modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
@@ -390,18 +330,6 @@ fun LibraryScreen(
                 }
             }
         }
-    }
-
-    if (showSortSheet) {
-        SortOptionsBottomSheet(
-            view = activeView,
-            selected = currentSort,
-            onSelect = {
-                viewModel.setSortOrder(activeView, it)
-                showSortSheet = false
-            },
-            onDismiss = { showSortSheet = false },
-        )
     }
 }
 
@@ -1719,62 +1647,6 @@ fun EmptyLibraryPlaceholder(
             modifier = Modifier.defaultMinSize(minHeight = 48.dp),
         ) {
             Text(actionLabel)
-        }
-    }
-}
-
-@Composable
-private fun SortOptionsBottomSheet(
-    view: LibraryView,
-    selected: SortOrder,
-    onSelect: (SortOrder) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val options: List<Pair<SortOrder, String>> = when (view) {
-        LibraryView.FOLDERS -> listOf(
-            SortOrder.NAME_ASC to "名称（自然序 Track 2 < Track 10）",
-            SortOrder.DATE_MODIFIED_DESC to "修改时间（最新优先）",
-            SortOrder.DURATION_DESC to "时长（从长到短）",
-        )
-        LibraryView.ALBUMS -> listOf(
-            SortOrder.ALBUM_ASC to "专辑名称",
-            SortOrder.ARTIST_ASC to "专辑歌手",
-            SortOrder.YEAR_DESC to "发行年份",
-            SortOrder.DATE_MODIFIED_DESC to "最近添加",
-        )
-        LibraryView.ARTISTS -> listOf(
-            SortOrder.ARTIST_ASC to "歌手名称",
-            SortOrder.TRACK_COUNT_DESC to "单曲数量",
-        )
-        LibraryView.VIDEOS -> listOf(
-            SortOrder.NAME_ASC to "视频名称",
-            SortOrder.RECENT_PROGRESS_DESC to "最近观看进度",
-            SortOrder.DURATION_DESC to "视频时长",
-            SortOrder.DATE_MODIFIED_DESC to "修改时间",
-        )
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(bottom = 24.dp)) {
-            Text(
-                text = "排序方式",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-            )
-            options.forEach { (order, label) ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .defaultMinSize(minHeight = 52.dp)
-                        .clickable { onSelect(order) }
-                        .padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = selected == order, onClick = { onSelect(order) })
-                    Spacer(Modifier.width(10.dp))
-                    Text(label, style = MaterialTheme.typography.bodyLarge)
-                }
-            }
         }
     }
 }

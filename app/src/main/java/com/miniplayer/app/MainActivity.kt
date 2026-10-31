@@ -163,15 +163,6 @@ fun MiniPlayerAppShell(
         }
     }
 
-    // M3U / M3U8 Import Picker
-    val importM3uLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri: Uri? ->
-        if (uri != null) {
-            viewModel.importM3uPlaylist(uri)
-        }
-    }
-
     // M3U8 Export Document Creator
     val exportM3uLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("audio/x-mpegurl"),
@@ -187,7 +178,6 @@ fun MiniPlayerAppShell(
         if (showSettings) {
             SettingsScreen(
                 viewModel = viewModel,
-                onAddFolderClick = { openTreeLauncher.launch(null) },
                 onBack = { viewModel.setSettingsVisible(false) },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -257,17 +247,6 @@ fun MiniPlayerAppShell(
                         MainTab.PLAYLISTS -> {
                             PlaylistsScreen(
                                 viewModel = viewModel,
-                                onImportM3uClick = {
-                                    importM3uLauncher.launch(
-                                        arrayOf(
-                                            "audio/x-mpegurl",
-                                            "application/vnd.apple.mpegurl",
-                                            "audio/mpegurl",
-                                            "text/plain",
-                                            "*/*",
-                                        ),
-                                    )
-                                },
                                 onExportM3uRequest = { playlistId, playlistName ->
                                     pendingExportPlaylistId = playlistId
                                     exportM3uLauncher.launch("${playlistName.ifBlank { "playlist" }}.m3u8")
@@ -338,7 +317,7 @@ fun MiniPlayerAppShell(
             )
         }
 
-        // PC LAN Web Studio Sheet (`💻` button in LibraryScreen TopAppBar & SettingsScreen)
+        // PC LAN Web Studio Sheet (opened from SettingsScreen)
         if (showLanStudio) {
             if (lanStudioSheetSlot != null) {
                 lanStudioSheetSlot { viewModel.setLanStudioVisible(false) }

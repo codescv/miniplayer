@@ -1,37 +1,35 @@
-# MiniPlayer v1.0.2 — Verification, Security Audit & Release Report
+# MiniPlayer v1.0.3 — Verification, Security Audit & Release Report
 
-**Version:** `1.0.2` (`versionCode = 10002`, `applicationId = "com.miniplayer.app"`)  
+**Version:** `1.0.3` (`versionCode = 10003`, `applicationId = "com.miniplayer.app"`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Verified Branches Merged (`v1.0.2`):** `wt/coder-core-3` (`ba37c73`) + `wt/coder-ui-3` (`9b52921`) → `wt/tester-3`
+**Branch Verified (`v1.0.3`):** `wt/coder-ui-4`
 
 ---
 
-## 1. Build, Lint & Signed APK Verification (`v1.0.2`)
+## 1. Build, Lint & APK Verification (`v1.0.3`)
 
 All Android builds, pure-JVM unit/integration tests, and Android Lint checks succeeded **100% offline** (`--offline`) with zero errors.
 
 | Check | Details / Result | Status |
 |---|---|---|
 | **Toolchain** | JDK `21` (`JAVA_HOME`), Android `compileSdk = 35`, `targetSdk = 35`, `minSdk = 26`, Build-Tools `35.0.0`, Gradle `8.11.1`, AGP `8.7.1`, Kotlin `2.0.21`, Jetpack Compose Material 3, AndroidX Media3 `1.5.1` | **PASS** |
-| **Offline Verification Command** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug assembleRelease` | **PASS** |
-| **Android Lint (`lintDebug`)** | `0 errors, 37 warnings` (zero `MissingPermission`, `ExportedService`, `UnsafeOptInUsageError`, or `NewApi` errors; informational warnings are SDK/dependency version suggestions) | **PASS** |
+| **Offline Verification Command** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug` | **PASS** |
+| **Android Lint (`lintDebug`)** | `0 errors, 36 warnings` (zero `MissingPermission`, `ExportedService`, `UnsafeOptInUsageError`, or `NewApi` errors; informational warnings are SDK/dependency version suggestions) | **PASS** |
 | **Zero Broad Storage Permissions** | Strictly **0** `READ_MEDIA_AUDIO`, `READ_MEDIA_VIDEO`, `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`, or `MANAGE_EXTERNAL_STORAGE` permissions in `AndroidManifest.xml`; pure SAF (`ACTION_OPEN_DOCUMENT_TREE`) folder grants | **PASS** |
 | **Network Surface Hygiene** | `android:usesCleartextTraffic="false"` in `AndroidManifest.xml`; outbound traffic restricted strictly to HTTPS keyless metadata APIs (MusicBrainz / Cover Art Archive / iTunes CDN / LRCLIB) and HTTPS GitHub Releases auto-updater, plus user-started on-demand LAN/loopback Web Studio (`:8088`) | **PASS** |
 | **Terminology & Emoji-Free UI Hygiene** | Strictly **0** `练琴` strings across `app/src/main/**` and user-facing documentation; **0** runtime emojis across Compose screens (`LibraryScreen`, `PlaylistsScreen`, `NowPlayingSheet`, `PracticeDeck`, `VideoPracticeSurface`, `SettingsScreen`, `LanStudioSheet`) and `LanStudioWebApp` | **PASS** |
-| **Debug APK (`v1.0.2`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,418,486` bytes, `versionName = "1.0.2-DEBUG"`, `versionCode = 10002`) | **PASS** |
-| **Signed Release APK (`v1.0.2`)** | `MiniPlayer-v1.0.2.apk` (`14,295,186` bytes, SHA-256 `2acf04fc77c576f143d1a51802b60b8ae49821d96f5b92d025423155f1796f72`, APK Signature Scheme v2 + v3 verified, Signer #1 Certificate SHA-256 `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5` — 100% certificate continuity with `v1.0.0` & `v1.0.1`) | **PASS** |
+| **Debug APK (`v1.0.3`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,402,102` bytes, `versionName = "1.0.3-DEBUG"`, `versionCode = 10003`) | **PASS** |
 
 ---
 
-## 2. `v1.0.2` Requirement Verification Matrix (All 5 User Requirements)
+## 2. `v1.0.3` Requirement Verification Matrix (All 4 User Requirements)
 
 | # | Requirement | Verified Implementation & Files | Status |
 |---:|---|---|---|
-| **1** | Guitar icon (`GuitarIcon`) used for Practice Mode everywhere | Custom Material-styled `GuitarIcon` (`GuitarIcon.kt`) used across `NowPlayingSheet.kt` (Casual action row + top bar active pill), `VideoPracticeSurface.kt` (Casual landscape + Practice landscape header), `LibraryScreen.kt` (Practice Folder toggles/banner + `"以练习模式打开"` / `"练习播放"`), and `PlaylistsScreen.kt` (`"设为练习列表"`) | **PASS** |
-| **2** | Multi-click pitch shift (`-1 半音` / `+1 半音` / `-5c` / `+5c`) never stalls or drops audio | `RealTimeSonicAudioProcessor.kt` (`isActive() == true` for 16-bit PCM) + `RealTimeAudioProcessorChain` wired in `PlaybackService.kt` (`SharedExoPlayerHolder.updateSpeedAndPitch`) and `PlayerController.kt` (`applyPlaybackParameters`): drains outgoing `SonicAudioProcessor` buffers cleanly into a direct `stagingBuffer` and swaps pitch/speed in-place with **zero `exoPlayer.seekTo(...)` calls** and `exoPlayer.playbackParameters` keeping `pitch = 1.0f` | **PASS** |
-| **3** | Keep Screen On (`保持常亮`) uses clear labeled `"常亮"` pill button instead of bare sun icon | `KeepScreenOnPillButton` (`PracticeDeck.kt`) renders `LightMode` icon + `"常亮"` label (`44.dp` minHeight, `Role.Switch`, `primaryContainer` active state) in both portrait `PracticeDeck` and landscape `LandscapeVideoPlayerView` | **PASS** |
-| **4** | Remove `A+ / A- / B+ / B-` and left `Replay` button; butter-smooth `A`/`B` handle dragging | `SplitNudgeControl` and the left `Replay` button are completely removed from `PracticeDeck.kt` and `VideoPracticeSurface.kt` in favor of clean `[A]` / `[B]` timestamp buttons; `WaveformLoopRuler` keys `.pointerInput(safeDuration)` strictly on `safeDuration` with `rememberUpdatedState` + 1:1 float grab-offset tracking (`commitPersist = false` while dragging, `true` on release) | **PASS** |
-| **5** | Automatic BPM detection + anytime BPM bar & 1-tap `"自动"` button | `BpmDetector.kt` (`100 Hz` onset-envelope autocorrelation + harmonic octave scoring) + `WaveformExtractor.loadOrDetectBpm` (disk cache + `TBPM` + `MediaExtractor`/`MediaCodec` PCM decode skipping intros) auto-populates `practiceState.bpm` when loading tracks at default `120` BPM; `NowPlayingSheet.kt` binds directly to `viewModel.detectedBpm` / `isDetectingBpm` / `viewModel::autoDetectBpm`; `PracticeDeck` & `LandscapeVideoPlayerView` provide an anytime `BPM <bpm>` chip and `BpmQuickBar` with 1-tap `"自动"` button | **PASS** |
+| **1** | Remove `"常亮"` text from the Keep-Screen-On button | `KeepScreenOnPillButton` deleted; both `PracticeDeck.kt` (`SpeedAndSecondaryStrip`) and `VideoPracticeSurface.kt` (`LandscapeVideoPlayerView`) now render an icon-only `DeckIconToggleButton` (`Icons.Outlined.LightMode`, `highlighted = keepScreenOn`, `contentDescription = if (keepScreenOn) "练习常亮：已开启" else "练习常亮：已关闭"`) | **PASS** |
+| **2** | Remove all 3 icons from the top bar of `PlaylistsScreen` | `PlaylistsScreen.kt` `TopAppBar` sets `title = { Text("播放列表", style = MaterialTheme.typography.titleLarge) }` and `actions = {}` (removing `Search`, `FileOpen`, and `Settings`), cleans up `searchExpanded`, and resets stale `playlistSearchQuery` on entry | **PASS** |
+| **3** | Simplify `LibraryScreen` `TopAppBar` to keep ONLY `Settings` icon & always sort by default name order | `LibraryScreen.kt` `TopAppBar` removes `Search`, `Web Studio`, `Sort`, and `Refresh` buttons, retaining **only** `Icons.Outlined.Settings`; `SortOptionsBottomSheet` / `showSortSheet` / `searchExpanded` removed; `val currentSort = SortOrder.NAME_ASC` enforces deterministic natural name sorting across all 4 views | **PASS** |
+| **4** | Remove folder manager from `SettingsScreen`, keeping dedicated Web Studio entry | `SettingsScreen.kt` removes `"管理已添加的文件夹"` row, `showFoldersManagerSheet`, and `SafRootsManagerSheet` (folders are managed directly in `媒体库 -> 文件夹`), and retains a clean **`PC 局域网 Web 管理台`** row (`FilledTonalButton("打开")`) under `"本地媒体库与无线连接"` | **PASS** |
 
 ---
 

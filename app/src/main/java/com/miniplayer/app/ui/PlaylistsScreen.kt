@@ -36,7 +36,6 @@ import com.miniplayer.app.ui.theme.tnum
 @Composable
 fun PlaylistsScreen(
     viewModel: MiniPlayerViewModel,
-    onImportM3uClick: () -> Unit,
     onExportM3uRequest: (Long, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -50,15 +49,15 @@ fun PlaylistsScreen(
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<PlaylistSummary?>(null) }
-    var searchExpanded by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = activeDetail != null || searchExpanded) {
-        if (searchExpanded) {
-            searchExpanded = false
+    LaunchedEffect(Unit) {
+        if (searchQuery.isNotEmpty()) {
             viewModel.setPlaylistSearchQuery("")
-        } else {
-            viewModel.closePlaylist()
         }
+    }
+
+    BackHandler(enabled = activeDetail != null) {
+        viewModel.closePlaylist()
     }
 
     activeDetail?.let { detail ->
@@ -116,50 +115,9 @@ fun PlaylistsScreen(
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
                 TopAppBar(
                     title = {
-                        if (searchExpanded) {
-                            OutlinedTextField(
-                                value = searchQuery,
-                                onValueChange = { viewModel.setPlaylistSearchQuery(it) },
-                                placeholder = { Text("搜索播放列表或段落书签…") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                trailingIcon = {
-                                    IconButton(
-                                        onClick = {
-                                            if (searchQuery.isNotEmpty()) viewModel.setPlaylistSearchQuery("")
-                                            else searchExpanded = false
-                                        },
-                                    ) {
-                                        Icon(Icons.Outlined.Close, contentDescription = "关闭搜索")
-                                    }
-                                },
-                            )
-                        } else {
-                            Text("播放列表", style = MaterialTheme.typography.titleLarge)
-                        }
+                        Text("播放列表", style = MaterialTheme.typography.titleLarge)
                     },
-                    actions = {
-                        if (!searchExpanded) {
-                            IconButton(
-                                onClick = { searchExpanded = true },
-                                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                            ) {
-                                Icon(Icons.Outlined.Search, contentDescription = "搜索列表")
-                            }
-                        }
-                        IconButton(
-                            onClick = onImportM3uClick,
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.Outlined.FileOpen, contentDescription = "导入 .m3u / .m3u8 列表")
-                        }
-                        IconButton(
-                            onClick = { viewModel.setSettingsVisible(true) },
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.Outlined.Settings, contentDescription = "设置")
-                        }
-                    },
+                    actions = {},
                 )
 
                 // Mandatory Single-Select 3 FilterChips (§4.2)

@@ -264,7 +264,7 @@ CREATE TABLE app_settings (
    - **自动 BPM 检测 (`BpmDetector` + `WaveformExtractor.loadOrDetectBpm`)**：优先命中 `cacheDir/waveforms/bpm_<id>_<mtime>.dat` 缓存或内嵌 `TBPM` 标签；否则利用 `MediaExtractor` + `MediaCodec` 跳过前奏截取最多约 20 秒 16-bit PCM 送入 `OnsetFluxAccumulator`（`100 Hz` 能量差分包络 + `45–220 BPM` 自相关与倍频谐波加权），当曲目处于默认 `120 BPM` 时自动回填，并支持 UI 随时展开 `BpmQuickBar` 一键点击 `"自动"` 重测。
    - 视频连续循环（`countInMode == OFF`）：记录 `seekStartRealtimeMs` 至 `Player.Listener.onRenderedFirstFrame`（或 `onPlaybackStateChanged(STATE_READY)`）耗时；若 `> 80 ms` 且 `videoSeekMode == AUTO`，自动将 `exoPlayer.setSeekParameters(SeekParameters(1_500_000L, 0L))` 应用于后续循环绕回。
 3. **练习模式确定性状态机与专属视觉标识 (`MiniPlayerViewModel.kt` & `GuitarIcon.kt`)**：
-   - 全应用（日常播放页、练习顶栏、横屏视频 HUD、曲库/列表菜单）统一采用自绘矢量吉他图标 **`GuitarIcon`** 标识练习模式，屏幕常亮采用带文字标签的 **`常亮` 胶囊按钮 (`KeepScreenOnPillButton`)**。
+   - 全应用（日常播放页、练习顶栏、横屏视频 HUD、曲库/列表菜单）统一采用自绘矢量吉他图标 **`GuitarIcon`** 标识练习模式，屏幕常亮采用纯图标切换按钮（`DeckIconToggleButton` + `Icons.Outlined.LightMode`）。
    - 点播入口携带 `PlayContext` 枚举：`PRACTICE_PLAYLIST` | `PRACTICE_FOLDER` | `BOOKMARK_JUMP(bookmarkId)` | `CASUAL`。
    - 前三者立即置 `isPracticeModeActive = true`、展开 `PracticeDeck` 并应用 `PracticeState`（倍速 + 半音/音分 + BPM + A/B 区间）；`CASUAL` 置 `isPracticeModeActive = false`、播放参数保持 `(1.0f, 1.0f)`。
 
