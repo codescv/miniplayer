@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.miniplayer.app.core.CoreRegistry
 import com.miniplayer.app.core.MiniPlayerCoreProvider
+import com.miniplayer.app.core.metadata.DefaultMetadataEngine
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.player.PlayerController
 import java.io.File
@@ -198,12 +199,17 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 refreshActiveDrillDowns()
             }
         }
-        // Load cached/local lyrics automatically when track changes
+        // Load cached/local lyrics automatically & flush any deferred physical tag writes when track changes (even while paused)
         viewModelScope.launch {
             playbackSnapshot
                 .map { it.currentItem }
                 .distinctUntilChangedBy { it?.itemId }
                 .collect { item ->
+                    (core.metadata as? DefaultMetadataEngine)?.let { engine ->
+                        launch(Dispatchers.IO) {
+                            runCatching { engine.flushDeferredFileWrites(currentlyPlayingItemId = item?.itemId) }
+                        }
+                    }
                     _currentLyrics.value = null
                     if (item != null && !item.isVideo) {
                         _currentLyrics.value = core.metadata.getLyrics(item, fetchOnlineIfMissing = false)
@@ -778,12 +784,14 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
 
     fun clearLocalCaches() {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
+            val thumbsFreed = withContext(Dispatchers.IO) {
                 val app = getApplication<Application>()
-                File(app.cacheDir, "waveforms").deleteRecursively()
-                File(app.cacheDir, "thumbs").deleteRecursively()
+                val thumbsDir = File(app.cacheDir, "thumbs")
+                val bytes = thumbsDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                thumbsDir.deleteRecursively()
+                bytes
             }
-            val cleared = core.library.clearCaches()
+            val cleared = core.library.clearCaches() + thumbsFreed
             refreshCacheSize()
             emitMessage("已清理本地封面与波形缓存" + if (cleared > 0) "（释放 ${formatByteSize(cleared)}）" else "")
         }

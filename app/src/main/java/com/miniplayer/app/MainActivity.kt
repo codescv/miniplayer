@@ -14,22 +14,20 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.QueueMusic
 import androidx.compose.material.icons.filled.LibraryMusic
-import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.miniplayer.app.lan.LanStudioManager
+import com.miniplayer.app.lan.LanStudioSheet
 import com.miniplayer.app.ui.*
 import com.miniplayer.app.ui.theme.MiniPlayerTheme
-import java.net.Inet4Address
-import java.net.NetworkInterface
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,9 +36,27 @@ class MainActivity : ComponentActivity() {
         setContent {
             MiniPlayerTheme {
                 val vm: MiniPlayerViewModel = viewModel()
+                val lanController = remember(vm) {
+                    LanStudioManager.get(
+                        context = this@MainActivity,
+                        coreProvider = { vm.core },
+                    ).also { controller ->
+                        controller.currentlyPlayingItemIdProvider = {
+                            vm.playbackSnapshot.value.currentItem?.itemId
+                        }
+                    }
+                }
                 KeepScreenOnEffect(activity = this, viewModel = vm)
                 BackgroundVideoAudioContinuationEffect(viewModel = vm)
-                MiniPlayerAppShell(viewModel = vm)
+                MiniPlayerAppShell(
+                    viewModel = vm,
+                    lanStudioSheetSlot = { onDismiss ->
+                        LanStudioSheet(
+                            onDismiss = onDismiss,
+                            controller = lanController,
+                        )
+                    },
+                )
             }
         }
     }
@@ -324,51 +340,10 @@ fun MiniPlayerAppShell(
             if (lanStudioSheetSlot != null) {
                 lanStudioSheetSlot { viewModel.setLanStudioVisible(false) }
             } else {
-                DefaultLanStudioPlaceholderSheet(
+                LanStudioSheet(
                     onDismiss = { viewModel.setLanStudioVisible(false) },
                 )
             }
         }
     }
-}
-
-@Composable
-private fun DefaultLanStudioPlaceholderSheet(onDismiss: () -> Unit) {
-    val lanIp = remember { detectLocalIpv4Address() ?: "127.0.0.1" }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Outlined.Devices, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text("💻 PC 局域网 Web 管理台", style = MaterialTheme.typography.titleLarge)
-            }
-            Text(
-                text = "在同一局域网电脑浏览器访问 http://$lanIp:8088，即可无线拖拽上传音乐/教学视频、表格批量补全标签、编排 🎯 练习列表并打 A-B 段落书签。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Button(
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
-            ) {
-                Text("完成")
-            }
-        }
-    }
-}
-
-private fun detectLocalIpv4Address(): String? = try {
-    NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-        .asSequence()
-        .filter { it.isUp && !it.isLoopback }
-        .flatMap { it.inetAddresses.toList().asSequence() }
-        .filterIsInstance<Inet4Address>()
-        .map { it.hostAddress }
-        .firstOrNull { !it.isNullOrBlank() }
-} catch (_: Throwable) {
-    null
 }
