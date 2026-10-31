@@ -40,6 +40,8 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -66,6 +68,7 @@ data class LanServerConfig(
     val maxUploadBytes: Long = 4L * 1024L * 1024L * 1024L,
     val allowedUploadExtensions: Set<String> = LanPathUtils.DEFAULT_ALLOWED_UPLOAD_EXTENSIONS,
     val clientAddressValidator: (InetAddress) -> Boolean = LanStudioServer::isAllowedLanAddress,
+    val currentlyPlayingItemIdProvider: () -> Long? = { null },
 )
 
 sealed interface LanServerEvent {
@@ -140,6 +143,9 @@ class LanStudioServer(
 
     @Volatile
     private var executor: ExecutorService? = null
+
+    @Volatile
+    var sessionPin: String? = config.sessionPin
 
     @Volatile
     var boundPort: Int = -1
@@ -518,6 +524,16 @@ class LanStudioServer(
             recordRequest(clientIp, method, rawPath, 400)
             writeJsonError(output, 400, "Bad Request", e.message ?: "Invalid request", headOnly, close = true)
             return false
+        } catch (e: IOException) {
+            if (isClientDisconnect(e)) {
+                return false
+            }
+            _events.tryEmit(LanServerEvent.Error("$method $rawPath: ${e.message ?: "I/O error"}"))
+            recordRequest(clientIp, method, rawPath, 500)
+            runCatching {
+                writeJsonError(output, 500, "Internal Server Error", e.message ?: "Internal server error", headOnly, close = true)
+            }
+            return false
         } catch (e: Exception) {
             _events.tryEmit(LanServerEvent.Error("$method $rawPath: ${e.message ?: "internal error"}"))
             recordRequest(clientIp, method, rawPath, 500)
@@ -526,6 +542,15 @@ class LanStudioServer(
             }
             return false
         }
+    }
+
+    private fun isClientDisconnect(e: IOException): Boolean {
+        if (e is SocketException || e is SocketTimeoutException || e is EOFException) return true
+        val msg = e.message?.lowercase(Locale.ROOT) ?: return false
+        return msg.contains("broken pipe") ||
+            msg.contains("connection reset") ||
+            msg.contains("socket closed") ||
+            msg.contains("connection abort")
     }
 
     private fun handleWebRoot(
@@ -537,7 +562,7 @@ class LanStudioServer(
     ): Boolean {
         val htmlBytes = LanStudioWebApp.renderHtml().toByteArray(Charsets.UTF_8)
         val extraHeaders = ArrayList<Pair<String, String>>(2)
-        val expectedPin = config.sessionPin?.takeIf { it.isNotBlank() }
+        val expectedPin = sessionPin?.takeIf { it.isNotBlank() }
         val providedToken = query["token"]
         if (expectedPin != null && !providedToken.isNullOrEmpty() && constantTimeEquals(expectedPin, providedToken)) {
             extraHeaders.add("Set-Cookie" to "miniplayer_lan_token=${encodeCookieValue(expectedPin)}; Path=/; HttpOnly; SameSite=Strict")
@@ -565,7 +590,7 @@ class LanStudioServer(
     ): Boolean {
         val (bodyText, mustClose) = readBoundedUtf8Body(headers, input, config.maxJsonBodyBytes)
         val body = LanJson.parseObject(bodyText)
-        val expectedPin = config.sessionPin?.takeIf { it.isNotBlank() }
+        val expectedPin = sessionPin?.takeIf { it.isNotBlank() }
         if (expectedPin == null) {
             recordRequest(clientIp, "POST", "/api/auth", 200)
             return writeJsonOk(output, LanJson.obj("ok" to JsonValue.Bool(true), "authRequired" to JsonValue.Bool(false)), headOnly = false, close = closeConnection || mustClose)
@@ -597,7 +622,7 @@ class LanStudioServer(
             "ok" to JsonValue.Bool(true),
             "port" to JsonValue.Num(boundPort),
             "readOnly" to JsonValue.Bool(config.readOnly),
-            "authRequired" to JsonValue.Bool(!config.sessionPin.isNullOrBlank()),
+            "authRequired" to JsonValue.Bool(!sessionPin.isNullOrBlank()),
             "rootCount" to JsonValue.Num(lib.safRoots.value.size),
             "itemCount" to JsonValue.Num(lib.allMediaItems.value.size),
             "videoCount" to JsonValue.Num(lib.videoItems.value.size),
@@ -1112,7 +1137,11 @@ class LanStudioServer(
         if (draft.dirtyFields.isEmpty()) {
             throw LanHttpException(400, "Bad Request", "No metadata fields provided to update")
         }
-        val outcome = core.metadata.saveMetadata(listOf(itemId), draft)
+        val outcome = core.metadata.saveMetadata(
+            itemIds = listOf(itemId),
+            draft = draft,
+            currentlyPlayingItemId = config.currentlyPlayingItemIdProvider(),
+        )
         val updated = core.library.allMediaItems.value.find { it.itemId == itemId }
 
         recordRequest(clientIp, "POST", "/api/metadata/update", 200)
@@ -1145,7 +1174,11 @@ class LanStudioServer(
         if (draft.dirtyFields.isEmpty()) {
             throw LanHttpException(400, "Bad Request", "No metadata fields specified for batch update")
         }
-        val outcome = core.metadata.saveMetadata(itemIds, draft)
+        val outcome = core.metadata.saveMetadata(
+            itemIds = itemIds,
+            draft = draft,
+            currentlyPlayingItemId = config.currentlyPlayingItemIdProvider(),
+        )
         recordRequest(clientIp, "POST", "/api/metadata/batch-update", 200)
         return writeJsonOk(
             output,
@@ -1238,6 +1271,7 @@ class LanStudioServer(
                 candidate = candidate,
                 preserveBackingSuffix = preserveBacking,
                 writeBackToFile = writeBack,
+                currentlyPlayingItemId = config.currentlyPlayingItemIdProvider(),
             )
             val updated = core.library.allMediaItems.value.find { it.itemId == itemId }
             recordRequest(clientIp, "POST", "/api/metadata/auto-match", 200)
@@ -1282,6 +1316,7 @@ class LanStudioServer(
             candidate = chosen,
             preserveBackingSuffix = preserveBacking,
             writeBackToFile = writeBack,
+            currentlyPlayingItemId = config.currentlyPlayingItemIdProvider(),
         )
         val updated = core.library.allMediaItems.value.find { it.itemId == itemId }
 
@@ -1348,6 +1383,7 @@ class LanStudioServer(
         val committed = core.metadata.commitBatchCompletion(
             matches = effectiveMatches,
             writeBackToFile = writeBack,
+            currentlyPlayingItemId = config.currentlyPlayingItemIdProvider(),
         )
         recordRequest(clientIp, "POST", "/api/metadata/batch-auto-complete", 200)
         return writeJsonOk(
@@ -2131,7 +2167,7 @@ class LanStudioServer(
     }
 
     private fun verifySessionPinIfConfigured(headers: Map<String, String>, query: Map<String, String>) {
-        val expectedPin = config.sessionPin?.takeIf { it.isNotBlank() } ?: return
+        val expectedPin = sessionPin?.takeIf { it.isNotBlank() } ?: return
         val headerToken = headers["x-lan-token"]?.trim()
             ?: headers["authorization"]?.let { auth ->
                 if (auth.startsWith("Bearer ", ignoreCase = true)) auth.substring(7).trim() else null
@@ -2152,8 +2188,12 @@ class LanStudioServer(
         }
         if (method in setOf("POST", "PUT", "DELETE", "PATCH")) {
             val originHeader = headers["origin"]?.trim()
-            if (!originHeader.isNullOrEmpty() && !originHeader.equals("null", ignoreCase = true)) {
-                val originHost = runCatching { URI(originHeader).host }.getOrNull()
+            if (!originHeader.isNullOrEmpty()) {
+                val originHost = if (originHeader.equals("null", ignoreCase = true)) {
+                    null
+                } else {
+                    runCatching { URI(originHeader).host }.getOrNull()
+                }
                 if (originHost.isNullOrEmpty() || !isAllowedHostNameOrLiteral(originHost)) {
                     throw LanHttpException(403, "Forbidden", "Cross-origin state mutation blocked")
                 }
@@ -2709,6 +2749,8 @@ class LanStudioServer(
             "year" to LanJson.numOrNull(c.year),
             "durationMs" to LanJson.numOrNull(c.durationMs),
             "coverUrl" to LanJson.strOrNull(c.coverUrl),
+            "syncedLrc" to LanJson.strOrNull(c.syncedLrc),
+            "plainLyrics" to LanJson.strOrNull(c.plainLyrics),
             "confidenceScore" to JsonValue.Num(c.confidenceScore),
         )
 

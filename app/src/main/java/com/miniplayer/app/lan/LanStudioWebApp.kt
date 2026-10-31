@@ -745,13 +745,13 @@ async function browseFolder(rootId, relPath) {
   let acc = '';
   for (const seg of parts) {
     acc = acc ? (acc + '/' + seg) : seg;
-    const safeAcc = acc.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const safeAcc = escJs(acc);
     crumbsHtml += '<span>/</span><button class="crumb-link" onclick="browseFolder(' + rootId + ', \'' + safeAcc + '\')">' + esc(seg) + '</button>';
   }
   document.getElementById('folder-crumbs').innerHTML = crumbsHtml;
 
   const subRows = (data.subfolders || []).map(sf => {
-    const safeRel = (sf.relPath || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const safeRel = escJs(sf.relPath || '');
     const pfBadge = sf.isPracticeFolder ? '<span class="badge badge-practice">🎯 练习目录</span>' : '<span class="badge badge-muted">普通目录</span>';
     return '<tr>' +
       '<td><a href="javascript:void(0)" onclick="browseFolder(' + rootId + ', \'' + safeRel + '\')" style="color:var(--primary);font-weight:600;text-decoration:none;">📁 ' + esc(sf.name) + '</a></td>' +
@@ -1004,7 +1004,14 @@ function renderMetadataTable() {
 }
 
 function escJs(s) {
-  return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
+  const jsEsc = String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, ' ')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  return esc(jsEsc);
 }
 
 function inlineEditCell(spanEl, itemId, field, currentVal) {
@@ -1870,7 +1877,24 @@ async function bootstrapAll() {
   await loadPlaylists();
 }
 
+function syncUrlToken() {
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    const urlToken = (params.get('token') || '').trim();
+    if (urlToken) {
+      sessionStorage.setItem('mp_lan_pin', urlToken);
+      params.delete('token');
+      const rest = params.toString();
+      const cleanUrl = window.location.pathname + (rest ? ('?' + rest) : '') + (window.location.hash || '');
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', cleanUrl);
+      }
+    }
+  } catch (_) {}
+}
+
 initTheme();
+syncUrlToken();
 attachMediaLoopListeners(document.getElementById('studio-video'));
 attachMediaLoopListeners(document.getElementById('studio-audio'));
 bootstrapAll().catch(err => console.warn(err));

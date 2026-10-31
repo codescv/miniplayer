@@ -59,8 +59,12 @@ class LanStudioServerTest {
     private lateinit var server: LanStudioServer
     private var baseUrl: String = ""
 
+    @Volatile
+    private var activePlayingItemId: Long? = null
+
     @Before
     fun setUp() {
+        activePlayingItemId = null
         tempRootDir = Files.createTempDirectory("miniplayer_lan_test_").toFile()
 
         // Seed initial audio and video files in the mounted test folder
@@ -76,7 +80,11 @@ class LanStudioServerTest {
 
         storageGateway = LocalLanStorageGateway(mapOf(1L to tempRootDir))
         server = LanStudioServer(
-            config = LanServerConfig(port = 0, bindAddress = "127.0.0.1"),
+            config = LanServerConfig(
+                port = 0,
+                bindAddress = "127.0.0.1",
+                currentlyPlayingItemIdProvider = { activePlayingItemId },
+            ),
             core = fakeCore,
             storage = storageGateway,
         )
@@ -110,6 +118,8 @@ class LanStudioServerTest {
         assertTrue(html.contains("/api/stream"))
         assertFalse("SPA must be 100% offline with zero external CDN scripts", html.contains("https://cdn."))
         assertFalse("UI strings must strictly use 练习模式/练习列表/练习伴奏 instead of 练琴", html.contains("练琴"))
+        assertTrue("escJs must HTML-escape via esc() to prevent attribute DOM XSS", html.contains("return esc(jsEsc);"))
+        assertTrue("SPA must sync ?token= into sessionStorage on load", html.contains("syncUrlToken();"))
     }
 
     @Test
@@ -262,14 +272,16 @@ class LanStudioServerTest {
         assertEquals(2022, afterBatch[id2]?.year)
         assertEquals("結束バンド", afterBatch[id1]?.album)
 
-        // 3. 1-click online auto-match + cached candidate fast-path
+        // 3. 1-click online auto-match + cached candidate fast-path (preserving syncedLrc/plainLyrics)
         val previewResp = httpRequest(
             "POST",
             "/api/metadata/auto-match?itemId=$id1",
             jsonBody = """{"itemId":$id1,"previewOnly":true}""",
         )
         assertEquals(200, previewResp.status)
-        val previewCand = LanJson.parseObject(previewResp.bodyUtf8).arr("candidates")!!.items.first()
+        val previewCand = LanJson.parseObject(previewResp.bodyUtf8).arr("candidates")!!.items.first() as JsonValue.Obj
+        assertEquals("[00:10.00] 星座になれたら", previewCand.str("syncedLrc"))
+        assertEquals("星座になれたら", previewCand.str("plainLyrics"))
 
         val autoResp = httpRequest(
             "POST",
@@ -287,6 +299,19 @@ class LanStudioServerTest {
         val autoJson = LanJson.parseObject(autoResp.bodyUtf8)
         assertTrue(autoJson.bool("applied"))
         assertEquals("If I Could Be a Constellation", autoJson.obj("item")?.str("title"))
+        assertEquals("[00:10.00] 星座になれたら", fakeCore.lastAppliedCandidate?.syncedLrc)
+        assertEquals("星座になれたら", fakeCore.lastAppliedCandidate?.plainLyrics)
+
+        // 3b. Active-playback write guard forwards currentlyPlayingItemId
+        activePlayingItemId = id1
+        val guardedResp = httpRequest(
+            "POST",
+            "/api/metadata/update",
+            jsonBody = """{"itemId":$id1,"title":"12\" Mix <script>alert(1)</script>","writeBackToFile":true}""",
+        )
+        assertEquals(200, guardedResp.status)
+        assertEquals("SAVED_DB_DEFERRED_FILE", LanJson.parseObject(guardedResp.bodyUtf8).str("outcome"))
+        activePlayingItemId = null
 
         // 4. Batch online auto-complete
         val batchAutoResp = httpRequest(
@@ -460,6 +485,19 @@ class LanStudioServerTest {
         )
         assertEquals(416, invalidRangeResp.status)
         assertEquals("bytes */131072", invalidRangeResp.headers["content-range"])
+
+        // 6. Abrupt browser seek socket abort mid-stream does NOT emit server Error or corrupt state
+        Socket("127.0.0.1", server.boundPort).use { sock ->
+            sock.soTimeout = 3_000
+            sock.setSoLinger(true, 0)
+            val req = "GET /api/stream?itemId=${audioItem.itemId} HTTP/1.1\r\nHost: 127.0.0.1:${server.boundPort}\r\nRange: bytes=0-\r\n\r\n"
+            sock.getOutputStream().write(req.toByteArray(Charsets.UTF_8))
+            sock.getOutputStream().flush()
+            val buf = ByteArray(256)
+            sock.getInputStream().read(buf)
+        }
+        // Server remains healthy immediately after abrupt client reset
+        assertEquals(200, httpRequest("GET", "/api/status").status)
     }
 
     @Test
@@ -530,6 +568,21 @@ class LanStudioServerTest {
         )
         assertEquals(403, csrfStatus)
 
+        // Sandboxed iframe Origin: null must ALSO be rejected with 403 Forbidden
+        val nullOriginStatus = rawSocketStatus(
+            port = server.boundPort,
+            rawHttp = buildString {
+                append("POST /api/playlists HTTP/1.1\r\n")
+                append("Host: 127.0.0.1:${server.boundPort}\r\n")
+                append("Origin: null\r\n")
+                append("Content-Type: application/json\r\n")
+                append("Content-Length: ${csrfBody.toByteArray(Charsets.UTF_8).size}\r\n")
+                append("Connection: close\r\n\r\n")
+                append(csrfBody)
+            },
+        )
+        assertEquals(403, nullOriginStatus)
+
         val rebindStatus = rawSocketStatus(
             port = server.boundPort,
             rawHttp = "GET /api/items HTTP/1.1\r\nHost: evil-rebind.example.com:8088\r\nConnection: close\r\n\r\n",
@@ -574,6 +627,28 @@ class LanStudioServerTest {
                     overrideBaseUrl = pinBase,
                 ).status,
             )
+            // Live in-place PIN rotation / disable without restarting socket
+            pinServer.sessionPin = "7711"
+            assertEquals(
+                401,
+                httpRequest(
+                    "GET",
+                    "/api/items",
+                    headers = mapOf("X-Lan-Token" to "4826"),
+                    overrideBaseUrl = pinBase,
+                ).status,
+            )
+            assertEquals(
+                200,
+                httpRequest(
+                    "GET",
+                    "/api/items",
+                    headers = mapOf("X-Lan-Token" to "7711"),
+                    overrideBaseUrl = pinBase,
+                ).status,
+            )
+            pinServer.sessionPin = null
+            assertEquals(200, httpRequest("GET", "/api/items", overrideBaseUrl = pinBase).status)
         } finally {
             pinServer.stop()
         }
@@ -958,6 +1033,9 @@ private class FakeTestMiniPlayerCore(
     fun getBookmarksSync(itemId: Long): List<PracticeBookmark> =
         synchronized(this) { bookmarksByItem[itemId]?.toList().orEmpty() }
 
+    @Volatile
+    var lastAppliedCandidate: MetadataCandidate? = null
+
     override val scanner: FolderScannerContract = object : FolderScannerContract {
         override val scanProgress = scanProgressFlow
         override suspend fun addSafRoot(treeUri: Uri): AddRootResult = AddRootResult.Added(rootsFlow.value.first())
@@ -1002,7 +1080,11 @@ private class FakeTestMiniPlayerCore(
                 )
             }
             refreshDerivedFlows()
-            MetadataSaveOutcome.SAVED_DB_ONLY
+            if (draft.writeBackToFile && currentlyPlayingItemId != null && currentlyPlayingItemId in targetSet) {
+                MetadataSaveOutcome.SAVED_DB_DEFERRED_FILE
+            } else {
+                MetadataSaveOutcome.SAVED_DB_ONLY
+            }
         }
 
         override suspend fun resetMetadataOverride(itemIds: List<Long>) {}
@@ -1019,6 +1101,8 @@ private class FakeTestMiniPlayerCore(
                 album = "Kessoku Band",
                 year = 2022,
                 trackNumber = 11,
+                syncedLrc = "[00:10.00] 星座になれたら",
+                plainLyrics = "星座になれたら",
                 confidenceScore = 95,
             ),
         )
@@ -1030,6 +1114,7 @@ private class FakeTestMiniPlayerCore(
             writeBackToFile: Boolean,
             currentlyPlayingItemId: Long?,
         ): MetadataSaveOutcome {
+            lastAppliedCandidate = candidate
             return saveMetadata(
                 itemIds = listOf(itemId),
                 draft = MetadataDraft(
@@ -1047,6 +1132,7 @@ private class FakeTestMiniPlayerCore(
                     ),
                     writeBackToFile = writeBackToFile,
                 ),
+                currentlyPlayingItemId = currentlyPlayingItemId,
             )
         }
 
