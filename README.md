@@ -1,4 +1,4 @@
-# MiniPlayer
+# MiniPlayer (`Play`)
 
 Minimalist, offline-first **Android Local Music & Video Player** built with **Jetpack Compose Material Design 3 (Material You)** and **AndroidX Media3**, combining distraction-free everyday listening/viewing with a progressive-disclosure **Practice Mode (`练习模式`)** for guitarists, musicians, and transcribers—plus a zero-key **Online Metadata & Lyrics Completer**, a built-in **PC LAN Web Studio (`:8088`)**, and **SHA-256 Verified GitHub Auto-Updates**.
 
@@ -36,6 +36,14 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 - **Verified In-App GitHub Auto-Updater**:
   - Checks [`codescv/miniplayer` Releases](https://github.com/codescv/miniplayer/releases/latest) over HTTPS (`≤ 5` manual redirect hops, zero HTTP downgrade), verifies `SHA256SUMS.txt` digests, runs 4-stage `ApkValidator` checks (`PK\x03\x04` + `AndroidManifest.xml`, `com.miniplayer.app` package match, strict `versionCode > installed` anti-downgrade, and signing certificate SHA-256 equality), and launches `FileProvider` installation.
+
+---
+
+## What's New in `v1.0.5` (`versionCode = 10005`)
+
+1. **Stage Online Metadata Candidates, Save Manually (`Models.kt`, `DefaultMetadataEngine.kt`, `MetadataEditorSheet.kt`, `MiniPlayerViewModel.kt`, `LanStudioServer.kt`, `LanStudioWebApp.kt`)**: Tapping an online match card in the metadata editor no longer auto-saves or closes the sheet. It fills `Title`, `Artist`, `Album`, `AlbumArtist`, `Track#`, `Year`, cover preview, and lyrics into the form, highlights the selected card (`已填入 · 请点上方保存`), and only commits when you tap **`保存`**. `MetadataDraft` carries the staged `coverRemoteUrl`, `syncedLrc`, and `plainLyrics`; the cover is downloaded outside the file-write lock (a local gallery image still wins), and lyrics are cached on save. The PC Web Studio edit modal works the same way: candidates appear inline in `#ed-candidates-box` (new `GET /api/metadata/candidates` / `"candidatesOnly": true`) and nothing is saved until **`保存更改`**.
+2. **No More Stale / Duplicate Renamed Folders (`SafFolderScanner.kt`, `MiniPlayerDatabase.kt`, `MediaRepository.kt`, `MiniPlayerViewModel.kt`, `MainActivity.kt`)**: Renaming a subfolder `rock` → `Rock` (case-only, whether or not SAF keeps the same document URIs) or `rock` → `metal` now leaves only the new folder in **`文件夹`**. Tracks are migrated in place (keeping IDs, playlists, bookmarks, and overrides), `folder_rules` are moved to the new path or pruned, `folder_rules` can no longer create ghost folders, an open breadcrumb on the old path follows the rename, and returning to the app triggers a debounced incremental rescan.
+3. **App Name `Play` & Theme-Adaptive Guitar Pick Icon (`strings.xml`, `LibraryScreen.kt`, `values/colors.xml`, `values-night/colors.xml`, `ic_launcher_*.xml`)**: The launcher label and Library top bar now read **`Play`**. The new adaptive icon is a wide-shoulder 351 guitar pick with a centered rounded play triangle (no outer circle): Light `1D` (`#F8FAFC` / `#F97316` / `#FFFFFF`) and Dark `1A` (`#0F172A` / `#FB923C` / `#FFFBEB`), switched automatically by the system theme.
 
 ---
 
@@ -84,7 +92,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.4.apk` | Signed Android Release APK (`versionCode = 10004`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.5.apk` | Signed Android Release APK (`versionCode = 10005`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `app-release.apk` | Identical signed Android Release APK artifact |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -101,7 +109,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 export JAVA_HOME="/path/to/jdk21"
 export ANDROID_HOME="/path/to/Android/Sdk"
 
-# Run full pure-JVM unit & cross-module integration tests (67/67), debug/release APK builds, and Android Lint
+# Run full pure-JVM unit & cross-module integration tests (71/71), debug/release APK builds, and Android Lint
 ./gradlew --offline testDebugUnitTest assembleDebug assembleRelease lintDebug
 ```
 
@@ -113,6 +121,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine & `v1.0.4` folder isolation / minimalist top bars)
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, and `v1.0.5` staged candidate save / renamed-folder dedup / `Play` adaptive icon)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 2`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`BpmDetector` specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`67/67` tests), Lint, and `v1.0.4` verification report
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`71/71` tests), Lint, and `v1.0.5` verification report

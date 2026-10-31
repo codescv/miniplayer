@@ -1,6 +1,6 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.4 (`versionCode = 10004`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.5 (`versionCode = 10005`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
 > **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · SQLite (`SQLiteOpenHelper` + Kotlin `StateFlow`)
 
@@ -241,11 +241,18 @@ CREATE TABLE app_settings (
 3. **SAF 扫描离线保护与防重 (`SafFolderScanner.kt`)**：
    - 先校验 `contentResolver.persistedUriPermissions` 是否包含该 `treeUri`（缺失则标为 `PERMISSION_REVOKED`）；再尝试查询根文档游标（若抛出异常或返回 `null`/不可读则标为 `OFFLINE_UNMOUNTED`），**严禁删除该 `root_id` 下的任何 `media_items` 或书签**。
    - 仅在 `mount_state == MOUNTED` 且游标完整遍历成功时，对消失的 URI 先尝试 `fingerprint_key` 迁移绑定，确系删除的文件再清理记录。
+   - **重命名文件夹去重 (`v1.0.5`)**：子目录改名（含仅大小写改名 `rock` → `Rock`，及完整改名 `rock` → `metal`）后，文件夹视图只保留新目录，绝不同时出现 `Rock` 与 `rock`：
+     - `SafFolderScanner.performSingleRootScan`：增量命中（`documentUri` 相同、`sizeBytes`/`lastModified > 0` 相同）时，仅当 `parentRelPath` 与 `fileName` 也一致才视为零变更；否则发出 `MovedMediaUpdate` 原地迁移 `parent_rel_path`/`file_name`。若 SAF 改变了子文档 URI，则在未见旧条目中按 `(fileName 忽略大小写, sizeBytes, lastModified > 0)` 唯一匹配并迁移，保留 `itemId`、播放列表、书签、覆盖层与已提取元数据，无需重新调用 `MediaMetadataRetriever`。
+     - `SafOverlapDetector` 同卷 `subPath` 忽略大小写比较；`AlreadyAdded` 时同步更新根目录 `treeUri`/`treeDocId`/`displayName` 并全量重扫，`AlreadyCoveredByParent` 时先全量重扫父根；`SafVolumeProbe.Mounted.liveDisplayName` 用于同步根目录自身改名。
+     - `reconcileRootScan`（`SqliteMediaStoreBackend` 与 `InMemoryMediaStoreBackend`）：按实时 `scannedFolders` 规范化仅大小写不同的 `media_items.parent_rel_path`，并将 `folder_rules` 迁移到改名后的路径（含嵌套前缀 `rock/classic` → `Rock/classic`）或删除已消失目录的陈旧规则。
+     - `MediaRepository.browseFolder`：子目录**只**来自实时 `scanned_folders` 与 `media_items`（`folder_rules` 不再合成幽灵目录），按小写去重并优先采用 `scanned_folders` 的大小写；面包屑旧路径 `rock` 自动解析为 `Rock`；`rulesMap` 查找支持忽略大小写回退。
+     - `MediaRepository.snapshotVersion: StateFlow<Long>` 在每次 `refreshNow()` 后递增，`MiniPlayerViewModel` 据此刷新当前文件夹下钻；`MainActivity` 在非首次 `ON_START` 调用防抖（`1500 ms`、扫描中跳过）的 `onAppForegrounded()` 后台增量重扫，外部文件管理器改名后切回即自动更新。
 4. **二进制音频标签安全编解码 (`AudioTagCodec.kt`)**：
    - 支持纯 JVM 解析与重写：`.mp3` (**ID3v2.3 / ID3v2.4** `TIT2/TPE1/TALB/TPE2/TRCK/TDRC/APIC`)、`.flac` (**FLAC Metadata Blocks** `VORBIS_COMMENT` type=4 + `PICTURE` type=6)、`.ogg/.opus` (Vorbis Comment packet)、`.m4a/.mp4` (`moov.udta.meta.ilst` `©nam/©ART/©alb/aART/trkn/©day/covr`)。
    - **MP4 偏移修正铁律**：当 `moov` 原子位于 `mdat` 音频载荷之前且改写 `ilst` 导致 `moov` 字节长度变化 $\Delta$ 时，必须遍历所有 `trak.mdia.minf.stbl` 下的 `stco`（32位偏移 +$\Delta$；若溢出则升级）与 `co64`（64位偏移 +$\Delta$）同步修正偏移表！
    - **SAF 落盘铁律**：先在 `cacheDir/tag_stage/<itemId>.tmp` 生成完整新文件并二次读取校验头部合法性，再通过 `contentResolver.openFileDescriptor(docUri, "rw")` 覆写并调用 `Os.ftruncate(pfd.fileDescriptor, tmpFile.length())` + `Os.fsync(pfd.fileDescriptor)`。
 5. **免 Key 自动联网补全 (`OnlineMetadataCompleter.kt`)**：
+   - **候选暂存、手动保存 (`v1.0.5`)**：`MetadataDraft` 新增 `coverRemoteUrl`、`syncedLrc`、`plainLyrics`。`DefaultMetadataEngine.saveMetadata` 在进入 `fileWriteMutex.withLock` **之前**解析封面字节（本地 `coverBytes` 优先，否则 `onlineCompleter.downloadCoverBytes(coverRemoteUrl)`；下载失败时保留原覆盖封面），锁内写入覆盖封面与 `TagWriteSpec`，并在单曲保存时以 `LyricsSource.LRCLIB` upsert `LyricsCacheRow`。`MiniPlayerViewModel.saveMetadataDraft` 保存成功后刷新播放队列元数据、`_currentCoverBytes` 与 `_currentLyrics`，再关闭编辑器。
    - `MusicBrainzClient`：携带 `User-Agent: MiniPlayer/1.0.0 (https://github.com/codescv/miniplayer)`，内置 `Mutex + lastRequestMs` 实现 `1000 ms` 最小请求间隔。
    - **CAA `3.0s` 超时竞速回退**：查询封面时对 `coverartarchive.org/release/{mbid}/front-500` 设置 `connectTimeout = 3000, readTimeout = 3000`；若超时或非 `200`，立即采用并发/备选 `ItunesSearchClient` 返回的 `1000x1000bb.jpg` URL。
 
@@ -308,6 +315,7 @@ CREATE TABLE app_settings (
      - `GET /api/items?view=all|albums|artists|videos&q=`：返回曲库列表与有效标签、练习摘要。
      - `POST /api/metadata/update` · `POST /api/metadata/batch-update`：单曲或批量（遵循 `dirtyFields` 保护单曲标题/音轨号）保存标签。
      - `POST /api/metadata/auto-match?itemId=` · `POST /api/metadata/batch-auto-complete`：调用 `MetadataEngineContract` 执行免 Key 联网候选检索与批量自动补全。
+     - `GET /api/metadata/candidates?itemId=`（及 `POST /api/metadata/auto-match` 的 `"candidatesOnly": true`，`v1.0.5`）：仅返回候选列表（`title`/`artist`/`album`/`albumArtist`/`trackNumber`/`year`/`coverUrl`/`syncedLrc`/`plainLyrics`/`confidence`/`source`），**不自动保存**；Web 编辑弹窗在 `#ed-candidates-box` 内点选候选仅填入表单并暂存 `coverRemoteUrl`/`syncedLrc`/`plainLyrics`，直到点击「保存更改」才经 `POST /api/metadata/update` 提交（服务端在 `coverRemoteUrl` 非空时自动加入 `MetadataField.COVER` 脏字段）。
    - **播放列表与 `🎯 练习列表` 编排**：
      - `GET /api/playlists` · `POST /api/playlists` · `PUT /api/playlists/{id}` · `DELETE /api/playlists/{id}`：增删改播放列表、切换 `isPracticePlaylist`、调整曲序。
      - `POST /api/playlists/import` · `GET /api/playlists/export?id=`：`.m3u8` 导入导出。
