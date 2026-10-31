@@ -109,6 +109,7 @@ class LanStudioServerTest {
         assertTrue(html.contains("/api/upload"))
         assertTrue(html.contains("/api/stream"))
         assertFalse("SPA must be 100% offline with zero external CDN scripts", html.contains("https://cdn."))
+        assertFalse("UI strings must strictly use 练习模式/练习列表/练习伴奏 instead of 练琴", html.contains("练琴"))
     }
 
     @Test
@@ -261,11 +262,26 @@ class LanStudioServerTest {
         assertEquals(2022, afterBatch[id2]?.year)
         assertEquals("結束バンド", afterBatch[id1]?.album)
 
-        // 3. 1-click online auto-match
+        // 3. 1-click online auto-match + cached candidate fast-path
+        val previewResp = httpRequest(
+            "POST",
+            "/api/metadata/auto-match?itemId=$id1",
+            jsonBody = """{"itemId":$id1,"previewOnly":true}""",
+        )
+        assertEquals(200, previewResp.status)
+        val previewCand = LanJson.parseObject(previewResp.bodyUtf8).arr("candidates")!!.items.first()
+
         val autoResp = httpRequest(
             "POST",
             "/api/metadata/auto-match?itemId=$id1",
-            jsonBody = """{"itemId":$id1}""",
+            jsonBody = LanJson.stringify(
+                LanJson.obj(
+                    "itemId" to JsonValue.Num(id1),
+                    "candidateIndex" to JsonValue.Num(0),
+                    "candidate" to previewCand,
+                    "previewOnly" to JsonValue.Bool(false),
+                ),
+            ),
         )
         assertEquals(200, autoResp.status)
         val autoJson = LanJson.parseObject(autoResp.bodyUtf8)
@@ -322,15 +338,15 @@ class LanStudioServerTest {
         // 4. Import .m3u8 into a new playlist
         val importBody = LanJson.stringify(
             LanJson.obj(
-                "name" to JsonValue.Str("导入复刻练琴单"),
-                "content" to JsonValue.Str(m3uText.replace("#PLAYLIST:吉他独奏周练", "#PLAYLIST:导入复刻练琴单")),
+                "name" to JsonValue.Str("导入复刻练习列表"),
+                "content" to JsonValue.Str(m3uText.replace("#PLAYLIST:吉他独奏周练", "#PLAYLIST:导入复刻练习列表")),
             ),
         )
         val importResp = httpRequest("POST", "/api/playlists/import", jsonBody = importBody)
         assertEquals(201, importResp.status)
         val importJson = LanJson.parseObject(importResp.bodyUtf8)
         val importedId = importJson.long("playlistId")
-        assertEquals("导入复刻练琴单", importJson.str("playlistName"))
+        assertEquals("导入复刻练习列表", importJson.str("playlistName"))
         assertEquals(2, importJson.int("matchedCount"))
         assertTrue(importJson.bool("isPracticePlaylist"))
 

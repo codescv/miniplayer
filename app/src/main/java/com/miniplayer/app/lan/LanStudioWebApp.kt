@@ -703,7 +703,7 @@ async function loadRootsAndCurrentFolder() {
   } else {
     document.getElementById('folder-crumbs').innerHTML = '<span style="color:var(--muted);">尚未在手机上添加本地文件夹</span>';
     document.getElementById('folder-entries-tbody').innerHTML =
-      '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">请先在手机端 MiniPlayer 点击「+ 添加文件夹」挂载音乐或练琴伴奏目录</td></tr>';
+      '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">请先在手机端 MiniPlayer 点击「+ 添加文件夹」挂载音乐或练习伴奏目录</td></tr>';
   }
 }
 
@@ -838,8 +838,12 @@ function sendSingleUpload(rootId, relPath, file, onProgress) {
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) onProgress(ev.loaded); };
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else if (xhr.status === 401) {
+        promptPinAuth();
+        reject(new Error('需要输入访问 PIN 码'));
+      } else {
         let msg = '上传失败 (' + xhr.status + ')';
         try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) {}
         reject(new Error(msg));
@@ -1194,9 +1198,10 @@ async function autoMatchSingle(itemId, previewOnly) {
 
 async function applyPickedCandidate(itemId, idx) {
   try {
+    const picked = (state._lastCandidates && state._lastCandidates[idx]) || undefined;
     await api('/api/metadata/auto-match?itemId=' + encodeURIComponent(itemId), {
       method: 'POST',
-      json: { itemId: itemId, candidateIndex: idx, previewOnly: false }
+      json: { itemId: itemId, candidateIndex: idx, candidate: picked, previewOnly: false }
     });
     closeModal();
     showToast('已应用所选在线标签');
@@ -1306,7 +1311,7 @@ function renderPlaylistDetail() {
     '<div style="font-size:12px;color:var(--muted);" class="tnum">' + items.length + ' 个音视频条目（支持鼠标拖拽行排序）</div></div>' +
     '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">' +
     '<label class="badge badge-practice" style="cursor:pointer;padding:6px 12px;font-size:12px;">' +
-    '<input type="checkbox" ' + (s.isPracticePlaylist ? 'checked' : '') + ' onchange="togglePlaylistPractice(' + s.playlistId + ', this.checked)"> 🎯 练习列表（手机播放自动展开练琴台）</label>' +
+    '<input type="checkbox" ' + (s.isPracticePlaylist ? 'checked' : '') + ' onchange="togglePlaylistPractice(' + s.playlistId + ', this.checked)"> 🎯 练习列表（手机播放自动开启练习模式）</label>' +
     '<button class="btn btn-primary btn-xs" onclick="openAddTracksToActivePlaylist()">+ 添加曲目</button>' +
     '<button class="btn btn-outline btn-xs" onclick="renameActivePlaylist(' + s.playlistId + ', \'' + escJs(s.name) + '\')">重命名</button>' +
     '<a class="btn btn-tonal btn-xs" href="/api/playlists/export?id=' + s.playlistId + '">📤 导出 .m3u8</a>' +
