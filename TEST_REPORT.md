@@ -88,6 +88,20 @@ Before `v1.0.0` sign-off, independent audits by `@bug-finder` and `@critic` acro
 
 - **Repository URL:** `https://github.com/codescv/miniplayer`
 - **Release URL:** `https://github.com/codescv/miniplayer/releases/tag/v1.0.0`
-- **Release Tag & Version:** `v1.0.0` (`versionName = "1.0.0"`, `versionCode = 10000`)
+- **Release Tag & Version:** `v1.0.0` (`versionName = "1.0.0"`, `versionCode = 10000`, built from commit `67bd630`)
 - **Signing Certificate SHA-256:** `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5`
-- **Published Assets:** `MiniPlayer-v1.0.0.apk`, `app-release.apk`, and `SHA256SUMS.txt` (verified live against `https://api.github.com/repos/codescv/miniplayer/releases/latest`).
+
+### 5.1 Published Release Assets & SHA-256 Checksums
+
+| Asset | Size | SHA-256 |
+|---|---:|---|
+| `MiniPlayer-v1.0.0.apk` | `14,242,499` bytes (13.6 MiB) | `513aec475b0c26d5f769ce7e5035556a8825ca4f9f6e7248e6cc168281044d7f` |
+| `app-release.apk` | `14,242,499` bytes (13.6 MiB) | `513aec475b0c26d5f769ce7e5035556a8825ca4f9f6e7248e6cc168281044d7f` |
+| `SHA256SUMS.txt` | `170` bytes | Basename SHA-256 manifest verified by `AppUpdater` |
+
+### 5.2 Live Post-Publication Smoke Verification
+
+- **GitHub Releases API (`https://api.github.com/repos/codescv/miniplayer/releases/latest`):** **PASS** — returned `tag_name = "v1.0.0"`, `prerelease = false`, `draft = false`, with all 3 published assets (`MiniPlayer-v1.0.0.apk`, `app-release.apk`, `SHA256SUMS.txt`).
+- **Live `AppUpdater` End-to-End Check & Download Verification:** **PASS** — executed compiled `com.miniplayer.app.core.update.AppUpdater` directly against live GitHub production endpoints:
+  - `checkLatestRelease("1.0.0")` → `updateAvailable = false`, `asset = "MiniPlayer-v1.0.0.apk"`, `expectedSha256 = "513aec475b0c26d5f769ce7e5035556a8825ca4f9f6e7248e6cc168281044d7f"`.
+  - `checkLatestRelease("0.9.9")` + `downloadApk(...)` → `updateAvailable = true`, followed GitHub CDN HTTPS redirects cleanly, verified `PK\x03\x04` + `AndroidManifest.xml`, and matched exact `14,242,499` bytes & SHA-256 `513aec475b0c26d5f769ce7e5035556a8825ca4f9f6e7248e6cc168281044d7f`.
