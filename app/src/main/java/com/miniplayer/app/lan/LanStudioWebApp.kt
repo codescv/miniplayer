@@ -1107,7 +1107,7 @@ function openEditItemModal(itemId, autoSearch) {
     '<h3 style="margin-top:0;">编辑曲目元数据</h3>' +
     '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">文件: ' + esc(it.fileName) + '</div>' +
     '<div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">' +
-    '<button type="button" id="ed-auto-match-btn" class="btn btn-tonal btn-sm" onclick="searchEditModalCandidates(' + it.itemId + ')">🌐 在线自动补全当前曲目</button>' +
+    '<button type="button" id="ed-auto-match-btn" class="btn btn-tonal btn-sm" onclick="searchEditModalCandidates(' + it.itemId + ')">在线自动补全当前曲目</button>' +
     '<span id="ed-staged-hint" style="font-size:12px;color:var(--primary);font-weight:600;"></span>' +
     '</div>' +
     backingToggleHtml +

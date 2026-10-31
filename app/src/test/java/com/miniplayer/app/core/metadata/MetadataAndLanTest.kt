@@ -443,7 +443,7 @@ class MetadataAndLanTest {
 
             // 1. Check WebApp HTML has staging UI & zero forbidden terminology
             val html = LanStudioWebApp.renderHtml()
-            assertTrue(html.contains("🌐 在线自动补全当前曲目"))
+            assertTrue(html.contains("在线自动补全当前曲目"))
             assertTrue(html.contains("ed-candidates-box"))
             assertTrue(html.contains("保存更改"))
             assertFalse(html.contains("练琴"))

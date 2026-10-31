@@ -319,6 +319,14 @@ fun MetadataEditorSheet(
                                 }
                                 stagedSyncedLrc = cand.syncedLrc
                                 stagedPlainLyrics = cand.plainLyrics
+                                if (cand.coverUrl.isNullOrBlank()) {
+                                    // Drop any cover staged by a previously selected candidate; keep a locally picked image.
+                                    stagedCoverRemoteUrl = null
+                                    if (pickedCoverBytes == null) {
+                                        previewCoverUri = first.coverPathOrUri
+                                        dirtyFields = dirtyFields - MetadataField.COVER
+                                    }
+                                }
                                 dirtyFields = dirtyFields + fieldsToMark
                             },
                         )
