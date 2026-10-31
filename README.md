@@ -6,10 +6,10 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 ## Key Features
 
-- **Strictly Scoped Local Folders (`只扫描显式添加的文件夹`) & Practice Folder Isolation**:
-  - **Zero `MediaStore` spam & zero broad storage permissions**: Never requests `READ_MEDIA_AUDIO`, `READ_MEDIA_VIDEO`, or `MANAGE_EXTERNAL_STORAGE`—no ringtones, call recordings, or chat voice notes polluting your library.
+- **Strictly Scoped Local Folders (`只扫描显式添加的文件夹`) & Folder Isolation (`练习文件夹` / `不自动归类`)**:
+  - **Zero `MediaStore` spam, zero broad storage permissions & zero `.nomedia` skipping**: Never requests `READ_MEDIA_AUDIO`, `READ_MEDIA_VIDEO`, or `MANAGE_EXTERNAL_STORAGE`—no ringtones, call recordings, or chat voice notes polluting your library—and always scans all files inside explicitly added folders regardless of `.nomedia` marker files.
   - Mount specific folders on internal storage, SD cards, or USB OTG drives via Android SAF (`ACTION_OPEN_DOCUMENT_TREE`) with ancestor/child overlap deduplication, `<10ms` incremental cursor rescans, sidecar `.lrc` & `cover.jpg` indexing, moved-file fingerprint bookmark migration, and **Offline Volume Guard (`未挂载`)** that preserves playlists and A-B bookmarks when OTG drives are unplugged.
-  - **Practice Folder Isolation (`练习文件夹隔离`)**: Marking any SAF root or subfolder as a **Practice Folder (`练习文件夹`)** (inherited automatically by descendant subfolders) keeps backing tracks and tutorial clips cleanly accessible in **`文件夹`**, **`播放列表`**, and **`含段落书签`**, while automatically excluding them from **`专辑`**, **`歌手`**, and **`视频`** so everyday listening stays completely uncluttered.
+  - **Practice Folder (`练习文件夹`) & Exclude-from-Auto-Grouping (`不自动归类`) Isolation**: Marking any SAF root or subfolder as **`练习文件夹`** or **`不自动归类`** (each inherited automatically by descendant subfolders, with child-subfolder override support) keeps tracks cleanly accessible in **`文件夹`** (with 1-tap **`全部添加到播放列表`** on root folders, subfolders, and the active folder header), **`播放列表`**, and **`含段落书签`**, while automatically excluding them from **`专辑`**, **`歌手`**, and **`视频`**. Folders marked **`不自动归类`** (without **`练习文件夹`**) play in everyday **Casual Mode (`PlayContext.CASUAL`)**.
   - **2 Bottom Tabs + 4 Pure-Text M3 Views**: Ultra-clean `LibraryScreen` top bar keeping **only** the `设置` icon button and sorting strictly by natural name order (`Track 2 < Track 10`), clean `PlaylistsScreen` top bar with zero action icons, `文件夹` (icon-only tree `⇄` flat view toggle and icon-only Add Folder FAB), `专辑` (`(Album, AlbumArtist)` grouping + `未知专辑` bucket), `歌手` (multi-artist `/` · `;` · `、` · `feat.` splitting with band allowlist like `AC/DC`), and `视频` (16:9 keyframe thumbnails, resolution badges, bookmark counts, and watch progress).
 
 - **Unified Audio/Video Player & Compact 2-Row Practice Deck (`练习模式 / 练习工作台`)**:
@@ -36,6 +36,14 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 - **Verified In-App GitHub Auto-Updater**:
   - Checks [`codescv/miniplayer` Releases](https://github.com/codescv/miniplayer/releases/latest) over HTTPS (`≤ 5` manual redirect hops, zero HTTP downgrade), verifies `SHA256SUMS.txt` digests, runs 4-stage `ApkValidator` checks (`PK\x03\x04` + `AndroidManifest.xml`, `com.miniplayer.app` package match, strict `versionCode > installed` anti-downgrade, and signing certificate SHA-256 equality), and launches `FileProvider` installation.
+
+---
+
+## What's New in `v1.0.4` (`versionCode = 10004`)
+
+1. **`"不自动归类"` (`Exclude from Auto-Grouping`) on Folders (`Models.kt`, `MiniPlayerDatabase.kt`, `MediaRepository.kt`, `SafFolderScanner.kt`, `MiniPlayerViewModel.kt`, `LibraryScreen.kt`, `LanStudioServer.kt`)**: Mark any SAF root folder or subfolder as **`"不自动归类"`** (`DATABASE_VERSION = 2` `exclude_from_grouping`, automatically inherited by descendant subfolders with child override support) so its audio/video files are hidden from **`专辑`**, **`歌手`**, and **`视频`** while remaining browsable in **`文件夹`**, **`播放列表`**, and **`含段落书签`**, and playing in everyday **Casual Mode (`PlayContext.CASUAL`)** unless also marked as a Practice Folder. Includes `"不自动归类"` badge pills, `"设为不自动归类"` / `"取消不自动归类"` `⋮` menu actions, and an active-folder status banner.
+2. **`"全部添加到播放列表"` (`Add All to Playlist`) on Folders (`MiniPlayerViewModel.kt`, `LibraryScreen.kt`)**: Added 1-tap **`"全部添加到播放列表"`** (`Icons.AutoMirrored.Outlined.PlaylistAdd`) across all 3 folder surfaces—Root folder `⋮` menu, Subfolder `⋮` menu, and the Currently Browsed Folder breadcrumb header—collecting all media items recursively under that folder in deterministic natural title order (`Track 2 < Track 10`) into the playlist picker.
+3. **Removed All `.nomedia` Settings & Always Ignore `.nomedia` (`SettingsScreen.kt`, `LibraryScreen.kt`, `SafFolderScanner.kt`, `MediaRepository.kt`)**: Removed `"遵循子目录 .nomedia 跳过扫描"` from Settings and all `.nomedia` badges/menu items from `LibraryScreen`; `SafFolderScanner` and `MediaRepository` now unconditionally scan all files inside user-added SAF folders regardless of `.nomedia` marker files.
 
 ---
 
@@ -76,7 +84,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.3.apk` | Signed Android Release APK (`versionCode = 10003`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.4.apk` | Signed Android Release APK (`versionCode = 10004`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `app-release.apk` | Identical signed Android Release APK artifact |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -93,7 +101,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 export JAVA_HOME="/path/to/jdk21"
 export ANDROID_HOME="/path/to/Android/Sdk"
 
-# Run full pure-JVM unit & cross-module integration tests (64/64), debug/release APK builds, and Android Lint
+# Run full pure-JVM unit & cross-module integration tests (67/67), debug/release APK builds, and Android Lint
 ./gradlew --offline testDebugUnitTest assembleDebug assembleRelease lintDebug
 ```
 
@@ -105,6 +113,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine & `v1.0.3` minimalist top bars / 2-row ergonomics)
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL, Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`BpmDetector` specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`64/64` tests), Lint, and `v1.0.3` verification report
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine & `v1.0.4` folder isolation / minimalist top bars)
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 2`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`BpmDetector` specs, LAN Web Studio & Auto-Updater security invariants
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`67/67` tests), Lint, and `v1.0.4` verification report

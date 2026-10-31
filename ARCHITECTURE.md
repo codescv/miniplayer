@@ -1,6 +1,6 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.2 (`versionCode = 10002`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.4 (`versionCode = 10004`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
 > **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · SQLite (`SQLiteOpenHelper` + Kotlin `StateFlow`)
 
@@ -78,13 +78,14 @@ CREATE TABLE saf_roots (
     last_scan_at INTEGER NOT NULL DEFAULT 0
 );
 
--- 2. 任意层级文件夹规则表 (支持根或任意子文件夹标记 🎯 练习文件夹 及 .nomedia 覆盖)
+-- 2. 任意层级文件夹规则表 (DATABASE_VERSION = 2; 支持根或任意子文件夹标记练习文件夹与「不自动归类」，并通过 onUpgrade/onOpen 安全幂等迁移列)
 CREATE TABLE folder_rules (
     folder_uri TEXT PRIMARY KEY,
     root_id INTEGER NOT NULL REFERENCES saf_roots(root_id) ON DELETE CASCADE,
     rel_path TEXT NOT NULL,              -- 相对根目录路径，如 "" (根) 或 "Backing/J-Rock"
     is_practice_folder INTEGER NOT NULL DEFAULT 0,
-    respect_nomedia INTEGER              -- NULL 表示跟随全局设置，0/1 表示单目录显式覆盖
+    exclude_from_grouping INTEGER NOT NULL DEFAULT 0, -- 1 表示该目录及继承子目录不参与专辑/歌手/视频自动归类
+    respect_nomedia INTEGER              -- 历史兼容保留列；扫描器始终忽略 .nomedia 完整索引媒体
 );
 CREATE INDEX idx_folder_rules_root_path ON folder_rules(root_id, rel_path);
 
@@ -219,7 +220,7 @@ CREATE TABLE app_settings (
 1. `core/model/Models.kt` 完整定义了所有不可变模型与纯函数辅助工具（包含半音/音分转 `PlaybackParameters.pitch` 的精确数学工具 `PracticeMath.computePitchFactor(semitones, cents)`、节拍间隔计算 `PracticeMath.computeClickIntervalMs(bpm, speed)`、`tnum` 时间格式化等）。
 2. `core/CoreContracts.kt` 定义了四大核心接口与总门面 `MiniPlayerCoreProvider`：
    - `MediaLibraryContract`：响应式 `StateFlow` 观察文件夹树/平铺、专辑聚合（含 `未知专辑`）、歌手聚合、视频列表、播放列表（含 `🎯 练习列表`）、书签聚合、单曲练习状态与全局设置，以及增删改方法。
-   - `FolderScannerContract`：添加 SAF 根目录（返回 `AddRootResult`：成功 / 已包含在父目录 / 已自动合并旧子目录）、增量重扫全部或单个根目录、移除根目录、切换任意目录/子目录 `🎯 练习文件夹` 与 `.nomedia` 规则。
+   - `FolderScannerContract`：添加 SAF 根目录（返回 `AddRootResult`：成功 / 已包含在父目录 / 已自动合并旧子目录）、增量重扫全部或单个根目录、移除根目录、切换任意目录/子目录 `练习文件夹` 与 `不自动归类 (exclude_from_grouping)` 规则（扫描始终忽略 `.nomedia`）。
    - `MetadataEngineContract`：保存单曲或批量 `MetadataDraft`（第 1 层数据库覆盖 + 可选第 2 层 SAF 原子写回）、恢复原始标签、单曲免 Key 联网候选检索（`searchOnlineCandidates`）、文件夹/`未知专辑`批量匹配预览（`previewBatchCompletion`）与批量提交、获取同步 `.lrc` 歌词、`.m3u/.m3u8` 导入导出。
    - `AppUpdateContract`：检查 GitHub Releases 最新版本、带进度与 SHA-256 + 签名校验下载 APK、触发 `FileProvider` 安装 Intent。
 3. **`CoreRegistry.get(context)` 零冲突解耦绑定**：
@@ -236,7 +237,7 @@ CREATE TABLE app_settings (
    - `effectiveAlbum = override.album?.takeIf { it.isNotBlank() } ?: rawAlbum?.takeIf { it.isNotBlank() } ?: parsedAlbum`（若为空或空白，归入 `AlbumSummary.UNKNOWN_ALBUM_KEY`，标题显示 `"未知专辑"`，`isUnknownAlbum = true`）。
    - 每次写入/清除 `media_metadata_overrides` 或新文件入库时，同步通过 `ArtistSplitter.split(effectiveArtist, effectiveAlbumArtist)` 重建该曲目的 `media_item_artists` 行，并发出响应式刷新信号。
 2. **子目录 `folder_rules` 最近祖先继承算法**：
-   - 判断某文件 `(root_id, parent_rel_path)` 是否属于 `🎯 练习文件夹` 时，沿路径前缀向上匹配 `folder_rules`（例如 `"Backing/J-Rock"` 依次匹配 `"Backing/J-Rock"` → `"Backing"` → `""`），命中最近一条显式规则即采用其 `is_practice_folder` 值。
+   - 判断某文件 `(root_id, parent_rel_path)` 是否属于 `练习文件夹` (`isPracticeFolder`) 或 `不自动归类` (`isExcludedFromAutoGrouping`) 时，沿路径前缀向上匹配 `folder_rules`（例如 `"Backing/J-Rock"` 依次匹配 `"Backing/J-Rock"` → `"Backing"` → `""`），命中最近一条显式规则即采用其对应字段值；子目录切换单项开关时自动继承并保留另一项有效属性。
 3. **SAF 扫描离线保护与防重 (`SafFolderScanner.kt`)**：
    - 先校验 `contentResolver.persistedUriPermissions` 是否包含该 `treeUri`（缺失则标为 `PERMISSION_REVOKED`）；再尝试查询根文档游标（若抛出异常或返回 `null`/不可读则标为 `OFFLINE_UNMOUNTED`），**严禁删除该 `root_id` 下的任何 `media_items` 或书签**。
    - 仅在 `mount_state == MOUNTED` 且游标完整遍历成功时，对消失的 URI 先尝试 `fingerprint_key` 迁移绑定，确系删除的文件再清理记录。
