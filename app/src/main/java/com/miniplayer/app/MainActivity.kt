@@ -100,10 +100,18 @@ private fun KeepScreenOnEffect(
 @Composable
 private fun BackgroundVideoAudioContinuationEffect(viewModel: MiniPlayerViewModel) {
     val lifecycleOwner = LocalLifecycleOwner.current
+    var hasSeenInitialStart by remember { mutableStateOf(false) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> viewModel.playerController.onUiStarted()
+                Lifecycle.Event.ON_START -> {
+                    viewModel.playerController.onUiStarted()
+                    if (hasSeenInitialStart) {
+                        viewModel.onAppForegrounded()
+                    } else {
+                        hasSeenInitialStart = true
+                    }
+                }
                 Lifecycle.Event.ON_STOP -> viewModel.playerController.onUiStopped()
                 else -> Unit
             }

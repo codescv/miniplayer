@@ -426,6 +426,9 @@ class LanStudioServer(
                 rawPath == "/api/metadata/reset" && method == "POST" ->
                     handleMetadataReset(clientIp, headers, input, output, requestWantsClose)
 
+                rawPath == "/api/metadata/candidates" && (method == "GET" || method == "HEAD") ->
+                    handleMetadataCandidates(clientIp, query, output, headOnly, requestWantsClose)
+
                 rawPath == "/api/metadata/auto-match" && method == "POST" ->
                     handleMetadataAutoMatch(clientIp, query, headers, input, output, requestWantsClose)
 
@@ -1142,20 +1145,27 @@ class LanStudioServer(
     ): Boolean {
         val (bodyText, mustClose) = readBoundedUtf8Body(headers, input, config.maxJsonBodyBytes)
         val json = LanJson.parseObject(bodyText)
-        val itemId = json.longOrNull("itemId") ?: query["itemId"]?.toLongOrNull()
-            ?: throw LanHttpException(400, "Bad Request", "Missing 'itemId'")
-        findItemOrThrow(itemId)
+        val itemIds = json.longList("itemIds").distinct().ifEmpty {
+            listOfNotNull(json.longOrNull("itemId") ?: query["itemId"]?.toLongOrNull())
+        }
+        if (itemIds.isEmpty()) {
+            throw LanHttpException(400, "Bad Request", "Missing 'itemId'")
+        }
+        val primaryItemId = itemIds.first()
+        for (id in itemIds) {
+            findItemOrThrow(id)
+        }
 
         val draft = parseMetadataDraftFromJson(json)
-        if (draft.dirtyFields.isEmpty()) {
+        if (draft.dirtyFields.isEmpty() && draft.syncedLrc.isNullOrBlank() && draft.plainLyrics.isNullOrBlank()) {
             throw LanHttpException(400, "Bad Request", "No metadata fields provided to update")
         }
         val outcome = core.metadata.saveMetadata(
-            itemIds = listOf(itemId),
+            itemIds = itemIds,
             draft = draft,
             currentlyPlayingItemId = config.currentlyPlayingItemIdProvider(),
         )
-        val updated = core.library.allMediaItems.value.find { it.itemId == itemId }
+        val updated = core.library.allMediaItems.value.find { it.itemId == primaryItemId }
 
         recordRequest(clientIp, "POST", "/api/metadata/update", 200)
         return writeJsonOk(
@@ -1206,6 +1216,10 @@ class LanStudioServer(
     }
 
     private fun parseMetadataDraftFromJson(json: JsonValue.Obj): MetadataDraft {
+        val coverRemoteUrl = json.str("coverRemoteUrl")?.trim()?.takeIf { it.isNotEmpty() }
+        val syncedLrc = json.str("syncedLrc")?.takeIf { it.isNotBlank() }
+        val plainLyrics = json.str("plainLyrics")?.takeIf { it.isNotBlank() }
+
         val dirty = LinkedHashSet<MetadataField>()
         if (json.has("dirtyFields")) {
             for (raw in json.stringList("dirtyFields")) {
@@ -1219,6 +1233,9 @@ class LanStudioServer(
             if (json.has("trackNumber")) dirty.add(MetadataField.TRACK_NUMBER)
             if (json.has("year")) dirty.add(MetadataField.YEAR)
         }
+        if (!coverRemoteUrl.isNullOrBlank()) {
+            dirty.add(MetadataField.COVER)
+        }
         return MetadataDraft(
             title = json.str("title"),
             artist = json.str("artist"),
@@ -1226,8 +1243,42 @@ class LanStudioServer(
             albumArtist = json.str("albumArtist"),
             trackNumber = if (json.isNull("trackNumber")) null else json.intOrNull("trackNumber"),
             year = if (json.isNull("year")) null else json.intOrNull("year"),
+            coverRemoteUrl = coverRemoteUrl,
+            syncedLrc = syncedLrc,
+            plainLyrics = plainLyrics,
             dirtyFields = dirty,
             writeBackToFile = json.bool("writeBackToFile", false),
+        )
+    }
+
+    private suspend fun handleMetadataCandidates(
+        clientIp: String,
+        query: Map<String, String>,
+        output: OutputStream,
+        headOnly: Boolean,
+        closeConnection: Boolean,
+    ): Boolean {
+        val itemId = query["itemId"]?.toLongOrNull()
+            ?: throw LanHttpException(400, "Bad Request", "Missing 'itemId'")
+        val item = findItemOrThrow(itemId)
+        val queryTitle = query["queryTitle"]?.takeIf { it.isNotBlank() }
+        val queryArtist = query["queryArtist"]?.takeIf { it.isNotBlank() }
+
+        val candidates = core.metadata.searchOnlineCandidates(
+            item = item,
+            queryTitleOverride = queryTitle,
+            queryArtistOverride = queryArtist,
+        )
+        recordRequest(clientIp, if (headOnly) "HEAD" else "GET", "/api/metadata/candidates", 200)
+        return writeJsonOk(
+            output,
+            LanJson.obj(
+                "ok" to JsonValue.Bool(true),
+                "itemId" to JsonValue.Num(itemId),
+                "candidates" to JsonValue.Arr(candidates.map(::serializeMetadataCandidate)),
+            ),
+            headOnly = headOnly,
+            close = closeConnection,
         )
     }
 
@@ -1270,7 +1321,10 @@ class LanStudioServer(
             ?: throw LanHttpException(400, "Bad Request", "Missing 'itemId'")
         val item = findItemOrThrow(itemId)
 
-        val previewOnly = json.bool("previewOnly", false) || query["previewOnly"] == "1"
+        val previewOnly = json.bool("previewOnly", false) ||
+            json.bool("candidatesOnly", false) ||
+            query["previewOnly"] == "1" ||
+            query["candidatesOnly"] == "1"
         val queryTitle = json.str("queryTitle") ?: query["queryTitle"]
         val queryArtist = json.str("queryArtist") ?: query["queryArtist"]
         val writeBack = json.bool("writeBackToFile", false)
@@ -2767,6 +2821,7 @@ class LanStudioServer(
             "coverUrl" to LanJson.strOrNull(c.coverUrl),
             "syncedLrc" to LanJson.strOrNull(c.syncedLrc),
             "plainLyrics" to LanJson.strOrNull(c.plainLyrics),
+            "confidence" to JsonValue.Num(c.confidenceScore),
             "confidenceScore" to JsonValue.Num(c.confidenceScore),
         )
 
@@ -2786,7 +2841,7 @@ class LanStudioServer(
                 coverUrl = obj.str("coverUrl"),
                 syncedLrc = obj.str("syncedLrc"),
                 plainLyrics = obj.str("plainLyrics"),
-                confidenceScore = obj.int("confidenceScore", 90),
+                confidenceScore = obj.intOrNull("confidenceScore") ?: obj.int("confidence", 90),
             )
         }
 

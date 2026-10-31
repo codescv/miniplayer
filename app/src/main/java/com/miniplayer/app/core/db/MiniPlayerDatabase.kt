@@ -13,6 +13,7 @@ import com.miniplayer.app.core.model.MountState
 import com.miniplayer.app.core.model.PracticeBookmark
 import com.miniplayer.app.core.model.PracticeState
 import com.miniplayer.app.core.model.VideoSeekMode
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 data class SafRootRow(
@@ -187,6 +188,14 @@ interface MediaStoreBackend {
         lastScanAt: Long? = null,
     )
 
+    fun updateSafRootIdentity(
+        rootId: Long,
+        treeUri: String,
+        treeDocId: String,
+        displayName: String,
+        isWritable: Boolean,
+    )
+
     fun deleteSafRoot(rootId: Long)
 
     fun upsertFolderRule(rule: FolderRuleRow)
@@ -202,6 +211,8 @@ interface MediaStoreBackend {
         deletedItemIds: Set<Long>,
         lyricsUpdates: List<Pair<String, LyricsCacheRow>>, // keyed by documentUri
         artistSplitter: (effectiveArtist: String, effectiveAlbumArtist: String?) -> List<SplitArtist>,
+        liveRootDisplayName: String? = null,
+        hasCompleteFolderScan: Boolean = false,
     )
 
     fun upsertMetadataOverrides(
@@ -513,6 +524,121 @@ internal fun joinRelSegments(prefix: String, child: String): String {
     }
 }
 
+internal fun canonicalizeRelPathAgainstLive(
+    rawRel: String,
+    liveRelSet: Set<String>,
+    liveRelByLower: Map<String, ScannedFolderRow>,
+): String {
+    val norm = MediaRepository.normalizeRelPath(rawRel)
+    if (norm.isEmpty() || norm in liveRelSet) return norm
+    liveRelByLower[norm.lowercase(Locale.ROOT)]?.let { return it.relPath }
+    val parts = norm.split('/')
+    for (prefixLen in (parts.size - 1) downTo 1) {
+        val prefix = parts.subList(0, prefixLen).joinToString("/")
+        val matchedPrefix = liveRelByLower[prefix.lowercase(Locale.ROOT)]?.relPath
+        if (matchedPrefix != null && matchedPrefix != prefix) {
+            val suffix = parts.subList(prefixLen, parts.size).joinToString("/")
+            val candidate = "$matchedPrefix/$suffix"
+            return liveRelByLower[candidate.lowercase(Locale.ROOT)]?.relPath ?: candidate
+        }
+    }
+    return norm
+}
+
+internal data class ReconciledFolderRulePlan(
+    val rulesToDeleteByUri: List<String>,
+    val rulesToDeleteByRelPath: List<String>,
+    val rulesToUpsert: List<FolderRuleRow>,
+)
+
+internal fun planFolderRuleReconciliation(
+    rootId: Long,
+    existingRulesForRoot: List<FolderRuleRow>,
+    liveByRel: Map<String, ScannedFolderRow>,
+    liveRelByLower: Map<String, ScannedFolderRow>,
+    movedOldRelToNewRel: List<Pair<String, String>>,
+): ReconciledFolderRulePlan {
+    val deleteUris = ArrayList<String>()
+    val deleteRels = ArrayList<String>()
+    val upserts = ArrayList<FolderRuleRow>()
+
+    val occupiedRelPaths = existingRulesForRoot
+        .map { MediaRepository.normalizeRelPath(it.relPath) }
+        .filter { it.isEmpty() || it in liveByRel }
+        .toMutableSet()
+
+    for (rule in existingRulesForRoot) {
+        val normRel = MediaRepository.normalizeRelPath(rule.relPath)
+        if (normRel.isEmpty()) continue
+
+        val exactLive = liveByRel[normRel]
+        if (exactLive != null) {
+            if (exactLive.folderUri != rule.folderUri || rule.relPath != normRel) {
+                deleteUris.add(rule.folderUri)
+                deleteRels.add(rule.relPath)
+                upserts.add(rule.copy(relPath = normRel, folderUri = exactLive.folderUri))
+            }
+            continue
+        }
+
+        val targetRel: String? = run {
+            val caseTarget = canonicalizeRelPathAgainstLive(normRel, liveByRel.keys, liveRelByLower)
+            if (caseTarget != normRel && caseTarget in liveByRel) {
+                return@run caseTarget
+            }
+            val uriTarget = liveByRel.values.firstOrNull { it.folderUri == rule.folderUri }?.relPath
+            if (uriTarget != null && uriTarget in liveByRel) {
+                return@run uriTarget
+            }
+            val moveCandidates = movedOldRelToNewRel
+                .mapNotNull { (oldRel, newRel) ->
+                    when {
+                        oldRel.equals(normRel, ignoreCase = true) -> newRel
+                        oldRel.startsWith("$normRel/", ignoreCase = true) -> {
+                            val suffix = oldRel.substring(normRel.length + 1)
+                            if (newRel.endsWith("/$suffix", ignoreCase = true) && newRel.length > suffix.length + 1) {
+                                newRel.substring(0, newRel.length - suffix.length - 1)
+                            } else {
+                                null
+                            }
+                        }
+                        oldRel.isNotEmpty() && normRel.startsWith("$oldRel/", ignoreCase = true) -> {
+                            val subSuffix = normRel.substring(oldRel.length + 1)
+                            "$newRel/$subSuffix"
+                        }
+                        else -> null
+                    }
+                }
+                .distinct()
+            val uniqueMoveTarget = moveCandidates.singleOrNull()
+            if (uniqueMoveTarget != null && uniqueMoveTarget in liveByRel) {
+                return@run uniqueMoveTarget
+            }
+            null
+        }
+
+        deleteUris.add(rule.folderUri)
+        deleteRels.add(rule.relPath)
+        if (targetRel != null && targetRel !in occupiedRelPaths) {
+            val liveSf = liveByRel[targetRel]!!
+            occupiedRelPaths.add(targetRel)
+            upserts.add(
+                rule.copy(
+                    folderUri = liveSf.folderUri,
+                    rootId = rootId,
+                    relPath = targetRel,
+                ),
+            )
+        }
+    }
+
+    return ReconciledFolderRulePlan(
+        rulesToDeleteByUri = deleteUris,
+        rulesToDeleteByRelPath = deleteRels,
+        rulesToUpsert = upserts,
+    )
+}
+
 /**
  * Production SQLite backend executing ACID transactions against [MiniPlayerDatabase].
  */
@@ -702,6 +828,34 @@ class SqliteMediaStoreBackend(
         Unit
     }
 
+    override fun updateSafRootIdentity(
+        rootId: Long,
+        treeUri: String,
+        treeDocId: String,
+        displayName: String,
+        isWritable: Boolean,
+    ) = inTransaction { db ->
+        val cv = ContentValues().apply {
+            put("tree_uri", treeUri)
+            put("tree_doc_id", treeDocId)
+            put("display_name", displayName)
+            put("is_writable", if (isWritable) 1 else 0)
+            put("mount_state", MountState.MOUNTED.name)
+        }
+        db.updateWithOnConflict("saf_roots", cv, "root_id = ?", arrayOf(rootId.toString()), SQLiteDatabase.CONFLICT_REPLACE)
+
+        // Keep root-level folder_rules ("") aligned if treeUri changed
+        val rootRuleCv = ContentValues().apply { put("folder_uri", treeUri) }
+        db.updateWithOnConflict(
+            "folder_rules",
+            rootRuleCv,
+            "root_id = ? AND rel_path = ''",
+            arrayOf(rootId.toString()),
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+        Unit
+    }
+
     override fun deleteSafRoot(rootId: Long) = inTransaction { db ->
         db.delete("saf_roots", "root_id = ?", arrayOf(rootId.toString()))
         Unit
@@ -736,18 +890,26 @@ class SqliteMediaStoreBackend(
         deletedItemIds: Set<Long>,
         lyricsUpdates: List<Pair<String, LyricsCacheRow>>,
         artistSplitter: (effectiveArtist: String, effectiveAlbumArtist: String?) -> List<SplitArtist>,
+        liveRootDisplayName: String?,
+        hasCompleteFolderScan: Boolean,
     ) = inTransaction { db ->
-        // 1. Update saf_roots state
+        // 1. Update saf_roots state (including live display_name if root folder was renamed)
         val rootCv = ContentValues().apply {
             put("mount_state", MountState.MOUNTED.name)
             put("is_writable", if (isWritable) 1 else 0)
             put("last_scan_at", scannedAtMs)
+            if (!liveRootDisplayName.isNullOrBlank()) {
+                put("display_name", liveRootDisplayName)
+            }
         }
         db.update("saf_roots", rootCv, "root_id = ?", arrayOf(rootId.toString()))
 
         // 2. Replace scanned_folders for rootId
         db.delete("scanned_folders", "root_id = ?", arrayOf(rootId.toString()))
-        for (sf in scannedFolders) {
+        val normalizedScannedFolders = scannedFolders.map {
+            it.copy(relPath = MediaRepository.normalizeRelPath(it.relPath))
+        }
+        for (sf in normalizedScannedFolders) {
             val sfCv = ContentValues().apply {
                 put("root_id", sf.rootId)
                 put("rel_path", sf.relPath)
@@ -755,6 +917,22 @@ class SqliteMediaStoreBackend(
                 put("has_nomedia", if (sf.hasNomedia) 1 else 0)
             }
             db.insertWithOnConflict("scanned_folders", null, sfCv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+
+        // Capture old parent_rel_path of moved items BEFORE mutating media_items so folder_rules can follow full renames
+        val movedOldRelToNewRel = ArrayList<Pair<String, String>>(movedItems.size)
+        for (mv in movedItems) {
+            val oldParent = db.rawQuery(
+                "SELECT parent_rel_path FROM media_items WHERE item_id = ?",
+                arrayOf(mv.existingItemId.toString()),
+            ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            if (oldParent != null) {
+                val normOld = MediaRepository.normalizeRelPath(oldParent)
+                val normNew = MediaRepository.normalizeRelPath(mv.newParentRelPath)
+                if (normOld.isNotEmpty() && normNew.isNotEmpty() && normOld != normNew) {
+                    movedOldRelToNewRel.add(normOld to normNew)
+                }
+            }
         }
 
         // 3. Delete truly removed items FIRST so moved items can claim any reused path cleanly
@@ -776,7 +954,7 @@ class SqliteMediaStoreBackend(
             val cv = ContentValues().apply {
                 put("document_uri", mv.newDocumentUri)
                 put("root_id", mv.newRootId)
-                put("parent_rel_path", mv.newParentRelPath)
+                put("parent_rel_path", MediaRepository.normalizeRelPath(mv.newParentRelPath))
                 put("file_name", mv.newFileName)
                 put("size_bytes", mv.newSizeBytes)
                 put("last_modified", mv.newLastModified)
@@ -795,7 +973,8 @@ class SqliteMediaStoreBackend(
         // 6. Upsert new / modified items
         for (row in upsertedItems) {
             val existingId = findItemIdByUri(db, row.documentUri)
-            val cv = mediaItemContentValues(row, includePositionFields = existingId == null)
+            val normalizedRow = row.copy(parentRelPath = MediaRepository.normalizeRelPath(row.parentRelPath))
+            val cv = mediaItemContentValues(normalizedRow, includePositionFields = existingId == null)
             val finalId = if (existingId != null) {
                 db.update("media_items", cv, "item_id = ?", arrayOf(existingId.toString()))
                 existingId
@@ -804,6 +983,63 @@ class SqliteMediaStoreBackend(
             }
             uriToItemId[row.documentUri] = finalId
             rebuildArtistsForItemSqlite(db, finalId, artistSplitter)
+        }
+
+        // 6b. Canonicalize media_items.parent_rel_path & reconcile folder_rules against live scanned folders
+        if (hasCompleteFolderScan || normalizedScannedFolders.isNotEmpty()) {
+            val liveSubfolders = normalizedScannedFolders.filter { it.relPath.isNotEmpty() }
+            val liveByRel = liveSubfolders.associateBy { it.relPath }
+            val liveRelByLower = liveSubfolders.associateBy { it.relPath.lowercase(Locale.ROOT) }
+
+            if (liveByRel.isNotEmpty()) {
+                val itemsToFix = ArrayList<Pair<Long, String>>()
+                db.rawQuery(
+                    "SELECT item_id, parent_rel_path FROM media_items WHERE root_id = ?",
+                    arrayOf(rootId.toString()),
+                ).use { c ->
+                    while (c.moveToNext()) {
+                        val id = c.getLong(0)
+                        val curParent = c.getString(1) ?: ""
+                        val canonical = canonicalizeRelPathAgainstLive(curParent, liveByRel.keys, liveRelByLower)
+                        if (canonical != curParent) {
+                            itemsToFix.add(id to canonical)
+                        }
+                    }
+                }
+                for ((itemId, canonicalRel) in itemsToFix) {
+                    val cv = ContentValues().apply { put("parent_rel_path", canonicalRel) }
+                    db.update("media_items", cv, "item_id = ?", arrayOf(itemId.toString()))
+                }
+            }
+
+            val existingRulesForRoot = ArrayList<FolderRuleRow>()
+            db.rawQuery("SELECT * FROM folder_rules WHERE root_id = ?", arrayOf(rootId.toString())).use { c ->
+                while (c.moveToNext()) existingRulesForRoot.add(readFolderRuleCursor(c))
+            }
+            val plan = planFolderRuleReconciliation(
+                rootId = rootId,
+                existingRulesForRoot = existingRulesForRoot,
+                liveByRel = liveByRel,
+                liveRelByLower = liveRelByLower,
+                movedOldRelToNewRel = movedOldRelToNewRel,
+            )
+            for (delUri in plan.rulesToDeleteByUri) {
+                db.delete("folder_rules", "folder_uri = ?", arrayOf(delUri))
+            }
+            for (delRel in plan.rulesToDeleteByRelPath) {
+                db.delete("folder_rules", "root_id = ? AND rel_path = ?", arrayOf(rootId.toString(), delRel))
+            }
+            for (rule in plan.rulesToUpsert) {
+                val cv = ContentValues().apply {
+                    put("folder_uri", rule.folderUri)
+                    put("root_id", rule.rootId)
+                    put("rel_path", rule.relPath)
+                    put("is_practice_folder", if (rule.isPracticeFolder) 1 else 0)
+                    put("exclude_from_grouping", if (rule.isExcludedFromAutoGrouping) 1 else 0)
+                    if (rule.respectNomedia != null) put("respect_nomedia", if (rule.respectNomedia) 1 else 0) else putNull("respect_nomedia")
+                }
+                db.insertWithOnConflict("folder_rules", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            }
         }
 
         // 7. Upsert sidecar / embedded lyrics cache
@@ -1572,6 +1808,28 @@ internal class InMemoryMediaStoreBackend : MediaStoreBackend {
         )
     }
 
+    override fun updateSafRootIdentity(
+        rootId: Long,
+        treeUri: String,
+        treeDocId: String,
+        displayName: String,
+        isWritable: Boolean,
+    ) = synchronized(lock) {
+        val cur = roots[rootId] ?: return@synchronized
+        roots[rootId] = cur.copy(
+            treeUri = treeUri,
+            treeDocId = treeDocId,
+            displayName = displayName,
+            isWritable = isWritable,
+            mountState = MountState.MOUNTED,
+        )
+        val rootRule = folderRules.values.firstOrNull { it.rootId == rootId && it.relPath.isEmpty() }
+        if (rootRule != null && rootRule.folderUri != treeUri) {
+            folderRules.remove(rootRule.folderUri)
+            folderRules[treeUri] = rootRule.copy(folderUri = treeUri)
+        }
+    }
+
     override fun deleteSafRoot(rootId: Long) = synchronized(lock) {
         roots.remove(rootId)
         folderRules.entries.removeIf { it.value.rootId == rootId }
@@ -1598,14 +1856,36 @@ internal class InMemoryMediaStoreBackend : MediaStoreBackend {
         deletedItemIds: Set<Long>,
         lyricsUpdates: List<Pair<String, LyricsCacheRow>>,
         artistSplitter: (effectiveArtist: String, effectiveAlbumArtist: String?) -> List<SplitArtist>,
+        liveRootDisplayName: String?,
+        hasCompleteFolderScan: Boolean,
     ) = synchronized(lock) {
         roots[rootId]?.let {
-            roots[rootId] = it.copy(mountState = MountState.MOUNTED, isWritable = isWritable, lastScanAt = scannedAtMs)
+            roots[rootId] = it.copy(
+                displayName = liveRootDisplayName?.takeIf { n -> n.isNotBlank() } ?: it.displayName,
+                mountState = MountState.MOUNTED,
+                isWritable = isWritable,
+                lastScanAt = scannedAtMs,
+            )
         }
 
+        val normalizedScannedFolders = scannedFolders.map {
+            it.copy(relPath = MediaRepository.normalizeRelPath(it.relPath))
+        }
         this.scannedFolders.keys.removeIf { it.first == rootId }
-        for (sf in scannedFolders) {
+        for (sf in normalizedScannedFolders) {
             this.scannedFolders[sf.rootId to sf.relPath] = sf
+        }
+
+        val movedOldRelToNewRel = ArrayList<Pair<String, String>>(movedItems.size)
+        for (mv in movedItems) {
+            val oldParent = items[mv.existingItemId]?.parentRelPath
+            if (oldParent != null) {
+                val normOld = MediaRepository.normalizeRelPath(oldParent)
+                val normNew = MediaRepository.normalizeRelPath(mv.newParentRelPath)
+                if (normOld.isNotEmpty() && normNew.isNotEmpty() && normOld != normNew) {
+                    movedOldRelToNewRel.add(normOld to normNew)
+                }
+            }
         }
 
         for (delId in deletedItemIds) {
@@ -1624,7 +1904,7 @@ internal class InMemoryMediaStoreBackend : MediaStoreBackend {
             val updated = cur.copy(
                 documentUri = mv.newDocumentUri,
                 rootId = mv.newRootId,
-                parentRelPath = mv.newParentRelPath,
+                parentRelPath = MediaRepository.normalizeRelPath(mv.newParentRelPath),
                 fileName = mv.newFileName,
                 sizeBytes = mv.newSizeBytes,
                 lastModified = mv.newLastModified,
@@ -1641,9 +1921,10 @@ internal class InMemoryMediaStoreBackend : MediaStoreBackend {
         }
 
         for (row in upsertedItems) {
-            val existing = items.values.firstOrNull { it.documentUri == row.documentUri }
+            val normalizedRow = row.copy(parentRelPath = MediaRepository.normalizeRelPath(row.parentRelPath))
+            val existing = items.values.firstOrNull { it.documentUri == normalizedRow.documentUri }
             val finalId = if (existing != null) {
-                items[existing.itemId] = row.copy(
+                items[existing.itemId] = normalizedRow.copy(
                     itemId = existing.itemId,
                     lastPositionMs = existing.lastPositionMs,
                     lastPlayedAt = existing.lastPlayedAt,
@@ -1651,11 +1932,46 @@ internal class InMemoryMediaStoreBackend : MediaStoreBackend {
                 existing.itemId
             } else {
                 val id = itemSeq.getAndIncrement()
-                items[id] = row.copy(itemId = id)
+                items[id] = normalizedRow.copy(itemId = id)
                 id
             }
-            uriToItemId[row.documentUri] = finalId
+            uriToItemId[normalizedRow.documentUri] = finalId
             rebuildArtistsLocked(finalId, artistSplitter)
+        }
+
+        if (hasCompleteFolderScan || normalizedScannedFolders.isNotEmpty()) {
+            val liveSubfolders = normalizedScannedFolders.filter { it.relPath.isNotEmpty() }
+            val liveByRel = liveSubfolders.associateBy { it.relPath }
+            val liveRelByLower = liveSubfolders.associateBy { it.relPath.lowercase(Locale.ROOT) }
+
+            if (liveByRel.isNotEmpty()) {
+                for (id in items.keys.toList()) {
+                    val cur = items[id] ?: continue
+                    if (cur.rootId != rootId) continue
+                    val canonical = canonicalizeRelPathAgainstLive(cur.parentRelPath, liveByRel.keys, liveRelByLower)
+                    if (canonical != cur.parentRelPath) {
+                        items[id] = cur.copy(parentRelPath = canonical)
+                    }
+                }
+            }
+
+            val existingRulesForRoot = folderRules.values.filter { it.rootId == rootId }
+            val plan = planFolderRuleReconciliation(
+                rootId = rootId,
+                existingRulesForRoot = existingRulesForRoot,
+                liveByRel = liveByRel,
+                liveRelByLower = liveRelByLower,
+                movedOldRelToNewRel = movedOldRelToNewRel,
+            )
+            val deleteUriSet = plan.rulesToDeleteByUri.toSet()
+            val deleteRelSet = plan.rulesToDeleteByRelPath.toSet()
+            folderRules.entries.removeIf { (_, r) ->
+                r.folderUri in deleteUriSet || (r.rootId == rootId && r.relPath in deleteRelSet)
+            }
+            for (rule in plan.rulesToUpsert) {
+                folderRules.entries.removeIf { (_, r) -> r.rootId == rule.rootId && r.relPath == rule.relPath }
+                folderRules[rule.folderUri] = rule
+            }
         }
 
         for ((docUri, lrcRow) in lyricsUpdates) {

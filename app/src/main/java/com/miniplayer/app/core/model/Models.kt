@@ -290,6 +290,9 @@ data class MetadataDraft(
     val year: Int? = null,
     val coverBytes: ByteArray? = null,
     val coverMimeType: String? = null,
+    val coverRemoteUrl: String? = null,
+    val syncedLrc: String? = null,
+    val plainLyrics: String? = null,
     val dirtyFields: Set<MetadataField> = MetadataField.entries.toSet(),
     val writeBackToFile: Boolean = false,
 )

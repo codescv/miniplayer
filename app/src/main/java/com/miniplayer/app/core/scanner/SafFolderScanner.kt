@@ -76,7 +76,11 @@ data class ExtractedMediaProbe(
 )
 
 sealed class SafVolumeProbe {
-    data class Mounted(val isWritable: Boolean, val rootDocUri: String) : SafVolumeProbe()
+    data class Mounted(
+        val isWritable: Boolean,
+        val rootDocUri: String,
+        val liveDisplayName: String? = null,
+    ) : SafVolumeProbe()
     data object OfflineUnmounted : SafVolumeProbe()
     data object PermissionRevoked : SafVolumeProbe()
 }
@@ -112,6 +116,7 @@ object SafOverlapDetector {
 
     sealed class OverlapDecision {
         data object Disjoint : OverlapDecision()
+        data class AlreadyAdded(val existing: SafRoot) : OverlapDecision()
         data class CoveredByExistingParent(val parent: SafRoot, val childRelPath: String) : OverlapDecision()
         data class CoversExistingChildren(val children: List<Pair<SafRoot, String>>) : OverlapDecision()
     }
@@ -146,23 +151,23 @@ object SafOverlapDetector {
             val exLoc = parseLocation(exAuth, existing.treeDocId)
             if (exLoc.authority != newLoc.authority || exLoc.volumeId != newLoc.volumeId) continue
 
-            // Case 1: Exact same folder or new folder is inside existing parent root
-            if (newLoc.subPath == exLoc.subPath) {
-                return OverlapDecision.CoveredByExistingParent(existing, "")
+            // Case 1: Exact same folder (case-insensitive on same volume) or new folder is inside existing parent root
+            if (newLoc.subPath.equals(exLoc.subPath, ignoreCase = true)) {
+                return OverlapDecision.AlreadyAdded(existing)
             }
             if (exLoc.subPath.isEmpty()) {
                 return OverlapDecision.CoveredByExistingParent(existing, newLoc.subPath)
             }
-            if (newLoc.subPath.startsWith("${exLoc.subPath}/")) {
-                val rel = newLoc.subPath.removePrefix("${exLoc.subPath}/")
+            if (newLoc.subPath.startsWith("${exLoc.subPath}/", ignoreCase = true)) {
+                val rel = newLoc.subPath.substring(exLoc.subPath.length + 1)
                 return OverlapDecision.CoveredByExistingParent(existing, rel)
             }
 
             // Case 2: New folder is an ancestor of an existing child root
             if (newLoc.subPath.isEmpty() && exLoc.subPath.isNotEmpty()) {
                 coveredChildren.add(existing to exLoc.subPath)
-            } else if (newLoc.subPath.isNotEmpty() && exLoc.subPath.startsWith("${newLoc.subPath}/")) {
-                val prefix = exLoc.subPath.removePrefix("${newLoc.subPath}/")
+            } else if (newLoc.subPath.isNotEmpty() && exLoc.subPath.startsWith("${newLoc.subPath}/", ignoreCase = true)) {
+                val prefix = exLoc.subPath.substring(newLoc.subPath.length + 1)
                 coveredChildren.add(existing to prefix)
             }
         }
@@ -239,15 +244,29 @@ class AndroidSafTreeDataSource(
         val parsedTree = Uri.parse(treeUri)
         val rootDocUri = DocumentsContract.buildDocumentUriUsingTree(parsedTree, treeDocId)
 
-        // Verify both root document existence AND child cursor reachability
+        // Verify both root document existence AND child cursor reachability, capturing live root display name
         return try {
+            var liveDisplayName: String? = null
             val docExists = resolver.query(
                 rootDocUri,
-                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                ),
                 null,
                 null,
                 null,
-            )?.use { c -> c.moveToFirst() } ?: false
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    val nameIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                    if (nameIdx >= 0 && !c.isNull(nameIdx)) {
+                        liveDisplayName = c.getString(nameIdx)?.takeIf { it.isNotBlank() }
+                    }
+                    true
+                } else {
+                    false
+                }
+            } ?: false
 
             if (!docExists) {
                 return SafVolumeProbe.OfflineUnmounted
@@ -265,7 +284,11 @@ class AndroidSafTreeDataSource(
             if (!childrenCursorOk) {
                 SafVolumeProbe.OfflineUnmounted
             } else {
-                SafVolumeProbe.Mounted(isWritable = perm.isWritePermission, rootDocUri = rootDocUri.toString())
+                SafVolumeProbe.Mounted(
+                    isWritable = perm.isWritePermission,
+                    rootDocUri = rootDocUri.toString(),
+                    liveDisplayName = liveDisplayName,
+                )
             }
         } catch (_: SecurityException) {
             SafVolumeProbe.PermissionRevoked
@@ -543,13 +566,49 @@ class SafFolderScanner(
     suspend fun addSafRootFromGrant(grant: SafGrantInfo): AddRootResult = withContext(ioDispatcher) {
         val existingRoots = repository.safRoots.value
         when (val decision = SafOverlapDetector.evaluate(grant.authority, grant.treeDocId, existingRoots)) {
+            is SafOverlapDetector.OverlapDecision.AlreadyAdded -> {
+                val existing = decision.existing
+                val identityChanged = existing.treeUri != grant.treeUri ||
+                    existing.treeDocId != grant.treeDocId ||
+                    existing.displayName != grant.displayName ||
+                    existing.isWritable != grant.isWritable
+                if (identityChanged) {
+                    repository.backend.updateSafRootIdentity(
+                        rootId = existing.rootId,
+                        treeUri = grant.treeUri,
+                        treeDocId = grant.treeDocId,
+                        displayName = grant.displayName,
+                        isWritable = grant.isWritable,
+                    )
+                    if (existing.treeUri != grant.treeUri &&
+                        existingRoots.none { it.rootId != existing.rootId && it.treeUri == existing.treeUri }
+                    ) {
+                        dataSource.releasePersistableGrant(existing.treeUri)
+                    }
+                    repository.refreshNow()
+                } else if (existingRoots.none { it.treeUri == grant.treeUri }) {
+                    dataSource.releasePersistableGrant(grant.treeUri)
+                }
+                rescanRoot(existing.rootId, incremental = false)
+                val refreshed = repository.safRoots.value.firstOrNull { it.rootId == existing.rootId } ?: existing
+                AddRootResult.AlreadyCoveredByParent(
+                    parentRoot = refreshed,
+                    childRelPath = "",
+                )
+            }
+
             is SafOverlapDetector.OverlapDecision.CoveredByExistingParent -> {
                 if (existingRoots.none { it.treeUri == grant.treeUri }) {
                     dataSource.releasePersistableGrant(grant.treeUri)
                 }
+                rescanRoot(decision.parent.rootId, incremental = false)
+                val refreshedParent = repository.safRoots.value.firstOrNull { it.rootId == decision.parent.rootId }
+                    ?: decision.parent
+                val canonicalRel = repository.browseFolder(refreshedParent.rootId, decision.childRelPath)?.currentRelPath
+                    ?: decision.childRelPath
                 AddRootResult.AlreadyCoveredByParent(
-                    parentRoot = decision.parent,
-                    childRelPath = decision.childRelPath,
+                    parentRoot = refreshedParent,
+                    childRelPath = canonicalRel,
                 )
             }
 
@@ -738,6 +797,9 @@ class SafFolderScanner(
             val scannedFolders = ArrayList<ScannedFolderRow>()
             val seenExistingItemIds = HashSet<Long>()
             val unchangedCoverUpdates = HashMap<Long, String?>()
+            val movedUpdates = ArrayList<MovedMediaUpdate>()
+            var incrementalSkipped = 0
+            var movedRebound = 0
 
             data class DiscoveredNewFile(
                 val entry: SafChildEntry,
@@ -825,12 +887,43 @@ class SafFolderScanner(
                     if (incremental &&
                         existing != null &&
                         existing.sizeBytes == entry.sizeBytes &&
-                        existing.lastModified == entry.lastModified
+                        existing.lastModified == entry.lastModified &&
+                        existing.lastModified > 0L
                     ) {
-                        // 0 ms incremental cache hit!
                         seenExistingItemIds.add(existing.itemId)
-                        if (existing.folderCoverUri != folderCoverUri) {
-                            unchangedCoverUpdates[existing.itemId] = folderCoverUri
+                        if (existing.parentRelPath == dir.relPath && existing.fileName == entry.displayName) {
+                            // 0 ms incremental cache hit!
+                            incrementalSkipped++
+                            if (existing.folderCoverUri != folderCoverUri) {
+                                unchangedCoverUpdates[existing.itemId] = folderCoverUri
+                            }
+                        } else {
+                            // Parent folder or display name renamed while documentUri stayed identical (e.g. `rock` -> `Rock`):
+                            // migrate parent_rel_path & file_name in 0 ms without re-probing MediaMetadataRetriever!
+                            val parsed = SmartFilenameParser.parse(dir.relPath, entry.displayName)
+                            val fpKey = MediaRepository.buildFingerprintKey(
+                                fileName = entry.displayName,
+                                sizeBytes = entry.sizeBytes,
+                                durationMs = existing.durationMs,
+                            )
+                            movedUpdates.add(
+                                MovedMediaUpdate(
+                                    existingItemId = existing.itemId,
+                                    newDocumentUri = entry.documentUri,
+                                    newRootId = root.rootId,
+                                    newParentRelPath = dir.relPath,
+                                    newFileName = entry.displayName,
+                                    newSizeBytes = entry.sizeBytes,
+                                    newLastModified = entry.lastModified,
+                                    newFolderCoverUri = folderCoverUri,
+                                    newFingerprintKey = fpKey,
+                                    parsedTitle = parsed.cleanedTitle,
+                                    parsedArtist = parsed.artist,
+                                    parsedAlbum = parsed.album,
+                                    isBackingTrack = parsed.isBackingTrack,
+                                ),
+                            )
+                            movedRebound++
                         }
                     } else {
                         if (existing != null) {
@@ -853,15 +946,59 @@ class SafFolderScanner(
                 .filter { it.itemId !in seenExistingItemIds }
                 .toMutableList()
 
-            val movedUpdates = ArrayList<MovedMediaUpdate>()
             val upsertedItems = ArrayList<MediaItemRow>()
             val lyricsUpdates = ArrayList<Pair<String, LyricsCacheRow>>()
-            var addedOrUpdated = 0
+            var addedOrUpdated = movedRebound
 
             for (disc in discoveredNewOrModified) {
                 val entry = disc.entry
                 val parsed = SmartFilenameParser.parse(disc.parentRelPath, entry.displayName)
                 val existingSameUri = existingByUri[entry.documentUri]
+
+                // Fast 0 ms folder-rename migration when SAF changed child document URIs (`rock` -> `Rock` or `metal`)
+                // while file display name, size, and mtime (> 0) stayed unchanged!
+                if (incremental && existingSameUri == null && entry.lastModified > 0L && unseenPool.isNotEmpty()) {
+                    val fastMatches = unseenPool.filter {
+                        it.fileName.equals(entry.displayName, ignoreCase = true) &&
+                            it.sizeBytes == entry.sizeBytes &&
+                            it.lastModified > 0L &&
+                            it.lastModified == entry.lastModified
+                    }
+                    val fastMatched = fastMatches.singleOrNull()
+                    if (fastMatched != null) {
+                        unseenPool.remove(fastMatched)
+                        seenExistingItemIds.add(fastMatched.itemId)
+                        val fpKey = MediaRepository.buildFingerprintKey(
+                            fileName = entry.displayName,
+                            sizeBytes = entry.sizeBytes,
+                            durationMs = fastMatched.durationMs,
+                        )
+                        movedUpdates.add(
+                            MovedMediaUpdate(
+                                existingItemId = fastMatched.itemId,
+                                newDocumentUri = entry.documentUri,
+                                newRootId = root.rootId,
+                                newParentRelPath = disc.parentRelPath,
+                                newFileName = entry.displayName,
+                                newSizeBytes = entry.sizeBytes,
+                                newLastModified = entry.lastModified,
+                                newFolderCoverUri = disc.folderCoverUri,
+                                newFingerprintKey = fpKey,
+                                parsedTitle = parsed.cleanedTitle,
+                                parsedArtist = parsed.artist,
+                                parsedAlbum = parsed.album,
+                                isBackingTrack = parsed.isBackingTrack,
+                            ),
+                        )
+                        movedRebound++
+                        addedOrUpdated++
+                        _scanProgress.value = _scanProgress.value.copy(
+                            scannedCount = scannedFiles,
+                            addedOrUpdatedCount = addedOrUpdated,
+                        )
+                        continue
+                    }
+                }
 
                 // Extract tags & duration
                 val extracted = dataSource.extractMediaMetadata(entry, disc.isVideo)
@@ -959,10 +1096,11 @@ class SafFolderScanner(
             }
 
             // Process sidecar .lrc files (skipping unchanged sidecars on incremental scan!)
+            val movedItemIdByNewUri = movedUpdates.associate { it.newDocumentUri to it.existingItemId }
             for ((mediaDocUri, lrcDocUri, lrcLastMod) in pendingLrcSidecars) {
-                val existingItem = existingByUri[mediaDocUri]
-                if (incremental && existingItem != null) {
-                    val cachedLrc = repository.backend.getLyricsCache(existingItem.itemId)
+                val existingItemId = existingByUri[mediaDocUri]?.itemId ?: movedItemIdByNewUri[mediaDocUri]
+                if (incremental && existingItemId != null) {
+                    val cachedLrc = repository.backend.getLyricsCache(existingItemId)
                     if (cachedLrc != null &&
                         cachedLrc.source == LyricsSource.LOCAL_LRC &&
                         cachedLrc.sourceModifiedAt == lrcLastMod &&
@@ -1000,6 +1138,8 @@ class SafFolderScanner(
                 deletedItemIds = deletedIds,
                 lyricsUpdates = lyricsUpdates,
                 artistSplitter = { artist, albumArtist -> ArtistSplitter.split(artist, albumArtist) },
+                liveRootDisplayName = mounted.liveDisplayName,
+                hasCompleteFolderScan = true,
             )
             repository.refreshNow()
         } catch (_: VolumeDisconnectedException) {

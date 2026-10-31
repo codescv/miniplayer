@@ -19,6 +19,7 @@ interface MediaLibraryContract {
     val playlists: StateFlow<List<PlaylistSummary>>
     val bookmarkedTracks: StateFlow<List<BookmarkedTrackItem>>
     val settings: StateFlow<AppSettings>
+    val snapshotVersion: StateFlow<Long>
 
     suspend fun browseFolder(rootId: Long, relPath: String = "", flat: Boolean = false): FolderBrowseState?
     suspend fun getAlbumTracks(albumKey: String): List<MediaItem>
@@ -59,6 +60,7 @@ interface FolderScannerContract {
 
     suspend fun addSafRoot(treeUri: Uri): AddRootResult
     suspend fun rescanAll(incremental: Boolean = true)
+    suspend fun rescanAllRoots(incremental: Boolean = true) = rescanAll(incremental)
     suspend fun rescanRoot(rootId: Long, incremental: Boolean = true)
     suspend fun removeSafRoot(rootId: Long)
     suspend fun setFolderPracticeRule(
@@ -182,6 +184,7 @@ private class FallbackStubCore(private val context: Context) : MiniPlayerCorePro
         override val playlists = MutableStateFlow<List<PlaylistSummary>>(emptyList())
         override val bookmarkedTracks = MutableStateFlow<List<BookmarkedTrackItem>>(emptyList())
         override val settings = settingsState
+        override val snapshotVersion = MutableStateFlow(0L)
 
         override suspend fun browseFolder(rootId: Long, relPath: String, flat: Boolean): FolderBrowseState? = null
         override suspend fun getAlbumTracks(albumKey: String): List<MediaItem> = emptyList()

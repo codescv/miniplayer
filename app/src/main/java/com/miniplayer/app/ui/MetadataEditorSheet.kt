@@ -5,6 +5,7 @@ package com.miniplayer.app.ui
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.miniplayer.app.core.metadata.SmartFilenameParser
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.ui.components.MediaArtwork
 import com.miniplayer.app.ui.theme.tnum
@@ -83,6 +85,11 @@ fun MetadataEditorSheet(
     var pickedCoverMime by remember(targets) { mutableStateOf<String?>(null) }
     var previewCoverUri by remember(targets) { mutableStateOf(first.coverPathOrUri) }
 
+    var selectedCandidate by remember(targets) { mutableStateOf<MetadataCandidate?>(null) }
+    var stagedCoverRemoteUrl by remember(targets) { mutableStateOf<String?>(null) }
+    var stagedSyncedLrc by remember(targets) { mutableStateOf<String?>(null) }
+    var stagedPlainLyrics by remember(targets) { mutableStateOf<String?>(null) }
+
     var dirtyFields by remember(targets) {
         mutableStateOf(
             if (isBatch) {
@@ -104,6 +111,19 @@ fun MetadataEditorSheet(
     var writeBackToFile by remember(targets) { mutableStateOf(defaultWriteBackToFile && anyWritableAudio) }
     var preserveBackingSuffix by remember(targets) { mutableStateOf(first.isBackingTrack) }
 
+    fun updatePreserveBackingSuffix(checked: Boolean) {
+        preserveBackingSuffix = checked
+        val cand = selectedCandidate
+        if (!isBatch && cand != null && first.isBackingTrack) {
+            title = if (checked) {
+                SmartFilenameParser.applyBackingSuffix(cand.title, first.fileName)
+            } else {
+                cand.title.trim()
+            }
+            dirtyFields = dirtyFields + MetadataField.TITLE
+        }
+    }
+
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri: Uri? ->
@@ -115,6 +135,7 @@ fun MetadataEditorSheet(
                     bytes to mime
                 }
                 if (pair.first != null) {
+                    stagedCoverRemoteUrl = null
                     pickedCoverBytes = pair.first
                     pickedCoverMime = pair.second
                     previewCoverUri = uri.toString()
@@ -155,6 +176,9 @@ fun MetadataEditorSheet(
                                     year = yearText.trim().toIntOrNull(),
                                     coverBytes = pickedCoverBytes,
                                     coverMimeType = pickedCoverMime,
+                                    coverRemoteUrl = stagedCoverRemoteUrl,
+                                    syncedLrc = stagedSyncedLrc,
+                                    plainLyrics = stagedPlainLyrics,
                                     dirtyFields = dirtyFields.toSet(),
                                     writeBackToFile = writeBackToFile && anyWritableAudio,
                                 ),
@@ -190,7 +214,10 @@ fun MetadataEditorSheet(
                 ) {
                     if (!isBatch && !first.isVideo) {
                         FilledTonalButton(
-                            onClick = { onSearchOnline(first, title, artist) },
+                            onClick = {
+                                selectedCandidate = null
+                                onSearchOnline(first, title, artist)
+                            },
                             enabled = !isSearchingOnline,
                             modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                         ) {
@@ -226,77 +253,75 @@ fun MetadataEditorSheet(
                 }
             }
 
-            // Single-Track Online Candidate Cards (§6.4 Stage 3)
+            // Single-Track Online Candidate Cards (§6.4 Stage 3 — click to stage into form, manual save)
             if (!isBatch && candidates.isNotEmpty()) {
                 if (first.isBackingTrack) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { preserveBackingSuffix = !preserveBackingSuffix },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { updatePreserveBackingSuffix(!preserveBackingSuffix) },
                     ) {
-                        Checkbox(
-                            checked = preserveBackingSuffix,
-                            onCheckedChange = { preserveBackingSuffix = it },
+                        Text(
+                            text = "标题保留「(伴奏)」后缀，避免与原唱混淆",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
                         )
-                        Text("标题保留「(伴奏)」后缀，避免与原唱混淆", style = MaterialTheme.typography.bodyMedium)
+                        Switch(
+                            checked = preserveBackingSuffix,
+                            onCheckedChange = { checked -> updatePreserveBackingSuffix(checked) },
+                        )
                     }
                 }
 
+                Text(
+                    text = "已匹配 ${candidates.size} 个结果（点击填入表单，确认后点右上角保存）：",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(candidates) { cand ->
-                        Surface(
+                        CandidateItemCard(
+                            cand = cand,
+                            isSelected = selectedCandidate == cand,
                             onClick = {
-                                onApplyCandidateDirectly(
-                                    first,
-                                    cand,
-                                    preserveBackingSuffix,
-                                    writeBackToFile && anyWritableAudio,
-                                )
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.width(248.dp),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                MediaArtwork(
-                                    coverPathOrUri = cand.coverUrl,
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.size(56.dp),
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = cand.title,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        text = "${cand.artist} · ${cand.album ?: "单曲"}",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Text(
-                                            text = if (cand.source == OnlineSource.MUSICBRAINZ) "MB" else "iTunes",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                        Text(
-                                            text = "${cand.confidenceScore}%",
-                                            style = MaterialTheme.typography.labelMedium.tnum(),
-                                        )
-                                        if (!cand.syncedLrc.isNullOrBlank()) {
-                                            Text("歌词✓", style = MaterialTheme.typography.labelMedium)
-                                        }
-                                    }
+                                selectedCandidate = cand
+                                title = if (preserveBackingSuffix && first.isBackingTrack) {
+                                    SmartFilenameParser.applyBackingSuffix(cand.title, first.fileName)
+                                } else {
+                                    cand.title.trim()
                                 }
-                            }
-                        }
+                                artist = cand.artist
+                                album = cand.album.orEmpty()
+                                albumArtist = cand.albumArtist ?: cand.artist
+                                val fieldsToMark = mutableSetOf(
+                                    MetadataField.TITLE,
+                                    MetadataField.ARTIST,
+                                    MetadataField.ALBUM,
+                                    MetadataField.ALBUM_ARTIST,
+                                )
+                                if (cand.trackNumber != null && cand.trackNumber > 0) {
+                                    trackNumText = cand.trackNumber.toString()
+                                    fieldsToMark += MetadataField.TRACK_NUMBER
+                                }
+                                if (cand.year != null && cand.year > 0) {
+                                    yearText = cand.year.toString()
+                                    fieldsToMark += MetadataField.YEAR
+                                }
+                                if (!cand.coverUrl.isNullOrBlank()) {
+                                    stagedCoverRemoteUrl = cand.coverUrl
+                                    pickedCoverBytes = null
+                                    pickedCoverMime = null
+                                    previewCoverUri = cand.coverUrl
+                                    fieldsToMark += MetadataField.COVER
+                                }
+                                stagedSyncedLrc = cand.syncedLrc
+                                stagedPlainLyrics = cand.plainLyrics
+                                dirtyFields = dirtyFields + fieldsToMark
+                            },
+                        )
                     }
                 }
             }
@@ -410,6 +435,91 @@ fun MetadataEditorSheet(
                     },
                     style = MaterialTheme.typography.bodyMedium,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CandidateItemCard(
+    cand: MetadataCandidate,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (isSelected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        } else {
+            MaterialTheme.colorScheme.secondaryContainer
+        },
+        border = if (isSelected) {
+            BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            null
+        },
+        modifier = Modifier.width(260.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            MediaArtwork(
+                coverPathOrUri = cand.coverUrl,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.size(56.dp),
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = cand.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "${cand.artist} · ${cand.album ?: "单曲"}",
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (cand.source == OnlineSource.MUSICBRAINZ) "MB" else "iTunes",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = "${cand.confidenceScore}%",
+                        style = MaterialTheme.typography.labelMedium.tnum(),
+                    )
+                    if (!cand.syncedLrc.isNullOrBlank()) {
+                        Text("歌词✓", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                if (isSelected) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        modifier = Modifier.padding(top = 2.dp),
+                    ) {
+                        Text(
+                            text = "已填入 · 请点上方保存",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
             }
         }
     }

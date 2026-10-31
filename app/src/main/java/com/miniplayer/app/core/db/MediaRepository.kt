@@ -42,10 +42,17 @@ class MediaRepository(
             return chain
         }
 
+        fun findFolderRule(rulesByRelPath: Map<String, FolderRuleRow>, relPath: String): FolderRuleRow? {
+            if (rulesByRelPath.isEmpty()) return null
+            val norm = normalizeRelPath(relPath)
+            return rulesByRelPath[norm]
+                ?: rulesByRelPath.entries.firstOrNull { it.key.equals(norm, ignoreCase = true) }?.value
+        }
+
         fun resolveIsPracticeFolder(rulesByRelPath: Map<String, FolderRuleRow>, relPath: String): Boolean {
             if (rulesByRelPath.isEmpty()) return false
             for (anc in ancestorChainMostSpecificFirst(relPath)) {
-                val rule = rulesByRelPath[anc]
+                val rule = findFolderRule(rulesByRelPath, anc)
                 if (rule != null) return rule.isPracticeFolder
             }
             return false
@@ -54,7 +61,7 @@ class MediaRepository(
         fun resolveIsExcludedFromAutoGrouping(rulesByRelPath: Map<String, FolderRuleRow>, relPath: String): Boolean {
             if (rulesByRelPath.isEmpty()) return false
             for (anc in ancestorChainMostSpecificFirst(relPath)) {
-                val rule = rulesByRelPath[anc]
+                val rule = findFolderRule(rulesByRelPath, anc)
                 if (rule != null) return rule.isExcludedFromAutoGrouping
             }
             return false
@@ -122,6 +129,9 @@ class MediaRepository(
     private val _settings = MutableStateFlow(AppSettings())
     override val settings: StateFlow<AppSettings> = _settings.asStateFlow()
 
+    private val _snapshotVersion = MutableStateFlow(0L)
+    override val snapshotVersion: StateFlow<Long> = _snapshotVersion.asStateFlow()
+
     @Volatile
     var onActiveItemChanged: ((activeItemId: Long) -> Unit)? = null
 
@@ -143,6 +153,7 @@ class MediaRepository(
         _playlists.value = computed.playlists
         _bookmarkedTracks.value = computed.bookmarkedTracks
         _settings.value = computed.settings
+        _snapshotVersion.value++
     }
 
     suspend fun refresh() = withContext(ioDispatcher) {
@@ -152,7 +163,7 @@ class MediaRepository(
     fun getMediaItemById(itemId: Long): MediaItem? = computedFlow.value.itemsById[itemId]
 
     fun getFolderRule(rootId: Long, relPath: String): FolderRuleRow? =
-        computedFlow.value.rulesByRootAndPath[rootId]?.get(normalizeRelPath(relPath))
+        computedFlow.value.rulesByRootAndPath[rootId]?.let { findFolderRule(it, relPath) }
 
     @Suppress("UNUSED_PARAMETER")
     fun resolveRespectNomediaForFolder(rootId: Long, relPath: String): Boolean = false
@@ -174,9 +185,31 @@ class MediaRepository(
     ): FolderBrowseState? = withContext(ioDispatcher) {
         val snap = computedFlow.value
         val root = snap.safRoots.firstOrNull { it.rootId == rootId } ?: return@withContext null
-        val normPath = normalizeRelPath(relPath)
         val rulesMap = snap.rulesByRootAndPath[rootId].orEmpty()
         val rootItems = snap.allItems.filter { it.rootId == rootId }
+        val scannedByRel = snap.scannedFoldersByRoot[rootId].orEmpty().associateBy { normalizeRelPath(it.relPath) }
+        val canonicalRelByLower = scannedByRel.keys
+            .filter { it.isNotEmpty() }
+            .associateBy { it.lowercase(Locale.ROOT) }
+
+        fun canonicalizeRel(raw: String): String {
+            val clean = normalizeRelPath(raw)
+            if (clean.isEmpty() || clean in scannedByRel) return clean
+            canonicalRelByLower[clean.lowercase(Locale.ROOT)]?.let { return it }
+            val parts = clean.split('/')
+            for (prefixLen in (parts.size - 1) downTo 1) {
+                val prefix = parts.subList(0, prefixLen).joinToString("/")
+                val matchedPrefix = canonicalRelByLower[prefix.lowercase(Locale.ROOT)]
+                if (matchedPrefix != null && matchedPrefix != prefix) {
+                    val suffix = parts.subList(prefixLen, parts.size).joinToString("/")
+                    val candidate = "$matchedPrefix/$suffix"
+                    return canonicalRelByLower[candidate.lowercase(Locale.ROOT)] ?: candidate
+                }
+            }
+            return clean
+        }
+
+        val normPath = canonicalizeRel(relPath)
 
         // Build breadcrumb trail: [("RootName", ""), ("Sub1", "Sub1"), ("Sub2", "Sub1/Sub2")]
         val breadcrumbs = ArrayList<Pair<String, String>>()
@@ -196,8 +229,12 @@ class MediaRepository(
 
         if (flat) {
             val matchingItems = rootItems.filter { item ->
-                val p = normalizeRelPath(item.parentRelPath)
-                normPath.isEmpty() || p == normPath || p.startsWith("$normPath/")
+                val p = canonicalizeRel(item.parentRelPath)
+                normPath.isEmpty() ||
+                    p == normPath ||
+                    p.startsWith("$normPath/") ||
+                    p.equals(normPath, ignoreCase = true) ||
+                    p.startsWith("$normPath/", ignoreCase = true)
             }.sortedWith { a, b -> SmartFilenameParser.naturalCompare(a.fileName, b.fileName) }
 
             return@withContext FolderBrowseState(
@@ -211,42 +248,48 @@ class MediaRepository(
             )
         }
 
-        // TREE mode: gather direct subfolders from scanned_folders + media_items + folder_rules
-        val scannedByRel = snap.scannedFoldersByRoot[rootId].orEmpty().associateBy { normalizeRelPath(it.relPath) }
-        val directChildNames = LinkedHashSet<String>()
+        // TREE mode: gather direct subfolders ONLY from live scanned_folders + media_items (NEVER from folder_rules!)
+        val directChildByLower = LinkedHashMap<String, String>()
 
-        fun collectChildFromPath(candidateRel: String) {
-            val clean = normalizeRelPath(candidateRel)
+        fun collectChildFromPath(candidateRel: String, preferOverwrite: Boolean) {
+            val clean = canonicalizeRel(candidateRel)
             if (clean.isEmpty()) return
             val remainder = if (normPath.isEmpty()) {
                 clean
-            } else if (clean.startsWith("$normPath/")) {
-                clean.removePrefix("$normPath/")
+            } else if (clean.startsWith("$normPath/", ignoreCase = true) && clean.length > normPath.length + 1) {
+                clean.substring(normPath.length + 1)
             } else {
                 return
             }
             val firstSeg = remainder.substringBefore('/').trim()
             if (firstSeg.isNotEmpty()) {
-                directChildNames.add(firstSeg)
+                val lowerKey = firstSeg.lowercase(Locale.ROOT)
+                if (preferOverwrite || lowerKey !in directChildByLower) {
+                    directChildByLower[lowerKey] = firstSeg
+                }
             }
         }
 
-        for (sf in scannedByRel.values) collectChildFromPath(sf.relPath)
-        for (item in rootItems) collectChildFromPath(item.parentRelPath)
-        for (ruleRel in rulesMap.keys) collectChildFromPath(ruleRel)
+        for (sf in scannedByRel.values) collectChildFromPath(sf.relPath, preferOverwrite = true)
+        for (item in rootItems) collectChildFromPath(item.parentRelPath, preferOverwrite = false)
 
-        val subfolders = directChildNames
+        val subfolders = directChildByLower.values
             .sortedWith(SmartFilenameParser.NaturalComparator)
             .map { childName ->
-                val childRel = if (normPath.isEmpty()) childName else "$normPath/$childName"
+                val rawChildRel = if (normPath.isEmpty()) childName else "$normPath/$childName"
+                val childRel = canonicalizeRel(rawChildRel)
                 val scanned = scannedByRel[childRel]
-                val explicitRule = rulesMap[childRel]
+                    ?: scannedByRel.entries.firstOrNull { it.key.equals(childRel, ignoreCase = true) }?.value
+                val explicitRule = findFolderRule(rulesMap, childRel)
                 val folderUri = scanned?.folderUri
                     ?: explicitRule?.folderUri
                     ?: "${root.treeUri}#rel=${childRel}"
                 val recursiveCount = rootItems.count { item ->
-                    val p = normalizeRelPath(item.parentRelPath)
-                    p == childRel || p.startsWith("$childRel/")
+                    val p = canonicalizeRel(item.parentRelPath)
+                    p == childRel ||
+                        p.startsWith("$childRel/") ||
+                        p.equals(childRel, ignoreCase = true) ||
+                        p.startsWith("$childRel/", ignoreCase = true)
                 }
                 SubfolderEntry(
                     folderUri = folderUri,
@@ -261,8 +304,13 @@ class MediaRepository(
                 )
             }
 
+        val onlyOneLiveForNormPath = scannedByRel.keys.count { it.equals(normPath, ignoreCase = true) } <= 1
         val directItems = rootItems
-            .filter { normalizeRelPath(it.parentRelPath) == normPath }
+            .filter { item ->
+                val canonicalItemRel = canonicalizeRel(item.parentRelPath)
+                canonicalItemRel == normPath ||
+                    (onlyOneLiveForNormPath && item.parentRelPath.equals(normPath, ignoreCase = true))
+            }
             .sortedWith { a, b -> SmartFilenameParser.naturalCompare(a.fileName, b.fileName) }
 
         FolderBrowseState(

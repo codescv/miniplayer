@@ -130,7 +130,7 @@ fun LibraryScreen(
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
                 TopAppBar(
                     title = {
-                        Text("MiniPlayer", style = MaterialTheme.typography.titleLarge)
+                        Text("Play", style = MaterialTheme.typography.titleLarge)
                     },
                     actions = {
                         IconButton(

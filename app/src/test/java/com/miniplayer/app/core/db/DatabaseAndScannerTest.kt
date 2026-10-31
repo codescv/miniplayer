@@ -1010,4 +1010,232 @@ class DatabaseAndScannerTest {
         assertTrue(takeItem.isInPracticeFolder)
         assertTrue(takeItem.isExcludedFromAutoGrouping)
     }
+
+    @Test
+    fun `renaming subfolder rock to Rock with identical or changed SAF document URIs eliminates stale lowercase folder and migrates folder rules in 0ms`() = runBlocking {
+        // Case A: SAF keeps child documentIds/documentUris identical (e.g. inode-based or case-insensitive doc IDs)
+        run {
+            val backend = InMemoryMediaStoreBackend()
+            val repo = MediaRepository(backend = backend, ioDispatcher = Dispatchers.Unconfined)
+            val ds = FakeSafTreeDataSource()
+            val scanner = SafFolderScanner(repository = repo, dataSource = ds, ioDispatcher = Dispatchers.Unconfined)
+
+            val musicTreeUri = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3AMusic"
+            // Stable inode-like doc IDs that stay identical across `rock` -> `Rock`
+            val rockDirDocId = "inode:dir_rock_101"
+            val subDirDocId = "inode:dir_classic_102"
+            val riffDocId = "inode:file_riff_201"
+            val soloDocId = "inode:file_solo_202"
+
+            ds.childrenByDirDocId["primary:Music"] = mutableListOf(
+                SafChildEntry(rockDirDocId, "", "rock", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+            )
+            ds.childrenByDirDocId[rockDirDocId] = mutableListOf(
+                SafChildEntry(riffDocId, "", "01 - Riff.mp3", "audio/mpeg", 4_200_000L, 500L),
+                SafChildEntry(subDirDocId, "", "classic", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+            )
+            ds.childrenByDirDocId[subDirDocId] = mutableListOf(
+                SafChildEntry(soloDocId, "", "02 - Solo.mp3", "audio/mpeg", 5_100_000L, 500L),
+            )
+            ds.probesByUri[riffDocId] = ExtractedMediaProbe(durationMs = 180_000L, rawTitle = "Main Riff", rawArtist = "Slash")
+            ds.probesByUri[soloDocId] = ExtractedMediaProbe(durationMs = 240_000L, rawTitle = "Outro Solo", rawArtist = "Slash")
+
+            val rootId = (scanner.addSafRootFromGrant(
+                SafGrantInfo(musicTreeUri, FakeSafTreeDataSource.AUTHORITY, "primary:Music", "Music", isWritable = true),
+            ) as AddRootResult.Added).root.rootId
+            assertEquals(2, ds.extractCalls.get())
+            assertEquals(listOf("rock"), repo.browseFolder(rootId, "")!!.subfolders.map { it.name })
+
+            // Attach folder rules (`isPracticeFolder` + `isExcludedFromAutoGrouping`), bookmark, and playlist on `rock`
+            scanner.setFolderPracticeRule(rootId, "rock", "$musicTreeUri/document/$rockDirDocId", isPracticeFolder = true)
+            scanner.setFolderExcludeFromGroupingRule(rootId, "rock", "$musicTreeUri/document/$rockDirDocId", isExcludedFromAutoGrouping = true)
+            scanner.setFolderPracticeRule(rootId, "rock/classic", "$musicTreeUri/document/$subDirDocId", isPracticeFolder = true)
+
+            val riffBefore = repo.allMediaItems.value.first { it.fileName == "01 - Riff.mp3" }
+            val plId = repo.createPlaylist("Rock Set", isPracticePlaylist = true)
+            repo.addItemsToPlaylist(plId, listOf(riffBefore.itemId))
+            repo.saveBookmark(riffBefore.itemId, "Intro", 5_000L, 20_000L, 0.85f, null)
+
+            // Rename `rock` -> `Rock` in external file manager while child document URIs, size, and lastModified stay identical!
+            ds.childrenByDirDocId["primary:Music"] = mutableListOf(
+                SafChildEntry(rockDirDocId, "", "Rock", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 200L),
+            )
+            ds.extractCalls.set(0)
+            val versionBefore = repo.snapshotVersion.value
+
+            scanner.rescanRoot(rootId, incremental = true)
+
+            assertTrue("snapshotVersion must increment on folder rename", repo.snapshotVersion.value > versionBefore)
+            assertEquals("Identical-URI folder rename must migrate in 0ms with 0 MediaMetadataRetriever calls", 0, ds.extractCalls.get())
+
+            // Root folder view MUST contain ONLY `Rock` (never both `Rock` and `rock`)!
+            val rootBrowse = repo.browseFolder(rootId, "")!!
+            assertEquals(listOf("Rock"), rootBrowse.subfolders.map { it.name })
+            assertEquals(listOf("Rock"), rootBrowse.subfolders.map { it.relPath })
+            assertEquals(2, rootBrowse.subfolders.single().itemCount)
+            assertTrue(rootBrowse.subfolders.single().isPracticeFolder)
+            assertTrue(rootBrowse.subfolders.single().isExcludedFromAutoGrouping)
+
+            // Both `browseFolder(rootId, "Rock")` and stale breadcrumb `browseFolder(rootId, "rock")` resolve cleanly to `"Rock"`
+            val rockBrowse = repo.browseFolder(rootId, "Rock")!!
+            assertEquals("Rock", rockBrowse.currentRelPath)
+            assertEquals(listOf("01 - Riff.mp3"), rockBrowse.mediaItems.map { it.fileName })
+            assertEquals(listOf("classic"), rockBrowse.subfolders.map { it.name })
+            assertEquals(listOf("Rock/classic"), rockBrowse.subfolders.map { it.relPath })
+            assertTrue(rockBrowse.isCurrentPracticeFolder)
+            assertTrue(rockBrowse.isCurrentExcludedFromAutoGrouping)
+
+            val staleCaseBrowse = repo.browseFolder(rootId, "rock")!!
+            assertEquals("Rock", staleCaseBrowse.currentRelPath)
+            assertEquals(listOf("01 - Riff.mp3"), staleCaseBrowse.mediaItems.map { it.fileName })
+
+            val nestedBrowse = repo.browseFolder(rootId, "Rock/classic")!!
+            assertEquals(listOf("02 - Solo.mp3"), nestedBrowse.mediaItems.map { it.fileName })
+
+            // Verify DB `folder_rules` migrated cleanly (`rock` and `rock/classic` deleted, `Rock` and `Rock/classic` present)
+            val rulePaths = backend.readSnapshot().folderRules.filter { it.rootId == rootId }.map { it.relPath }.toSet()
+            assertEquals(setOf("Rock", "Rock/classic"), rulePaths)
+
+            // Item ID, bookmark, and playlist membership preserved
+            val riffAfter = repo.getMediaItemById(riffBefore.itemId)!!
+            assertEquals("Rock", riffAfter.parentRelPath)
+            assertEquals(1, repo.getBookmarks(riffAfter.itemId).size)
+            assertEquals(listOf(riffBefore.itemId), repo.getPlaylistDetail(plId)!!.items.map { it.itemId })
+        }
+
+        // Case B: SAF changes path-based child documentIds/documentUris (`primary:Music/rock/...` -> `primary:Music/Rock/...`)
+        run {
+            val backend = InMemoryMediaStoreBackend()
+            val repo = MediaRepository(backend = backend, ioDispatcher = Dispatchers.Unconfined)
+            val ds = FakeSafTreeDataSource()
+            val scanner = SafFolderScanner(repository = repo, dataSource = ds, ioDispatcher = Dispatchers.Unconfined)
+
+            val musicTreeUri = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3AMusic"
+            ds.childrenByDirDocId["primary:Music"] = mutableListOf(
+                SafChildEntry("primary:Music/rock", "", "rock", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+            )
+            ds.childrenByDirDocId["primary:Music/rock"] = mutableListOf(
+                SafChildEntry("primary:Music/rock/Anthem.flac", "", "Anthem.flac", "audio/flac", 18_500_000L, 777L),
+            )
+            ds.probesByUri["primary:Music/rock/Anthem.flac"] = ExtractedMediaProbe(
+                durationMs = 215_000L,
+                rawTitle = "Rock Anthem",
+                rawArtist = "Foo Fighters",
+            )
+
+            val rootId = (scanner.addSafRootFromGrant(
+                SafGrantInfo(musicTreeUri, FakeSafTreeDataSource.AUTHORITY, "primary:Music", "Music", isWritable = true),
+            ) as AddRootResult.Added).root.rootId
+            val itemBefore = repo.allMediaItems.value.single()
+            scanner.setFolderPracticeRule(rootId, "rock", "$musicTreeUri/document/primary:Music/rock", isPracticeFolder = true)
+            repo.saveBookmark(itemBefore.itemId, "Bridge", 60_000L, 95_000L, 0.75f, null)
+
+            // Rename `rock` -> `Rock` where SAF changes all child document IDs & URIs while size & mtime stay unchanged
+            ds.childrenByDirDocId.remove("primary:Music/rock")
+            ds.childrenByDirDocId["primary:Music"] = mutableListOf(
+                SafChildEntry("primary:Music/Rock", "", "Rock", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 888L),
+            )
+            ds.childrenByDirDocId["primary:Music/Rock"] = mutableListOf(
+                SafChildEntry("primary:Music/Rock/Anthem.flac", "", "Anthem.flac", "audio/flac", 18_500_000L, 777L),
+            )
+            ds.extractCalls.set(0)
+
+            scanner.rescanRoot(rootId, incremental = true)
+
+            assertEquals("Changed-URI folder rename with unchanged size+mtime must migrate in 0ms without re-probing", 0, ds.extractCalls.get())
+            assertEquals(listOf("Rock"), repo.browseFolder(rootId, "")!!.subfolders.map { it.name })
+            val rockBrowse = repo.browseFolder(rootId, "Rock")!!
+            assertEquals(listOf("Anthem.flac"), rockBrowse.mediaItems.map { it.fileName })
+            assertTrue(rockBrowse.isCurrentPracticeFolder)
+
+            val itemAfter = repo.allMediaItems.value.single()
+            assertEquals("Original itemId must survive folder rename", itemBefore.itemId, itemAfter.itemId)
+            assertEquals("Rock", itemAfter.parentRelPath)
+            assertEquals("Rock Anthem", itemAfter.title)
+            assertEquals(1, repo.getBookmarks(itemAfter.itemId).size)
+            assertEquals(
+                setOf("Rock"),
+                backend.readSnapshot().folderRules.filter { it.rootId == rootId }.map { it.relPath }.toSet(),
+            )
+        }
+    }
+
+    @Test
+    fun `renaming subfolder rock to metal and case-renaming SAF root completely removes stale folder names`() = runBlocking {
+        val backend = InMemoryMediaStoreBackend()
+        val repo = MediaRepository(backend = backend, ioDispatcher = Dispatchers.Unconfined)
+        val ds = FakeSafTreeDataSource()
+        val scanner = SafFolderScanner(repository = repo, dataSource = ds, ioDispatcher = Dispatchers.Unconfined)
+
+        val musicTreeUri = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3AMusic"
+        ds.childrenByDirDocId["primary:Music"] = mutableListOf(
+            SafChildEntry("primary:Music/rock", "", "rock", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+            SafChildEntry("primary:Music/empty_old", "", "empty_old", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+        )
+        ds.childrenByDirDocId["primary:Music/rock"] = mutableListOf(
+            SafChildEntry("primary:Music/rock/Master.mp3", "", "Master.mp3", "audio/mpeg", 9_000_000L, 450L),
+        )
+        ds.childrenByDirDocId["primary:Music/empty_old"] = mutableListOf()
+        ds.probesByUri["primary:Music/rock/Master.mp3"] = ExtractedMediaProbe(
+            durationMs = 515_000L,
+            rawTitle = "Master of Puppets",
+            rawArtist = "Metallica",
+        )
+
+        val rootId = (scanner.addSafRootFromGrant(
+            SafGrantInfo(musicTreeUri, FakeSafTreeDataSource.AUTHORITY, "primary:Music", "Music", isWritable = true),
+        ) as AddRootResult.Added).root.rootId
+        val trackBefore = repo.allMediaItems.value.single()
+
+        // Set a folder rule on `rock` AND an orphaned folder rule on `empty_old` so we verify neither creates a ghost folder!
+        scanner.setFolderPracticeRule(rootId, "rock", "$musicTreeUri/document/primary:Music/rock", isPracticeFolder = true)
+        scanner.setFolderExcludeFromGroupingRule(rootId, "empty_old", "$musicTreeUri/document/primary:Music/empty_old", isExcludedFromAutoGrouping = true)
+
+        assertEquals(setOf("empty_old", "rock"), repo.browseFolder(rootId, "")!!.subfolders.map { it.name }.toSet())
+
+        // Full rename: `rock` -> `metal`, and `empty_old` deleted
+        ds.childrenByDirDocId.remove("primary:Music/rock")
+        ds.childrenByDirDocId.remove("primary:Music/empty_old")
+        ds.childrenByDirDocId["primary:Music"] = mutableListOf(
+            SafChildEntry("primary:Music/metal", "", "metal", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 500L),
+        )
+        ds.childrenByDirDocId["primary:Music/metal"] = mutableListOf(
+            SafChildEntry("primary:Music/metal/Master.mp3", "", "Master.mp3", "audio/mpeg", 9_000_000L, 450L),
+        )
+        ds.extractCalls.set(0)
+
+        scanner.rescanRoot(rootId, incremental = true)
+
+        assertEquals(0, ds.extractCalls.get())
+        val rootSubfolders = repo.browseFolder(rootId, "")!!.subfolders.map { it.name }
+        assertEquals("Old `rock` and `empty_old` folders must disappear completely", listOf("metal"), rootSubfolders)
+
+        val metalBrowse = repo.browseFolder(rootId, "metal")!!
+        assertEquals(listOf("Master.mp3"), metalBrowse.mediaItems.map { it.fileName })
+        assertTrue("Practice rule from renamed `rock` must migrate to `metal`", metalBrowse.isCurrentPracticeFolder)
+        assertEquals(trackBefore.itemId, metalBrowse.mediaItems.single().itemId)
+
+        val remainingRules = backend.readSnapshot().folderRules.filter { it.rootId == rootId }.map { it.relPath }.toSet()
+        assertEquals("Stale `rock` and `empty_old` folder_rules must be migrated/pruned", setOf("metal"), remainingRules)
+
+        // Also verify case-renamed root re-add (`primary:music` -> `primary:Music` or `primary:rock` -> `primary:Rock`)
+        val rockRootUriLower = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3Arock"
+        val rockRootUriUpper = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3ARock"
+        ds.childrenByDirDocId["primary:rock"] = mutableListOf()
+        ds.childrenByDirDocId["primary:Rock"] = mutableListOf()
+
+        val lowerRoot = (scanner.addSafRootFromGrant(
+            SafGrantInfo(rockRootUriLower, FakeSafTreeDataSource.AUTHORITY, "primary:rock", "rock", isWritable = true),
+        ) as AddRootResult.Added).root
+        assertEquals("rock", lowerRoot.displayName)
+
+        val reAddUpper = scanner.addSafRootFromGrant(
+            SafGrantInfo(rockRootUriUpper, FakeSafTreeDataSource.AUTHORITY, "primary:Rock", "Rock", isWritable = true),
+        )
+        assertTrue(reAddUpper is AddRootResult.AlreadyCoveredByParent)
+        val updatedRoot = repo.safRoots.value.first { it.rootId == lowerRoot.rootId }
+        assertEquals("Rock", updatedRoot.displayName)
+        assertEquals("primary:Rock", updatedRoot.treeDocId)
+        assertEquals("Re-adding case-renamed root must update existing root instead of duplicating", 2, repo.safRoots.value.size)
+    }
 }

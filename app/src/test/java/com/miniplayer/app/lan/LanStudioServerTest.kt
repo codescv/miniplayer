@@ -816,6 +816,7 @@ private class FakeTestMiniPlayerCore(
     private val playlistsFlow = MutableStateFlow<List<PlaylistSummary>>(emptyList())
     private val bookmarkedTracksFlow = MutableStateFlow<List<BookmarkedTrackItem>>(emptyList())
     private val settingsFlow = MutableStateFlow(AppSettings())
+    private val snapshotVersionFlow = MutableStateFlow(0L)
     private val scanProgressFlow = MutableStateFlow(ScanProgress())
 
     @Synchronized
@@ -962,6 +963,7 @@ private class FakeTestMiniPlayerCore(
         override val playlists = playlistsFlow
         override val bookmarkedTracks = bookmarkedTracksFlow
         override val settings = settingsFlow
+        override val snapshotVersion = snapshotVersionFlow
 
         override suspend fun browseFolder(rootId: Long, relPath: String, flat: Boolean): FolderBrowseState? = null
 
@@ -1117,6 +1119,9 @@ private class FakeTestMiniPlayerCore(
     @Volatile
     var lastAppliedCandidate: MetadataCandidate? = null
 
+    @Volatile
+    var lastSavedDraft: MetadataDraft? = null
+
     override val scanner: FolderScannerContract = object : FolderScannerContract {
         override val scanProgress = scanProgressFlow
         override suspend fun addSafRoot(treeUri: Uri): AddRootResult = AddRootResult.Added(rootsFlow.value.first())
@@ -1157,9 +1162,16 @@ private class FakeTestMiniPlayerCore(
             draft: MetadataDraft,
             currentlyPlayingItemId: Long?,
         ): MetadataSaveOutcome = synchronized(this@FakeTestMiniPlayerCore) {
+            lastSavedDraft = draft
             val targetSet = itemIds.toSet()
             for ((pathKey, item) in itemsByPath.entries) {
                 if (item.itemId !in targetSet) continue
+                val nextCover = when {
+                    MetadataField.COVER !in draft.dirtyFields -> item.coverPathOrUri
+                    draft.coverBytes != null && draft.coverBytes!!.isNotEmpty() -> "local://cover/${item.itemId}"
+                    !draft.coverRemoteUrl.isNullOrBlank() -> draft.coverRemoteUrl
+                    else -> item.coverPathOrUri
+                }
                 itemsByPath[pathKey] = item.copy(
                     title = if (MetadataField.TITLE in draft.dirtyFields) (draft.title ?: item.title) else item.title,
                     artist = if (MetadataField.ARTIST in draft.dirtyFields) (draft.artist ?: item.artist) else item.artist,
@@ -1167,6 +1179,7 @@ private class FakeTestMiniPlayerCore(
                     albumArtist = if (MetadataField.ALBUM_ARTIST in draft.dirtyFields) draft.albumArtist else item.albumArtist,
                     trackNumber = if (MetadataField.TRACK_NUMBER in draft.dirtyFields) draft.trackNumber else item.trackNumber,
                     year = if (MetadataField.YEAR in draft.dirtyFields) draft.year else item.year,
+                    coverPathOrUri = nextCover,
                     hasMetadataOverride = true,
                 )
             }

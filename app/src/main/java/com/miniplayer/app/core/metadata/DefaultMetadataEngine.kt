@@ -81,7 +81,31 @@ class DefaultMetadataEngine(
         } else {
             draft.dirtyFields
         }
-        if (effectiveDirty.isEmpty()) return@withContext MetadataSaveOutcome.SAVED_DB_ONLY
+        val hasStagedLyrics = !isBatch && (!draft.syncedLrc.isNullOrBlank() || !draft.plainLyrics.isNullOrBlank())
+        if (effectiveDirty.isEmpty() && !hasStagedLyrics) return@withContext MetadataSaveOutcome.SAVED_DB_ONLY
+
+        // Resolve cover bytes BEFORE acquiring fileWriteMutex so remote cover downloads never hold the lock
+        var resolvedCoverBytes: ByteArray? = null
+        var resolvedCoverMime: String? = null
+        var remoteCoverDownloadFailed = false
+        if (MetadataField.COVER in effectiveDirty) {
+            if (draft.coverBytes != null && draft.coverBytes.isNotEmpty()) {
+                resolvedCoverBytes = draft.coverBytes
+                resolvedCoverMime = draft.coverMimeType ?: CoverImage.detectImageMimeType(draft.coverBytes)
+            } else if (!draft.coverRemoteUrl.isNullOrBlank()) {
+                val downloaded = onlineCompleter.downloadCoverBytes(draft.coverRemoteUrl)
+                if (downloaded != null && downloaded.first.isNotEmpty()) {
+                    resolvedCoverBytes = downloaded.first
+                    resolvedCoverMime = if (downloaded.second.contains("png", ignoreCase = true)) {
+                        "image/png"
+                    } else {
+                        downloaded.second.ifBlank { CoverImage.detectImageMimeType(downloaded.first) }
+                    }
+                } else {
+                    remoteCoverDownloadFailed = true
+                }
+            }
+        }
 
         fileWriteMutex.withLock {
             val now = System.currentTimeMillis()
@@ -92,8 +116,10 @@ class DefaultMetadataEngine(
                 val existingOv = repository.backend.getOverrideRow(itemId)
 
                 val savedCoverPath = if (MetadataField.COVER in effectiveDirty) {
-                    if (draft.coverBytes != null && draft.coverBytes.isNotEmpty()) {
-                        persistOverrideCover(itemId, draft.coverBytes, draft.coverMimeType) ?: existingOv?.coverLocalPath
+                    if (resolvedCoverBytes != null && resolvedCoverBytes.isNotEmpty()) {
+                        persistOverrideCover(itemId, resolvedCoverBytes, resolvedCoverMime, now) ?: existingOv?.coverLocalPath
+                    } else if (remoteCoverDownloadFailed) {
+                        existingOv?.coverLocalPath
                     } else {
                         deleteOverrideCoverFiles(itemId)
                         MetadataOverrideRow.CLEARED_TEXT
@@ -141,18 +167,41 @@ class DefaultMetadataEngine(
                 overridesToSave.add(merged)
             }
 
+            if (hasStagedLyrics) {
+                val singleItemId = distinctIds.single()
+                if (repository.backend.getMediaItemRow(singleItemId) != null) {
+                    repository.backend.upsertLyricsCache(
+                        LyricsCacheRow(
+                            itemId = singleItemId,
+                            syncedLrc = draft.syncedLrc,
+                            plainLyrics = draft.plainLyrics,
+                            source = LyricsSource.LRCLIB,
+                            sourceModifiedAt = now,
+                        ),
+                    )
+                }
+            }
+
             // Layer 1: Commit DB overrides & rebuild multi-artist index immediately
-            repository.backend.upsertMetadataOverrides(overridesToSave) { effArtist, effAlbumArtist ->
-                ArtistSplitter.split(effArtist, effAlbumArtist)
+            if (overridesToSave.isNotEmpty()) {
+                repository.backend.upsertMetadataOverrides(overridesToSave) { effArtist, effAlbumArtist ->
+                    ArtistSplitter.split(effArtist, effAlbumArtist)
+                }
             }
             repository.refreshNow()
 
-            if (!draft.writeBackToFile) {
+            if (!draft.writeBackToFile || effectiveDirty.isEmpty()) {
                 return@withLock MetadataSaveOutcome.SAVED_DB_ONLY
             }
 
             // Layer 2: Crash-Safe Temp-Staged SAF Physical Write-Back
-            val tagSpec = buildTagWriteSpec(draft, effectiveDirty)
+            val tagSpec = buildTagWriteSpec(
+                draft = draft,
+                dirty = effectiveDirty,
+                resolvedCoverBytes = resolvedCoverBytes,
+                resolvedCoverMime = resolvedCoverMime,
+                remoteCoverDownloadFailed = remoteCoverDownloadFailed,
+            )
             var anyDeferred = false
             var anyReadOnlyOrFailed = false
             var anyWritten = false
@@ -482,12 +531,22 @@ class DefaultMetadataEngine(
             )
         }
 
-    private fun buildTagWriteSpec(draft: MetadataDraft, dirty: Set<MetadataField>): TagWriteSpec {
+    private fun buildTagWriteSpec(
+        draft: MetadataDraft,
+        dirty: Set<MetadataField>,
+        resolvedCoverBytes: ByteArray?,
+        resolvedCoverMime: String?,
+        remoteCoverDownloadFailed: Boolean,
+    ): TagWriteSpec {
         val coverOpt = if (MetadataField.COVER in dirty) {
-            val img = draft.coverBytes?.takeIf { it.isNotEmpty() }?.let {
-                CoverImage(it, draft.coverMimeType ?: CoverImage.detectImageMimeType(it))
+            if (remoteCoverDownloadFailed) {
+                OptionalField.Unchanged
+            } else {
+                val img = resolvedCoverBytes?.takeIf { it.isNotEmpty() }?.let {
+                    CoverImage(it, resolvedCoverMime ?: CoverImage.detectImageMimeType(it))
+                }
+                OptionalField.Set(img)
             }
-            OptionalField.Set(img)
         } else {
             OptionalField.Unchanged
         }
@@ -502,12 +561,17 @@ class DefaultMetadataEngine(
         )
     }
 
-    private fun persistOverrideCover(itemId: Long, bytes: ByteArray, mimeType: String?): String? {
+    private fun persistOverrideCover(
+        itemId: Long,
+        bytes: ByteArray,
+        mimeType: String?,
+        versionToken: Long = System.currentTimeMillis(),
+    ): String? {
         val dir = coversDir ?: return null
         dir.mkdirs()
         deleteOverrideCoverFiles(itemId)
         val ext = if ((mimeType ?: CoverImage.detectImageMimeType(bytes)).contains("png", ignoreCase = true)) "png" else "jpg"
-        val out = File(dir, "override_${itemId}.$ext")
+        val out = File(dir, "override_${itemId}_${versionToken}.$ext")
         return runCatching {
             FileOutputStream(out).use {
                 it.write(bytes)
@@ -521,5 +585,10 @@ class DefaultMetadataEngine(
         val dir = coversDir ?: return
         File(dir, "override_${itemId}.jpg").delete()
         File(dir, "override_${itemId}.png").delete()
+        dir.listFiles()?.forEach { f ->
+            if (f.isFile && (f.name.startsWith("override_${itemId}_") || f.name.startsWith("override_${itemId}."))) {
+                f.delete()
+            }
+        }
     }
 }

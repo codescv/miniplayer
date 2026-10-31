@@ -1005,8 +1005,8 @@ function renderMetadataTable() {
       '<td class="tnum"><span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'year\',\'' + (it.year || '') + '\')">' + (it.year || '—') + '</span></td>' +
       '<td class="tnum">' + (it.isVideo ? '视频 ' : '音频 ') + fmtMs(it.durationMs, false) + '</td>' +
       '<td style="text-align:right;white-space:nowrap;">' +
-      '<button class="btn btn-tertiary btn-xs" onclick="autoMatchSingle(' + it.itemId + ', false)">自动联网匹配</button> ' +
-      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ')">编辑</button> ' +
+      '<button class="btn btn-tertiary btn-xs" onclick="openEditItemModal(' + it.itemId + ', true)">自动联网匹配</button> ' +
+      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ', false)">编辑</button> ' +
       '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">预听</button></td></tr>';
   }).join('');
   updateBatchBar();
@@ -1081,12 +1081,37 @@ function updateBatchBar() {
   bar.classList.toggle('hidden', cnt === 0);
 }
 
-function openEditItemModal(itemId) {
+function applyBackingSuffixJs(baseTitle, isBacking) {
+  const clean = String(baseTitle || '').trim();
+  if (!isBacking || !clean) return clean;
+  if (/\((伴奏|backing\s*track|instrumental|off\s*vocal|karaoke)\)/i.test(clean) || /（伴奏）/.test(clean)) {
+    return clean;
+  }
+  return clean + ' (伴奏)';
+}
+
+function openEditItemModal(itemId, autoSearch) {
   const it = state.items.find(x => x.itemId === itemId);
   if (!it) return;
+  state._editModalItemId = itemId;
+  state._editCandidates = [];
+  state._stagedEditCandidate = null;
+  state._stagedEditCandidateIdx = -1;
+
+  const backingToggleHtml = it.isBackingTrack
+    ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:8px;">' +
+      '<input type="checkbox" id="ed-preserve-backing" checked onchange="onEditPreserveBackingChanged(' + it.itemId + ', this.checked)"> 标题保留「(伴奏)」后缀，避免与原唱混淆</label>'
+    : '';
+
   openModal(
     '<h3 style="margin-top:0;">编辑曲目元数据</h3>' +
-    '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;">文件: ' + esc(it.fileName) + '</div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">文件: ' + esc(it.fileName) + '</div>' +
+    '<div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">' +
+    '<button type="button" id="ed-auto-match-btn" class="btn btn-tonal btn-sm" onclick="searchEditModalCandidates(' + it.itemId + ')">🌐 在线自动补全当前曲目</button>' +
+    '<span id="ed-staged-hint" style="font-size:12px;color:var(--primary);font-weight:600;"></span>' +
+    '</div>' +
+    backingToggleHtml +
+    '<div id="ed-candidates-box" style="margin-bottom:12px;"></div>' +
     '<div class="form-grid">' +
     '<div class="form-field full"><label>标题 (Title)</label><input id="ed-title" class="input" value="' + esc(it.title) + '"></div>' +
     '<div class="form-field"><label>歌手 (Artist)</label><input id="ed-artist" class="input" value="' + esc(it.artist) + '"></div>' +
@@ -1098,30 +1123,133 @@ function openEditItemModal(itemId) {
     '</div>' +
     '<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:16px;">' +
     '<input type="checkbox" id="ed-writeback"' + (it.isRootWritable ? '' : ' disabled') + '> 同时尝试写回原文件内嵌标签（默认仅写手机高速覆盖层）</label>' +
-    '<div style="display:flex;justify-content:space-between;gap:8px;">' +
-    '<button class="btn btn-tertiary" onclick="autoMatchSingle(' + it.itemId + ', true)">在线搜索候选列表</button>' +
-    '<div style="display:flex;gap:8px;">' +
+    '<div style="display:flex;justify-content:flex-end;gap:8px;">' +
     '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
-    '<button class="btn btn-primary" onclick="submitSingleMetadata(' + it.itemId + ')">保存</button></div></div>'
+    '<button class="btn btn-primary" onclick="submitSingleMetadata(' + it.itemId + ')">保存更改</button></div>'
   );
+  if (autoSearch) {
+    searchEditModalCandidates(itemId);
+  }
+}
+
+function onEditPreserveBackingChanged(itemId, checked) {
+  const it = state.items.find(x => x.itemId === itemId);
+  const cand = state._stagedEditCandidate;
+  const titleEl = document.getElementById('ed-title');
+  if (!it || !cand || !titleEl || !it.isBackingTrack) return;
+  titleEl.value = checked ? applyBackingSuffixJs(cand.title, true) : String(cand.title || '').trim();
+}
+
+function selectEditModalCandidate(itemId, idx) {
+  const cands = state._editCandidates || [];
+  const cand = cands[idx];
+  if (!cand) return;
+  const it = state.items.find(x => x.itemId === itemId);
+  const preserveEl = document.getElementById('ed-preserve-backing');
+  const preserveBacking = !!(it && it.isBackingTrack && (!preserveEl || preserveEl.checked));
+
+  state._stagedEditCandidate = cand;
+  state._stagedEditCandidateIdx = idx;
+
+  const titleEl = document.getElementById('ed-title');
+  const artistEl = document.getElementById('ed-artist');
+  const albumEl = document.getElementById('ed-album');
+  const albumArtistEl = document.getElementById('ed-album-artist');
+  const trackEl = document.getElementById('ed-track');
+  const yearEl = document.getElementById('ed-year');
+  const hintEl = document.getElementById('ed-staged-hint');
+
+  if (titleEl) titleEl.value = applyBackingSuffixJs(cand.title || '', preserveBacking);
+  if (artistEl) artistEl.value = cand.artist || '';
+  if (albumEl) albumEl.value = cand.album || '';
+  if (albumArtistEl) albumArtistEl.value = cand.albumArtist || cand.artist || '';
+  if (trackEl && cand.trackNumber != null && cand.trackNumber > 0) trackEl.value = String(cand.trackNumber);
+  if (yearEl && cand.year != null && cand.year > 0) yearEl.value = String(cand.year);
+  if (hintEl) {
+    const extras = [];
+    if (cand.coverUrl) extras.push('封面');
+    if (cand.syncedLrc || cand.plainLyrics) extras.push('歌词');
+    hintEl.textContent = '已填入候选' + (extras.length ? '（含' + extras.join('+') + '）' : '') + ' · 请点「保存更改」生效';
+  }
+  renderEditModalCandidates(itemId);
+}
+
+function renderEditModalCandidates(itemId) {
+  const box = document.getElementById('ed-candidates-box');
+  if (!box) return;
+  const cands = state._editCandidates || [];
+  if (!cands.length) {
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML =
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:6px;">已匹配 ' + cands.length + ' 个结果（点击填入表单，确认后点下方「保存更改」）：</div>' +
+    '<div style="max-height:190px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">' +
+    cands.map((c, idx) => {
+      const active = idx === state._stagedEditCandidateIdx;
+      const borderStyle = active ? 'border:1.5px solid var(--primary);background:rgba(99,102,241,0.10);' : 'border:1px solid var(--border);';
+      const score = c.confidence != null ? c.confidence : (c.confidenceScore || 0);
+      const lrcTag = c.syncedLrc ? ' · 歌词✓' : '';
+      const coverTag = c.coverUrl ? ' · 封面✓' : '';
+      const stagedPill = active ? '<span class="badge badge-ok" style="margin-left:6px;">已填入</span>' : '';
+      return '<div class="list-item" style="' + borderStyle + 'cursor:pointer;padding:8px 10px;" onclick="selectEditModalCandidate(' + itemId + ',' + idx + ')">' +
+        '<div><div style="font-weight:600;">' + esc(c.title) + ' — ' + esc(c.artist) + stagedPill + '</div>' +
+        '<div style="font-size:12px;color:var(--muted);">专辑: ' + esc(c.album || '—') + ' · 年份: ' + (c.year || '—') + ' · ' + esc(c.source) + coverTag + lrcTag + '</div></div>' +
+        '<span class="badge badge-ok tnum">' + score + '%</span></div>';
+    }).join('') +
+    '</div>';
+}
+
+async function searchEditModalCandidates(itemId) {
+  const box = document.getElementById('ed-candidates-box');
+  const btn = document.getElementById('ed-auto-match-btn');
+  const qTitle = (document.getElementById('ed-title') && document.getElementById('ed-title').value.trim()) || '';
+  const qArtist = (document.getElementById('ed-artist') && document.getElementById('ed-artist').value.trim()) || '';
+  if (btn) btn.disabled = true;
+  if (box) box.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px 0;">正在免 Key 检索 MusicBrainz / iTunes / LRCLIB…</div>';
+  try {
+    const qs = 'itemId=' + encodeURIComponent(itemId) +
+      (qTitle ? '&queryTitle=' + encodeURIComponent(qTitle) : '') +
+      (qArtist ? '&queryArtist=' + encodeURIComponent(qArtist) : '');
+    const res = await api('/api/metadata/candidates?' + qs);
+    const cands = res.candidates || [];
+    state._editCandidates = cands;
+    if (!cands.length) {
+      if (box) box.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px 0;">未找到匹配的在线候选，可修改标题/歌手关键词后重试</div>';
+      return;
+    }
+    selectEditModalCandidate(itemId, 0);
+  } catch (e) {
+    if (box) box.innerHTML = '';
+    alert(e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function submitSingleMetadata(itemId) {
   const trk = document.getElementById('ed-track').value.trim();
   const yr = document.getElementById('ed-year').value.trim();
+  const staged = state._stagedEditCandidate;
+  const payload = {
+    itemId: itemId,
+    title: document.getElementById('ed-title').value.trim(),
+    artist: document.getElementById('ed-artist').value.trim(),
+    album: document.getElementById('ed-album').value.trim(),
+    albumArtist: document.getElementById('ed-album-artist').value.trim(),
+    trackNumber: trk ? parseInt(trk, 10) : null,
+    year: yr ? parseInt(yr, 10) : null,
+    writeBackToFile: document.getElementById('ed-writeback').checked
+  };
+  if (staged) {
+    if (staged.coverUrl) payload.coverRemoteUrl = staged.coverUrl;
+    if (staged.syncedLrc) payload.syncedLrc = staged.syncedLrc;
+    if (staged.plainLyrics) payload.plainLyrics = staged.plainLyrics;
+  }
   try {
     await api('/api/metadata/update', {
       method: 'POST',
-      json: {
-        itemId: itemId,
-        title: document.getElementById('ed-title').value.trim(),
-        artist: document.getElementById('ed-artist').value.trim(),
-        album: document.getElementById('ed-album').value.trim(),
-        albumArtist: document.getElementById('ed-album-artist').value.trim(),
-        trackNumber: trk ? parseInt(trk, 10) : null,
-        year: yr ? parseInt(yr, 10) : null,
-        writeBackToFile: document.getElementById('ed-writeback').checked
-      }
+      json: payload
     });
     closeModal();
     showToast('元数据已保存');

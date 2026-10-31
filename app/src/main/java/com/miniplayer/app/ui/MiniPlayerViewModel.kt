@@ -151,11 +151,16 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val _currentCoverBytes = MutableStateFlow<ByteArray?>(null)
+    val currentCoverBytes: StateFlow<ByteArray?> = _currentCoverBytes.asStateFlow()
+
     private val _currentLyrics = MutableStateFlow<LyricsData?>(null)
     val currentLyrics: StateFlow<LyricsData?> = _currentLyrics.asStateFlow()
 
     private val _isLoadingLyrics = MutableStateFlow(false)
     val isLoadingLyrics: StateFlow<Boolean> = _isLoadingLyrics.asStateFlow()
+
+    private var lastForegroundScanAtMs: Long = 0L
 
     // Metadata Editor & Online Auto-Match States
     private val _metadataEditTargets = MutableStateFlow<List<MediaItem>>(emptyList())
@@ -199,6 +204,15 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 refreshActiveDrillDowns()
             }
         }
+        // Refresh active folder/album/artist/playlist drill-downs whenever snapshotVersion increments
+        // (including empty subfolder or case-only folder renames like `rock` -> `Rock`)
+        viewModelScope.launch {
+            core.library.snapshotVersion
+                .drop(1)
+                .collect {
+                    refreshActiveDrillDowns()
+                }
+        }
         // Load cached/local lyrics automatically & flush any deferred physical tag writes when track changes (even while paused)
         viewModelScope.launch {
             playbackSnapshot
@@ -210,6 +224,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                             runCatching { engine.flushDeferredFileWrites(currentlyPlayingItemId = item?.itemId) }
                         }
                     }
+                    _currentCoverBytes.value = loadLocalCoverBytes(item?.coverPathOrUri)
                     _currentLyrics.value = null
                     if (item != null && !item.isVideo) {
                         _currentLyrics.value = core.metadata.getLyrics(item, fetchOnlineIfMissing = false)
@@ -219,7 +234,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         // Launch startup incremental rescan if enabled
         viewModelScope.launch {
             if (settings.value.autoRescanOnLaunch && safRoots.value.isNotEmpty()) {
-                core.scanner.rescanAll(incremental = true)
+                lastForegroundScanAtMs = System.currentTimeMillis()
+                core.scanner.rescanAllRoots(incremental = true)
             }
         }
     }
@@ -318,15 +334,28 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun rescanAll() {
+    fun onAppForegrounded() {
+        val now = System.currentTimeMillis()
+        if (scanProgress.value.isScanning || now - lastForegroundScanAtMs < 1_500L) return
+        if (safRoots.value.isEmpty()) return
+        lastForegroundScanAtMs = now
         viewModelScope.launch {
-            core.scanner.rescanAll(incremental = true)
+            core.scanner.rescanAllRoots(incremental = true)
+            refreshActiveDrillDowns()
+        }
+    }
+
+    fun rescanAll() {
+        lastForegroundScanAtMs = System.currentTimeMillis()
+        viewModelScope.launch {
+            core.scanner.rescanAllRoots(incremental = true)
             refreshActiveDrillDowns()
             emitMessage("已完成增量刷新")
         }
     }
 
     fun rescanRoot(rootId: Long) {
+        lastForegroundScanAtMs = System.currentTimeMillis()
         viewModelScope.launch {
             core.scanner.rescanRoot(rootId, incremental = true)
             refreshActiveDrillDowns()
@@ -672,6 +701,17 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         val currentPlayingId = playbackSnapshot.value.currentItem?.itemId
         viewModelScope.launch {
             val outcome = core.metadata.saveMetadata(ids, draft, currentPlayingId)
+            val latestMap = allMediaItems.value.associateBy { it.itemId }
+            if (latestMap.isNotEmpty()) {
+                playerController.refreshMetadataInQueue(latestMap)
+            }
+            if (currentPlayingId != null && currentPlayingId in ids) {
+                val updatedCurrent = latestMap[currentPlayingId] ?: playbackSnapshot.value.currentItem
+                _currentCoverBytes.value = loadLocalCoverBytes(updatedCurrent?.coverPathOrUri) ?: draft.coverBytes
+                _currentLyrics.value = updatedCurrent?.takeIf { !it.isVideo }?.let {
+                    core.metadata.getLyrics(it, fetchOnlineIfMissing = false)
+                }
+            }
             closeMetadataEditor()
             refreshActiveDrillDowns()
             val msg = when (outcome) {
@@ -859,13 +899,40 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private suspend fun loadLocalCoverBytes(coverPathOrUri: String?): ByteArray? {
+        if (coverPathOrUri.isNullOrBlank()) return null
+        if (coverPathOrUri.startsWith("http://", ignoreCase = true) ||
+            coverPathOrUri.startsWith("https://", ignoreCase = true)
+        ) {
+            return null
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                when {
+                    coverPathOrUri.startsWith("content://") || coverPathOrUri.startsWith("file://") -> {
+                        getApplication<Application>().contentResolver.openInputStream(Uri.parse(coverPathOrUri))
+                            ?.use { it.readBytes() }
+                    }
+                    else -> {
+                        val file = File(coverPathOrUri)
+                        if (file.isFile) file.readBytes() else null
+                    }
+                }
+            }.getOrNull()
+        }
+    }
+
     private suspend fun refreshActiveDrillDowns() {
         _activeFolderRootId.value?.let { rootId ->
-            _folderBrowseState.value = core.library.browseFolder(
+            val refreshed = core.library.browseFolder(
                 rootId = rootId,
                 relPath = _activeFolderRelPath.value,
                 flat = _folderDisplayMode.value == FolderDisplayMode.FLAT,
             )
+            _folderBrowseState.value = refreshed
+            if (refreshed != null && _activeFolderRelPath.value != refreshed.currentRelPath) {
+                _activeFolderRelPath.value = refreshed.currentRelPath
+            }
         }
         _activeAlbum.value?.let { alb ->
             _activeAlbumTracks.value = core.library.getAlbumTracks(alb.albumKey)
