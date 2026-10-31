@@ -105,6 +105,7 @@ fun MiniPlayerAppShell(
     val snapshot by viewModel.playbackSnapshot.collectAsState()
     val practiceModeActive by viewModel.isPracticeModeActive.collectAsState()
     val practiceState by viewModel.practiceState.collectAsState()
+    val countInProgress by viewModel.countInProgress.collectAsState()
     val showNowPlaying by viewModel.showNowPlaying.collectAsState()
     val showSettings by viewModel.showSettings.collectAsState()
     val showLanStudio by viewModel.showLanStudio.collectAsState()
@@ -182,6 +183,7 @@ fun MiniPlayerAppShell(
                                 snapshot = snapshot,
                                 practiceModeActive = practiceModeActive,
                                 practiceState = practiceState,
+                                isCountingIn = countInProgress != null,
                                 onExpand = { viewModel.setNowPlayingVisible(true) },
                                 onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
                                 onNext = { viewModel.playerController.skipToNext() },

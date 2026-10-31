@@ -367,9 +367,10 @@ fun LandscapeVideoPlayerView(
                                 Icon(Icons.Outlined.Replay10, contentDescription = "快退 10 秒", tint = Color.White)
                             }
                             FilledIconButton(onClick = { bumpInteraction(); playerController.togglePlayPause() }, modifier = Modifier.size(54.dp)) {
+                                val showPause = snapshot.isPlaying || countInProgress != null
                                 Icon(
-                                    if (snapshot.isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                    contentDescription = "播放或暂停",
+                                    if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                    contentDescription = if (showPause) "暂停" else "播放",
                                 )
                             }
                             IconButton(onClick = { bumpInteraction(); playerController.seekByDelta(10_000L) }, modifier = Modifier.size(48.dp)) {
@@ -476,9 +477,10 @@ fun LandscapeVideoPlayerView(
                                         onClick = { bumpInteraction(); playerController.togglePlayPause() },
                                         modifier = Modifier.size(48.dp),
                                     ) {
+                                        val showPause = snapshot.isPlaying || countInProgress != null
                                         Icon(
-                                            if (snapshot.isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                            contentDescription = "播放或暂停",
+                                            if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                            contentDescription = if (showPause) "暂停" else "播放",
                                         )
                                     }
                                 }

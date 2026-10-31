@@ -1,12 +1,14 @@
 package com.miniplayer.app.player
 
 import android.content.Context
+import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import com.miniplayer.app.core.model.MediaItem
 import java.io.File
+import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
 import kotlin.math.sin
@@ -127,9 +129,11 @@ class WaveformExtractor(private val context: Context) {
             }
             if (durationUs <= 0L) return null
 
+            audioFormat.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
             codec = MediaCodec.createDecoderByType(mime)
             codec.configure(audioFormat, null, null, 0)
             codec.start()
+            var outputPcmEncoding = readPcmEncodingOrDefault(codec.outputFormat)
 
             val bucketSumSq = DoubleArray(BAR_COUNT)
             val bucketSampleCount = IntArray(BAR_COUNT)
@@ -160,21 +164,21 @@ class WaveformExtractor(private val context: Context) {
                             }
                         }
                         val outIdx = codec.dequeueOutputBuffer(bufferInfo, 4_000L)
-                        if (outIdx >= 0) {
+                        if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                            outputPcmEncoding = readPcmEncodingOrDefault(codec.outputFormat)
+                        } else if (outIdx >= 0) {
                             val outBuf = codec.getOutputBuffer(outIdx)
-                            if (outBuf != null && bufferInfo.size >= 2) {
-                                outBuf.position(bufferInfo.offset)
-                                outBuf.limit(bufferInfo.offset + bufferInfo.size)
-                                val shortBuf = outBuf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                                val stride = (shortBuf.remaining() / 256).coerceAtLeast(1)
-                                var pos = 0
-                                while (pos < shortBuf.limit()) {
-                                    val normalized = shortBuf.get(pos) / 32768.0
-                                    bucketSumSq[barIdx] += normalized * normalized
-                                    bucketSampleCount[barIdx]++
-                                    collectedSamples++
-                                    pos += stride
-                                }
+                            if (outBuf != null && bufferInfo.size > 0) {
+                                collectedSamples += accumulatePcmRms(
+                                    outBuf = outBuf,
+                                    offset = bufferInfo.offset,
+                                    size = bufferInfo.size,
+                                    pcmEncoding = outputPcmEncoding,
+                                    targetSamples = 256,
+                                    barIdx = barIdx,
+                                    bucketSumSq = bucketSumSq,
+                                    bucketSampleCount = bucketSampleCount,
+                                )
                             }
                             codec.releaseOutputBuffer(outIdx, false)
                         }
@@ -202,26 +206,27 @@ class WaveformExtractor(private val context: Context) {
                         }
                     }
                     val outIdx = codec.dequeueOutputBuffer(bufferInfo, 4_000L)
-                    if (outIdx >= 0) {
+                    if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        outputPcmEncoding = readPcmEncodingOrDefault(codec.outputFormat)
+                    } else if (outIdx >= 0) {
                         if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                             outputDone = true
                         }
                         val outBuf = codec.getOutputBuffer(outIdx)
-                        if (outBuf != null && bufferInfo.size >= 2) {
+                        if (outBuf != null && bufferInfo.size > 0) {
                             val barIdx = ((bufferInfo.presentationTimeUs.toDouble() / durationUs.toDouble()) * BAR_COUNT)
                                 .toInt()
                                 .coerceIn(0, BAR_COUNT - 1)
-                            outBuf.position(bufferInfo.offset)
-                            outBuf.limit(bufferInfo.offset + bufferInfo.size)
-                            val shortBuf = outBuf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                            val stride = (shortBuf.remaining() / 128).coerceAtLeast(1)
-                            var pos = 0
-                            while (pos < shortBuf.limit()) {
-                                val normalized = shortBuf.get(pos) / 32768.0
-                                bucketSumSq[barIdx] += normalized * normalized
-                                bucketSampleCount[barIdx]++
-                                pos += stride
-                            }
+                            accumulatePcmRms(
+                                outBuf = outBuf,
+                                offset = bufferInfo.offset,
+                                size = bufferInfo.size,
+                                pcmEncoding = outputPcmEncoding,
+                                targetSamples = 128,
+                                barIdx = barIdx,
+                                bucketSumSq = bucketSumSq,
+                                bucketSampleCount = bucketSampleCount,
+                            )
                         }
                         codec.releaseOutputBuffer(outIdx, false)
                     }
@@ -267,8 +272,79 @@ class WaveformExtractor(private val context: Context) {
         }
     }
 
+    private fun readPcmEncodingOrDefault(format: MediaFormat?): Int {
+        return try {
+            if (format != null && format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                format.getInteger(MediaFormat.KEY_PCM_ENCODING)
+            } else {
+                AudioFormat.ENCODING_PCM_16BIT
+            }
+        } catch (_: Throwable) {
+            AudioFormat.ENCODING_PCM_16BIT
+        }
+    }
+
     companion object {
         const val BAR_COUNT = 240
         const val MIN_BAR_HEIGHT = 0.08f
+
+        internal fun accumulatePcmRms(
+            outBuf: ByteBuffer,
+            offset: Int,
+            size: Int,
+            pcmEncoding: Int,
+            targetSamples: Int,
+            barIdx: Int,
+            bucketSumSq: DoubleArray,
+            bucketSampleCount: IntArray,
+        ): Int {
+            outBuf.position(offset)
+            outBuf.limit(offset + size)
+            var collected = 0
+            when (pcmEncoding) {
+                AudioFormat.ENCODING_PCM_FLOAT -> {
+                    if (size < 4) return 0
+                    val floatBuf = outBuf.slice().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+                    val stride = (floatBuf.remaining() / targetSamples).coerceAtLeast(1)
+                    var pos = 0
+                    while (pos < floatBuf.limit()) {
+                        val raw = floatBuf.get(pos).toDouble()
+                        val normalized = if (raw.isFinite()) raw.coerceIn(-1.0, 1.0) else 0.0
+                        bucketSumSq[barIdx] += normalized * normalized
+                        bucketSampleCount[barIdx]++
+                        collected++
+                        pos += stride
+                    }
+                }
+                AudioFormat.ENCODING_PCM_8BIT -> {
+                    if (size < 1) return 0
+                    val slice = outBuf.slice()
+                    val stride = (slice.remaining() / targetSamples).coerceAtLeast(1)
+                    var pos = 0
+                    while (pos < slice.limit()) {
+                        val unsigned = slice.get(pos).toInt() and 0xFF
+                        val normalized = (unsigned - 128) / 128.0
+                        bucketSumSq[barIdx] += normalized * normalized
+                        bucketSampleCount[barIdx]++
+                        collected++
+                        pos += stride
+                    }
+                }
+                else -> {
+                    if (size < 2) return 0
+                    val shortBuf = outBuf.slice().order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                    val stride = (shortBuf.remaining() / targetSamples).coerceAtLeast(1)
+                    var pos = 0
+                    while (pos < shortBuf.limit()) {
+                        val normalized = shortBuf.get(pos) / 32768.0
+                        bucketSumSq[barIdx] += normalized * normalized
+                        bucketSampleCount[barIdx]++
+                        collected++
+                        pos += stride
+                    }
+                }
+            }
+            return collected
+        }
     }
 }

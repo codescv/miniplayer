@@ -83,7 +83,10 @@ class PlayerController(
     private var isUiInForeground: Boolean = true
     private var positionTickerJob: Job? = null
     private var sleepTimerJob: Job? = null
+    private var trackTransitionJob: Job? = null
     private var suppressAutoTransitionLoad: Boolean = false
+    private var internalPauseDepth: Int = 0
+    private var internalSeekDepth: Int = 0
 
     val metronome = CountInMetronome(mainScope)
     val waveformExtractor = WaveformExtractor(appContext)
@@ -136,6 +139,7 @@ class PlayerController(
                         .setDeleteAfterDelivery(false)
                         .send()
                 }
+                syncEffectiveRepeatModeOnPlayerThread()
             }
         }
 
@@ -143,6 +147,7 @@ class PlayerController(
             runOnPlayerThread {
                 activeBoundaryMessage?.cancel()
                 activeBoundaryMessage = null
+                syncEffectiveRepeatModeOnPlayerThread()
             }
         }
 
@@ -167,7 +172,9 @@ class PlayerController(
 
         override fun seekToPosition(positionMs: Long) {
             runOnPlayerThread {
-                exoPlayer.seekTo(positionMs.coerceAtLeast(0L))
+                performInternalSeek {
+                    exoPlayer.seekTo(positionMs.coerceAtLeast(0L))
+                }
                 updateSnapshotFromPlayer()
             }
         }
@@ -182,14 +189,18 @@ class PlayerController(
 
         override fun pause() {
             runOnPlayerThread {
-                exoPlayer.pause()
+                performInternalPause {
+                    exoPlayer.pause()
+                }
                 updateSnapshotFromPlayer()
             }
         }
 
         override fun skipToPreviousItem(): Boolean {
             return if (Looper.myLooper() == exoPlayer.applicationLooper && exoPlayer.hasPreviousMediaItem()) {
-                exoPlayer.seekToPreviousMediaItem()
+                performInternalSeek {
+                    exoPlayer.seekToPreviousMediaItem()
+                }
                 true
             } else {
                 false
@@ -212,6 +223,38 @@ class PlayerController(
             } else {
                 stopPositionTicker()
                 saveCurrentTrackPosition()
+            }
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (!playWhenReady && internalPauseDepth == 0 && !suppressAutoTransitionLoad) {
+                loopEngine.onUserPaused()
+            }
+            updateSnapshotFromPlayer()
+        }
+
+        override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+            if (playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE &&
+                internalPauseDepth == 0 &&
+                !suppressAutoTransitionLoad
+            ) {
+                loopEngine.onUserPaused()
+            }
+            updateSnapshotFromPlayer()
+        }
+
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK &&
+                internalSeekDepth == 0 &&
+                !suppressAutoTransitionLoad &&
+                oldPosition.mediaItemIndex == newPosition.mediaItemIndex
+            ) {
+                loopEngine.onExternalSeek()
+                updateSnapshotFromPlayer()
             }
         }
 
@@ -239,8 +282,17 @@ class PlayerController(
             if (_snapshot.value.pauseAtEndOfCurrentTrack &&
                 reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
             ) {
-                exoPlayer.pause()
+                performInternalPause {
+                    exoPlayer.pause()
+                }
                 _snapshot.value = _snapshot.value.copy(pauseAtEndOfCurrentTrack = false)
+            }
+            if (!suppressAutoTransitionLoad) {
+                metronome.cancel()
+                activeBoundaryMessage?.cancel()
+                activeBoundaryMessage = null
+                trackTransitionJob?.cancel()
+                trackTransitionJob = null
             }
             val newIndex = exoPlayer.currentMediaItemIndex
             val queue = _snapshot.value.queue
@@ -251,15 +303,29 @@ class PlayerController(
                 positionMs = exoPlayer.currentPosition.coerceAtLeast(0L),
                 durationMs = nextItem?.durationMs ?: 0L,
             )
-            if (nextItem != null && !suppressAutoTransitionLoad) {
-                loadWaveformFor(nextItem)
-                mainScope.launch {
-                    val savedState = loadPracticeState(nextItem.itemId)
+            if (!suppressAutoTransitionLoad) {
+                if (nextItem != null) {
+                    loadWaveformFor(nextItem)
+                    val targetItemId = nextItem.itemId
+                    trackTransitionJob = mainScope.launch {
+                        val savedState = loadPracticeState(targetItemId)
+                        runOnPlayerThread {
+                            if (_snapshot.value.currentItem?.itemId != targetItemId) return@runOnPlayerThread
+                            loopEngine.bindTrack(
+                                state = savedState,
+                                isVideo = nextItem.isVideo,
+                                activatePracticeMode = loopEngine.isPracticeModeActive.value,
+                                jumpBookmark = null,
+                                autoTriggerInitialLoop = loopEngine.isPracticeModeActive.value && exoPlayer.playWhenReady,
+                            )
+                            syncEffectiveRepeatModeOnPlayerThread()
+                        }
+                    }
+                } else {
                     loopEngine.bindTrack(
-                        state = savedState,
-                        isVideo = nextItem.isVideo,
-                        activatePracticeMode = loopEngine.isPracticeModeActive.value,
-                        jumpBookmark = null,
+                        state = PracticeState(itemId = -1L),
+                        isVideo = false,
+                        activatePracticeMode = false,
                     )
                     syncEffectiveRepeatModeOnPlayerThread()
                 }
@@ -307,6 +373,8 @@ class PlayerController(
         val activatePractice = PracticeMath.shouldAutoActivatePracticeMode(context)
 
         saveCurrentTrackPosition()
+        trackTransitionJob?.cancel()
+        trackTransitionJob = null
         metronome.cancel()
         loadWaveformFor(targetItem)
 
@@ -318,10 +386,22 @@ class PlayerController(
                 activeBoundaryMessage = null
 
                 val exoItems = items.map { it.toExoMediaItem() }
-                val initialStartPosMs = when {
+                val hasActiveSavedLoop = activatePractice &&
+                    savedPracticeState.loopEnabled &&
+                    savedPracticeState.activeAMs != null &&
+                    savedPracticeState.activeBMs != null &&
+                    savedPracticeState.activeBMs > savedPracticeState.activeAMs
+                val rawLoopStartMs = when {
                     targetBookmark != null -> targetBookmark.aMs
-                    activatePractice && savedPracticeState.activeAMs != null && savedPracticeState.loopEnabled ->
-                        savedPracticeState.activeAMs
+                    hasActiveSavedLoop -> savedPracticeState.activeAMs!!
+                    else -> null
+                }
+                val initialStartPosMs = when {
+                    rawLoopStartMs != null -> if (savedPracticeState.preRollEnabled) {
+                        (rawLoopStartMs - PracticeLoopEngine.PRE_ROLL_LEAD_MS).coerceAtLeast(0L)
+                    } else {
+                        rawLoopStartMs
+                    }
                     targetItem.isVideo && targetItem.lastPositionMs in 2_000L..(targetItem.durationMs - 3_000L).coerceAtLeast(2_000L) ->
                         targetItem.lastPositionMs
                     else -> 0L
@@ -337,7 +417,9 @@ class PlayerController(
                     videoHeight = targetItem.height,
                 )
 
-                exoPlayer.setMediaItems(exoItems, safeIdx, initialStartPosMs)
+                performInternalSeek {
+                    exoPlayer.setMediaItems(exoItems, safeIdx, initialStartPosMs)
+                }
                 exoPlayer.prepare()
 
                 loopEngine.bindTrack(
@@ -345,6 +427,7 @@ class PlayerController(
                     isVideo = targetItem.isVideo,
                     activatePracticeMode = activatePractice,
                     jumpBookmark = targetBookmark,
+                    autoTriggerInitialLoop = true,
                 )
                 syncEffectiveRepeatModeOnPlayerThread()
 
@@ -372,13 +455,19 @@ class PlayerController(
         runOnPlayerThread {
             if (metronome.isRunning) {
                 loopEngine.onUserPaused()
-                exoPlayer.pause()
+                performInternalPause {
+                    exoPlayer.pause()
+                }
             } else if (exoPlayer.isPlaying) {
                 loopEngine.onUserPaused()
-                exoPlayer.pause()
+                performInternalPause {
+                    exoPlayer.pause()
+                }
             } else {
                 if (exoPlayer.playbackState == Player.STATE_ENDED) {
-                    exoPlayer.seekTo(0L)
+                    performInternalSeek {
+                        exoPlayer.seekTo(0L)
+                    }
                 }
                 ensureMediaServiceBound()
                 exoPlayer.play()
@@ -390,7 +479,9 @@ class PlayerController(
     fun pause() {
         runOnPlayerThread {
             loopEngine.onUserPaused()
-            exoPlayer.pause()
+            performInternalPause {
+                exoPlayer.pause()
+            }
             updateSnapshotFromPlayer()
         }
     }
@@ -399,10 +490,14 @@ class PlayerController(
         runOnPlayerThread {
             metronome.cancel()
             if (exoPlayer.hasNextMediaItem()) {
-                exoPlayer.seekToNextMediaItem()
+                performInternalSeek {
+                    exoPlayer.seekToNextMediaItem()
+                }
                 exoPlayer.play()
             } else if (_snapshot.value.queue.isNotEmpty()) {
-                exoPlayer.seekTo(0, 0L)
+                performInternalSeek {
+                    exoPlayer.seekTo(0, 0L)
+                }
                 exoPlayer.play()
             }
         }
@@ -419,7 +514,9 @@ class PlayerController(
         if (index !in queue.indices) return
         runOnPlayerThread {
             metronome.cancel()
-            exoPlayer.seekTo(index, 0L)
+            performInternalSeek {
+                exoPlayer.seekTo(index, 0L)
+            }
             exoPlayer.play()
         }
     }
@@ -549,6 +646,7 @@ class PlayerController(
         positionTickerJob?.cancel()
         sleepTimerJob?.cancel()
         waveformJob?.cancel()
+        trackTransitionJob?.cancel()
         metronome.cancel()
         runOnPlayerThread {
             exoPlayer.removeListener(playerListener)
@@ -602,12 +700,7 @@ class PlayerController(
     }
 
     private fun syncEffectiveRepeatModeOnPlayerThread() {
-        val pState = loopEngine.practiceState.value
-        val abLoopOwnsRepeat = loopEngine.isPracticeModeActive.value &&
-            pState.loopEnabled &&
-            pState.activeAMs != null &&
-            pState.activeBMs != null
-        exoPlayer.repeatMode = if (abLoopOwnsRepeat) {
+        exoPlayer.repeatMode = if (loopEngine.abLoopOwnsRepeat) {
             Player.REPEAT_MODE_ONE
         } else {
             when (_snapshot.value.repeatMode) {
@@ -615,6 +708,24 @@ class PlayerController(
                 CasualRepeatMode.REPEAT_ONE -> Player.REPEAT_MODE_ONE
                 CasualRepeatMode.PLAY_ONCE -> Player.REPEAT_MODE_OFF
             }
+        }
+    }
+
+    private inline fun performInternalPause(block: () -> Unit) {
+        internalPauseDepth++
+        try {
+            block()
+        } finally {
+            internalPauseDepth--
+        }
+    }
+
+    private inline fun performInternalSeek(block: () -> Unit) {
+        internalSeekDepth++
+        try {
+            block()
+        } finally {
+            internalSeekDepth--
         }
     }
 

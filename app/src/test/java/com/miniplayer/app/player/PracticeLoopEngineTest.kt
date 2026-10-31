@@ -1,7 +1,11 @@
 package com.miniplayer.app.player
 
+import android.media.AudioFormat
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.ui.compareNaturalStrings
+import com.miniplayer.app.ui.sortMediaItems
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -27,6 +31,7 @@ class PracticeLoopEngineTest {
             metronome = metronome,
             onStatePersisted = { persistedStates += it },
         )
+        fakePort.attachedEngine = engine
     }
 
     @After
@@ -214,7 +219,138 @@ class PracticeLoopEngineTest {
         assertEquals(0, pcm.first().toInt())
     }
 
+    @Test
+    fun repeatModeOwnership_syncsOnMarkBSuspendAndClear() {
+        engine.bindTrack(
+            state = PracticeState(itemId = 15L),
+            isVideo = false,
+            activatePracticeMode = true,
+        )
+        assertFalse(fakePort.abLoopOwnsRepeatSnapshot)
+
+        fakePort.currentPositionMs = 200_000L
+        engine.markPointA()
+        assertFalse(fakePort.abLoopOwnsRepeatSnapshot)
+
+        fakePort.currentPositionMs = 238_000L
+        engine.markPointBAndLoop()
+        assertTrue(fakePort.abLoopOwnsRepeatSnapshot)
+
+        // Suspending A-B loop immediately releases REPEAT_MODE_ONE ownership inside cancelBoundaryMessage()
+        engine.toggleLoopSuspended()
+        assertFalse(fakePort.abLoopOwnsRepeatSnapshot)
+
+        // Resuming A-B loop restores REPEAT_MODE_ONE ownership inside scheduleBoundaryMessage()
+        engine.toggleLoopSuspended()
+        assertTrue(fakePort.abLoopOwnsRepeatSnapshot)
+
+        // Clearing A-B loop immediately releases REPEAT_MODE_ONE ownership inside cancelBoundaryMessage()
+        engine.clearLoop()
+        assertFalse(fakePort.abLoopOwnsRepeatSnapshot)
+    }
+
+    @Test
+    fun autoTriggerInitialLoop_appliesSavedPreRollAndCountInAndHandlesExternalSeek() {
+        engine.setClickSoundEnabled(false)
+        engine.bindTrack(
+            state = PracticeState(
+                itemId = 16L,
+                activeAMs = 12_000L,
+                activeBMs = 20_000L,
+                loopEnabled = true,
+                preRollEnabled = true,
+                countInMode = CountInMode.SEC_1,
+            ),
+            isVideo = false,
+            activatePracticeMode = true,
+            jumpBookmark = null,
+            autoTriggerInitialLoop = true,
+        )
+
+        // Pre-Roll shifts start to 12_000L - 2_000L = 10_000L and Count-In pauses + starts metronome
+        assertEquals(10_000L, fakePort.currentPositionMs)
+        assertFalse(fakePort.isPlaying)
+        assertTrue(metronome.isRunning)
+
+        // External MediaSession seek cancels active Count-In and keeps boundary armed
+        engine.onExternalSeek()
+        assertFalse(metronome.isRunning)
+        assertEquals(20_000L, fakePort.scheduledBoundaryMs)
+    }
+
+    @Test
+    fun waveformFloatDecodingAndFolderFileNameSort_workCorrectly() {
+        val floatBytes = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putFloat(0.5f)
+            putFloat(-0.5f)
+            putFloat(0.5f)
+            putFloat(-0.5f)
+        }
+        val sumSq = DoubleArray(1)
+        val count = IntArray(1)
+        val collected = WaveformExtractor.accumulatePcmRms(
+            outBuf = floatBytes,
+            offset = 0,
+            size = 16,
+            pcmEncoding = AudioFormat.ENCODING_PCM_FLOAT,
+            targetSamples = 16,
+            barIdx = 0,
+            bucketSumSq = sumSq,
+            bucketSampleCount = count,
+        )
+        assertEquals(4, collected)
+        assertEquals(1.0, sumSq[0], 0.001)
+
+        val items = listOf(
+            MediaItem(
+                itemId = 1L,
+                documentUri = "content://1",
+                rootId = 1L,
+                parentRelPath = "",
+                fileName = "10 - Outro.mp3",
+                mimeType = "audio/mpeg",
+                isVideo = false,
+                sizeBytes = 1L,
+                lastModified = 1L,
+                durationMs = 1000L,
+                title = "Alpha",
+                artist = "A",
+            ),
+            MediaItem(
+                itemId = 2L,
+                documentUri = "content://2",
+                rootId = 1L,
+                parentRelPath = "",
+                fileName = "02 - Verse.mp3",
+                mimeType = "audio/mpeg",
+                isVideo = false,
+                sizeBytes = 1L,
+                lastModified = 1L,
+                durationMs = 1000L,
+                title = "Zulu",
+                artist = "A",
+            ),
+            MediaItem(
+                itemId = 3L,
+                documentUri = "content://3",
+                rootId = 1L,
+                parentRelPath = "",
+                fileName = "01 - Intro.mp3",
+                mimeType = "audio/mpeg",
+                isVideo = false,
+                sizeBytes = 1L,
+                lastModified = 1L,
+                durationMs = 1000L,
+                title = "Mike",
+                artist = "A",
+            ),
+        )
+        val sortedNames = sortMediaItems(items, SortOrder.NAME_ASC).map { it.fileName }
+        assertEquals(listOf("01 - Intro.mp3", "02 - Verse.mp3", "10 - Outro.mp3"), sortedNames)
+    }
+
     private class FakeLoopPlayerPort(override var durationMs: Long) : LoopPlayerPort {
+        var attachedEngine: PracticeLoopEngine? = null
         override var currentPositionMs: Long = 0L
         override var isPlaying: Boolean = true
         var scheduledBoundaryMs: Long? = null
@@ -223,21 +359,25 @@ class PracticeLoopEngineTest {
         var lastSpeed: Float = 1.0f
         var lastPitch: Float = 1.0f
         var fastVideoSeekConfigured: Boolean = false
+        var abLoopOwnsRepeatSnapshot: Boolean = false
 
         override fun scheduleBoundaryMessage(positionMs: Long, onReached: () -> Unit) {
             scheduledBoundaryMs = positionMs
             boundaryCallback = onReached
+            abLoopOwnsRepeatSnapshot = attachedEngine?.abLoopOwnsRepeat == true
         }
 
         override fun cancelBoundaryMessage() {
             cancelBoundaryCount++
             scheduledBoundaryMs = null
             boundaryCallback = null
+            abLoopOwnsRepeatSnapshot = attachedEngine?.abLoopOwnsRepeat == true
         }
 
         override fun applyPlaybackParameters(speed: Float, pitch: Float) {
             lastSpeed = speed
             lastPitch = pitch
+            abLoopOwnsRepeatSnapshot = attachedEngine?.abLoopOwnsRepeat == true
         }
 
         override fun configureExactSeek() {

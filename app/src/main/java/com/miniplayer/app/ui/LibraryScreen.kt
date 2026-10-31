@@ -50,6 +50,7 @@ fun LibraryScreen(
     val searchQuery by viewModel.librarySearchQuery.collectAsState()
     val safRoots by viewModel.safRoots.collectAsState()
     val folderBrowse by viewModel.folderBrowseState.collectAsState()
+    val allMediaItems by viewModel.allMediaItems.collectAsState()
     val albums by viewModel.albums.collectAsState()
     val activeAlbum by viewModel.activeAlbum.collectAsState()
     val activeAlbumTracks by viewModel.activeAlbumTracks.collectAsState()
@@ -347,6 +348,7 @@ fun LibraryScreen(
                 LibraryView.ALBUMS -> {
                     AlbumsGridContent(
                         albums = albums,
+                        allMediaItems = allMediaItems,
                         sortOrder = currentSort,
                         searchQuery = searchQuery,
                         gridState = albumGridState,
@@ -876,6 +878,7 @@ private fun FolderBrowseView(
 @Composable
 private fun AlbumsGridContent(
     albums: List<AlbumSummary>,
+    allMediaItems: List<MediaItem>,
     sortOrder: SortOrder,
     searchQuery: String,
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
@@ -892,7 +895,7 @@ private fun AlbumsGridContent(
         return
     }
 
-    val sortedAlbums = remember(albums, sortOrder, searchQuery) {
+    val sortedAlbums = remember(albums, allMediaItems, sortOrder, searchQuery) {
         val matching = if (searchQuery.isBlank()) {
             albums
         } else {
@@ -905,7 +908,30 @@ private fun AlbumsGridContent(
         val orderedKnown = when (sortOrder) {
             SortOrder.ARTIST_ASC -> known.sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
             SortOrder.YEAR_DESC -> known.sortedByDescending { it.year ?: 0 }
-            SortOrder.DATE_MODIFIED_DESC -> known
+            SortOrder.DATE_MODIFIED_DESC -> {
+                val maxByPair = HashMap<String, Long>()
+                val maxByTitle = HashMap<String, Long>()
+                for (item in allMediaItems) {
+                    if (item.isVideo) continue
+                    val albumName = item.album?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+                    val artistName = (item.albumArtist?.takeIf { it.isNotBlank() } ?: item.artist).trim()
+                    val pairKey = "${albumName.lowercase()}|${artistName.lowercase()}"
+                    val titleKey = albumName.lowercase()
+                    val prevPair = maxByPair[pairKey] ?: 0L
+                    if (item.lastModified > prevPair) maxByPair[pairKey] = item.lastModified
+                    val prevTitle = maxByTitle[titleKey] ?: 0L
+                    if (item.lastModified > prevTitle) maxByTitle[titleKey] = item.lastModified
+                }
+                known.sortedWith(
+                    compareByDescending<AlbumSummary> { album ->
+                        val pairKey = "${album.title.trim().lowercase()}|${album.artist.trim().lowercase()}"
+                        maxByPair[pairKey]
+                            ?: maxByPair[album.albumKey.lowercase()]
+                            ?: maxByTitle[album.title.trim().lowercase()]
+                            ?: 0L
+                    }.thenComparator { a, b -> compareNaturalStrings(a.title, b.title) },
+                )
+            }
             else -> known.sortedWith { a, b -> compareNaturalStrings(a.title, b.title) }
         }
         // `未知专辑` bucket always pinned at the very end (§4.1B)
@@ -1745,7 +1771,10 @@ internal fun sortMediaItems(items: List<MediaItem>, order: SortOrder): List<Medi
     when (order) {
         SortOrder.DATE_MODIFIED_DESC -> items.sortedByDescending { it.lastModified }
         SortOrder.DURATION_DESC -> items.sortedByDescending { it.durationMs }
-        else -> items.sortedWith { a, b -> compareNaturalStrings(a.title, b.title) }
+        else -> items.sortedWith { a, b ->
+            val cmp = compareNaturalStrings(a.fileName, b.fileName)
+            if (cmp != 0) cmp else compareNaturalStrings(a.title, b.title)
+        }
     }
 
 /**

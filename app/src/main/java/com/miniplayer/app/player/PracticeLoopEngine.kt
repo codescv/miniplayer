@@ -83,6 +83,16 @@ class PracticeLoopEngine(
             }
         }
 
+    val abLoopOwnsRepeat: Boolean
+        get() {
+            val s = _practiceState.value
+            return _isPracticeModeActive.value &&
+                s.loopEnabled &&
+                s.activeAMs != null &&
+                s.activeBMs != null &&
+                s.activeBMs > s.activeAMs
+        }
+
     fun setClickSoundEnabled(enabled: Boolean) {
         clickSoundEnabled = enabled
     }
@@ -96,9 +106,9 @@ class PracticeLoopEngine(
         isVideo: Boolean,
         activatePracticeMode: Boolean,
         jumpBookmark: PracticeBookmark? = null,
+        autoTriggerInitialLoop: Boolean = false,
     ) {
         metronome.cancel()
-        port.cancelBoundaryMessage()
         metronome.resetTapHistory()
         pendingLoopSeekStartElapsedMs = null
         lastPrevTapElapsedMs = null
@@ -127,6 +137,12 @@ class PracticeLoopEngine(
 
         if (jumpBookmark != null && activatePracticeMode) {
             onStatePersisted(effectiveState)
+        }
+        val hasActiveLoop = effectiveState.loopEnabled &&
+            effectiveState.activeAMs != null &&
+            effectiveState.activeBMs != null &&
+            effectiveState.activeBMs > effectiveState.activeAMs
+        if (activatePracticeMode && hasActiveLoop && (jumpBookmark != null || autoTriggerInitialLoop)) {
             triggerJumpToA(autoPlay = true)
         }
     }
@@ -149,7 +165,6 @@ class PracticeLoopEngine(
 
     fun markPointA(atMs: Long = port.currentPositionMs) {
         metronome.cancel()
-        port.cancelBoundaryMessage()
         _activeBookmarkId.value = null
         val safeA = atMs.coerceAtLeast(0L)
         updatePracticeState {
@@ -159,6 +174,7 @@ class PracticeLoopEngine(
                 loopEnabled = false,
             )
         }
+        syncLoopBoundaryMessage()
     }
 
     fun markPointBAndLoop(atMs: Long = port.currentPositionMs) {
@@ -166,7 +182,6 @@ class PracticeLoopEngine(
         val rawA = current.activeAMs ?: 0L
         val normalized = PracticeMath.normalizeLoopPoints(rawA, atMs, port.durationMs) ?: return
         metronome.cancel()
-        port.cancelBoundaryMessage()
         _activeBookmarkId.value = null
         _completedLoopCount.value = 0
         _speedTrainer.update { it.copy(currentLoopInStep = 0) }
@@ -184,7 +199,6 @@ class PracticeLoopEngine(
     fun setLoopPointsFromDrag(aMs: Long, bMs: Long, commitPersist: Boolean) {
         val normalized = PracticeMath.normalizeLoopPoints(aMs, bMs, port.durationMs) ?: return
         metronome.cancel()
-        port.cancelBoundaryMessage()
         _activeBookmarkId.value = null
         val next = _practiceState.value.copy(
             activeAMs = normalized.first,
@@ -198,6 +212,8 @@ class PracticeLoopEngine(
             if (port.currentPositionMs >= normalized.second && _isPracticeModeActive.value) {
                 triggerJumpToA(autoPlay = port.isPlaying)
             }
+        } else {
+            port.cancelBoundaryMessage()
         }
     }
 
@@ -226,7 +242,6 @@ class PracticeLoopEngine(
         if (nextB == bMs) return
 
         metronome.cancel()
-        port.cancelBoundaryMessage()
         _activeBookmarkId.value = null
         updatePracticeState { it.copy(activeBMs = nextB) }
         syncLoopBoundaryMessage()
@@ -242,7 +257,6 @@ class PracticeLoopEngine(
         if (current.activeAMs == null || current.activeBMs == null) return
         val nextEnabled = !current.loopEnabled
         metronome.cancel()
-        port.cancelBoundaryMessage()
         _speedTrainer.update { it.copy(currentLoopInStep = 0) }
         updatePracticeState { it.copy(loopEnabled = nextEnabled) }
         syncLoopBoundaryMessage()
@@ -256,7 +270,6 @@ class PracticeLoopEngine(
 
     fun clearLoop() {
         metronome.cancel()
-        port.cancelBoundaryMessage()
         _activeBookmarkId.value = null
         _completedLoopCount.value = 0
         _speedTrainer.update { it.copy(enabled = false, currentLoopInStep = 0) }
@@ -267,6 +280,7 @@ class PracticeLoopEngine(
                 loopEnabled = false,
             )
         }
+        syncLoopBoundaryMessage()
     }
 
     fun restartFromA() {
@@ -452,6 +466,12 @@ class PracticeLoopEngine(
         metronome.cancel()
         pendingLoopSeekStartElapsedMs = null
         port.seekToPosition(targetMs.coerceAtLeast(0L))
+        syncLoopBoundaryMessage()
+    }
+
+    fun onExternalSeek() {
+        metronome.cancel()
+        pendingLoopSeekStartElapsedMs = null
         syncLoopBoundaryMessage()
     }
 

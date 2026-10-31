@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.miniplayer.app.core.model.*
+import com.miniplayer.app.ui.components.ArtworkLoader
 import com.miniplayer.app.ui.components.MediaArtwork
 import com.miniplayer.app.ui.theme.AlbumPaletteExtractor
 import com.miniplayer.app.ui.theme.rememberAnimatedColorScheme
@@ -78,12 +79,33 @@ fun NowPlayingSheet(
     var showSleepTimerSheet by remember { mutableStateOf(false) }
     var showFileDetailsDialog by remember { mutableStateOf(false) }
     var forcedLandscape by remember { mutableStateOf(false) }
+    val pendingOrientationResetRunnable = remember { mutableStateOf<Runnable?>(null) }
 
-    // Scoped Album Tonal Palette with 350ms smooth animated transition (§3.1)
+    fun cancelPendingOrientationReset() {
+        val pending = pendingOrientationResetRunnable.value
+        if (pending != null) {
+            activity?.window?.decorView?.removeCallbacks(pending)
+            pendingOrientationResetRunnable.value = null
+        }
+    }
+
+    // Scoped Album / Video Keyframe Tonal Palette with 350ms smooth animated transition (§3.1)
     val darkTheme = isSystemInDarkTheme()
     val fallbackScheme = MaterialTheme.colorScheme
     var seedColorArgb by remember(item.itemId) { mutableStateOf<Int?>(null) }
     var loadedCoverBitmap by remember(item.itemId) { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(item.itemId, item.coverPathOrUri, item.documentUri, item.isVideo) {
+        if (item.isVideo) {
+            loadedCoverBitmap = ArtworkLoader.loadBitmap(
+                context = context,
+                coverPathOrUri = item.coverPathOrUri,
+                mediaDocumentUri = item.documentUri,
+                isVideo = true,
+                maxDimensionPx = 256,
+            )
+        }
+    }
 
     LaunchedEffect(loadedCoverBitmap) {
         val bmp = loadedCoverBitmap
@@ -106,6 +128,7 @@ fun NowPlayingSheet(
 
     DisposableEffect(Unit) {
         onDispose {
+            cancelPendingOrientationReset()
             if (forcedLandscape) {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
@@ -114,6 +137,7 @@ fun NowPlayingSheet(
 
     // Predictive Back: exit forced landscape or close NowPlayingSheet instead of exiting app (§3.1 #4)
     BackHandler {
+        cancelPendingOrientationReset()
         if (forcedLandscape) {
             forcedLandscape = false
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -136,6 +160,7 @@ fun NowPlayingSheet(
                 waveformBars = waveformBars,
                 countInProgress = countInProgress,
                 onBack = {
+                    cancelPendingOrientationReset()
                     if (forcedLandscape) {
                         forcedLandscape = false
                         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -146,11 +171,15 @@ fun NowPlayingSheet(
                 onTogglePracticeMode = { playerController.togglePracticeMode() },
                 onOpenSleepTimer = { showSleepTimerSheet = true },
                 onExitFullscreenOrientation = {
+                    cancelPendingOrientationReset()
                     forcedLandscape = false
                     activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    activity?.window?.decorView?.postDelayed({
-                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                    }, 1500L)
+                    val resetRunnable = Runnable {
+                        pendingOrientationResetRunnable.value = null
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
+                    pendingOrientationResetRunnable.value = resetRunnable
+                    activity?.window?.decorView?.postDelayed(resetRunnable, 1500L)
                 },
                 onSaveQuickBookmark = { label ->
                     val a = practiceState.activeAMs
@@ -194,6 +223,7 @@ fun NowPlayingSheet(
                         onTogglePracticeMode = { playerController.togglePracticeMode() },
                         onToggleVideoMirror = { loopEngine.toggleVideoMirror() },
                         onEnterLandscapeVideo = {
+                            cancelPendingOrientationReset()
                             forcedLandscape = true
                             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                         },
@@ -403,9 +433,10 @@ fun NowPlayingSheet(
                                     onClick = { playerController.togglePlayPause() },
                                     modifier = Modifier.size(68.dp),
                                 ) {
+                                    val showPause = snapshot.isPlaying || countInProgress != null
                                     Icon(
-                                        imageVector = if (snapshot.isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                        contentDescription = if (snapshot.isPlaying) "暂停" else "播放",
+                                        imageVector = if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                        contentDescription = if (showPause) "暂停" else "播放",
                                         modifier = Modifier.size(34.dp),
                                     )
                                 }
@@ -605,9 +636,10 @@ fun NowPlayingSheet(
                                     onClick = { playerController.togglePlayPause() },
                                     modifier = Modifier.size(64.dp),
                                 ) {
+                                    val showPause = snapshot.isPlaying || countInProgress != null
                                     Icon(
-                                        imageVector = if (snapshot.isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                        contentDescription = if (snapshot.isPlaying) "暂停" else "播放",
+                                        imageVector = if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                        contentDescription = if (showPause) "暂停" else "播放",
                                         modifier = Modifier.size(32.dp),
                                     )
                                 }

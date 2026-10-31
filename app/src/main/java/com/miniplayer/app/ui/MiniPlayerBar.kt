@@ -28,6 +28,7 @@ fun MiniPlayerBar(
     onExpand: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
+    isCountingIn: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val item = snapshot.currentItem ?: return
@@ -114,9 +115,10 @@ fun MiniPlayerBar(
                     onClick = onTogglePlayPause,
                     modifier = Modifier.size(48.dp),
                 ) {
+                    val showPause = snapshot.isPlaying || isCountingIn
                     Icon(
-                        imageVector = if (snapshot.isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                        contentDescription = if (snapshot.isPlaying) "暂停" else "播放",
+                        imageVector = if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                        contentDescription = if (showPause) "暂停" else "播放",
                     )
                 }
                 IconButton(
