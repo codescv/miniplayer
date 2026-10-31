@@ -1,14 +1,38 @@
-# MiniPlayer v1.0.7 — Verification, Security Audit & Release Report
+# MiniPlayer v1.0.8 — Verification, Security Audit & Release Report
 
-**Version:** `1.0.7` (`versionCode = 10007`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
+**Version:** `1.0.8` (`versionCode = 10008`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch Verified (`v1.0.7`):** `wt/tester-9` (stacked on `wt/coder-9` @ `d367cb6`; `71/71` unit tests, `lintDebug` 0 errors, release-signed APK)  
-**Release APK (`v1.0.7`):** `MiniPlayer-v1.0.7.apk` — `14,274,563` bytes, SHA-256 `5bd30fbac643f5741ac920380e2a6b0f9bf025902f92fa7fa6d01a594505d4f2`  
+**Branch Verified (`v1.0.8`):** `wt/coder-10` (stacked on `v1.0.7` @ `a926ce3`; `71/71` unit tests, debug APK built offline)  
+**Previous Release APK (`v1.0.7`):** `MiniPlayer-v1.0.7.apk` — `14,274,563` bytes, SHA-256 `5bd30fbac643f5741ac920380e2a6b0f9bf025902f92fa7fa6d01a594505d4f2`  
 **Previous Release APK (`v1.0.6`):** `MiniPlayer-v1.0.6.apk` — `14,295,186` bytes, SHA-256 `5a30f654c1767f66880ccd854d6d32f8e6b65812002905b08dbcf569fe390e52`
 
 ---
 
-## 1. Build, Lint & APK Verification (`v1.0.7`)
+## 0. `v1.0.8` Build & Launcher-Icon Resource Verification
+
+Run on `wt/coder-10` with `ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`, **100% offline**.
+
+| Check | Details / Result | Status |
+|---|---|---|
+| **Offline Verification Command (`v1.0.8`)** | `./gradlew --offline testDebugUnitTest assembleDebug` — `BUILD SUCCESSFUL in 58s`, `43` actionable tasks (`34` executed, `9` from cache) | **PASS** |
+| **Unit & Cross-Module Integration Tests** | `app/build/test-results/testDebugUnitTest/*.xml`: **`71/71`** tests, `0` failures, `0` errors (unchanged from `v1.0.7`; no Kotlin sources touched) | **PASS** |
+| **Debug APK (`v1.0.8`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,437,645` bytes); `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10008' versionName='1.0.8-DEBUG'`, `compileSdkVersion='35'`, `platformBuildVersionCode='35'` | **PASS** |
+| **`values-night` Launcher Palette Restored** | `aapt2 dump resources` shows every launcher color with **both** `()` and `(night)` configs: `ic_launcher_background` `#fff8fafc` / `#ff282a30`, `ic_launcher_bg_top` `#ffffffff` / `#ff363940`, `ic_launcher_bg_mid` `#fff8fafc` / `#ff282a30`, `ic_launcher_bg_bottom` `#fff1f5f9` / `#ff1e2025`, `ic_launcher_bg_glow_start` `#00ffffff` / `#1affffff`, `ic_launcher_bg_glow_mid` `#00ffffff` / `#09ffffff`, `ic_launcher_pick` `#fff97316` / `#fffb923c`, `ic_launcher_play` `#ffffffff` / `#fffffbeb` | **PASS** |
+| **Two-Layer Frosted Charcoal Gradient Plate** | `aapt2 dump xmltree res/drawable/ic_launcher_background.xml`: `<vector>` `108dp × 108dp`, two `<path pathData="M0,0h108v108h-108z">` whose `fillColor` reference AAPT-inlined gradients `drawable/$ic_launcher_background__0` (`type = 0` linear, `startX = 54`, `startY = 16`, `endX = 54`, `endY = 92`; stops `@color/ic_launcher_bg_top` `0.0`, `@color/ic_launcher_bg_mid` `0.48`, `@color/ic_launcher_bg_bottom` `1.0`) and `drawable/$ic_launcher_background__1` (`type = 1` radial, `centerX = 48`, `centerY = 32`, `gradientRadius = 46`; stops `@color/ic_launcher_bg_glow_start` `0.0`, `@color/ic_launcher_bg_glow_mid` `0.55`, `#00ffffff` `1.0`) | **PASS** |
+| **Adaptive Icon Wiring Unchanged** | `mipmap-anydpi-v26/ic_launcher.xml` / `ic_launcher_round.xml` still reference `@drawable/ic_launcher_background`, `@drawable/ic_launcher_foreground`, and `<monochrome>` `@drawable/ic_launcher_monochrome` (`evenOdd`); `ic_launcher_foreground.xml` (`0.60x` pick) untouched | **PASS** |
+
+### `v1.0.8` Requirement Verification Matrix
+
+| # | Requirement | Verified Implementation & Files | Status |
+|---:|---|---|---|
+| **1** | Light theme `1D` palette with gradient/glow stops | `app/src/main/res/values/colors.xml`: `ic_launcher_background #F8FAFC`, `ic_launcher_bg_top #FFFFFF`, `ic_launcher_bg_mid #F8FAFC`, `ic_launcher_bg_bottom #F1F5F9`, `ic_launcher_bg_glow_start #00FFFFFF`, `ic_launcher_bg_glow_mid #00FFFFFF`, `ic_launcher_pick #F97316`, `ic_launcher_play #FFFFFF` | **PASS** |
+| **2** | Dark theme frosted charcoal plate matching the ColorOS / Discord / Google Maps dark icon plate (ColorOS 15 "Dark Icon" auto-conversion only whitelists Play Store package IDs; `com.miniplayer.app` must ship `values-night`) | Restored `app/src/main/res/values-night/colors.xml`: `ic_launcher_background #282A30`, `ic_launcher_bg_top #363940`, `ic_launcher_bg_mid #282A30`, `ic_launcher_bg_bottom #1E2025`, `ic_launcher_bg_glow_start #1AFFFFFF`, `ic_launcher_bg_glow_mid #09FFFFFF`, `ic_launcher_pick #FB923C`, `ic_launcher_play #FFFBEB`; `(night)` configs confirmed in compiled APK | **PASS** |
+| **3** | `ic_launcher_background.xml` two-layer `aapt:attr` gradient vector (vertical linear `[18, 90]` plate + soft radial frosted-glass glow) | `app/src/main/res/drawable/ic_launcher_background.xml` with `xmlns:aapt`; layer 1 linear `54,16 → 54,92` (`0.0` / `0.48` / `1.0`), layer 2 radial `center (48, 32)`, `r = 46` (`0.0` / `0.55` / `1.0 #00FFFFFF`); confirmed via `aapt2 dump xmltree` on `$ic_launcher_background__0` / `__1` | **PASS** |
+| **4** | Version bump (`v1.0.8` / `10008`) & documentation update | `app/build.gradle.kts` (`versionCode = 10008`, `versionName = "1.0.8"`); `README.md`, `DESIGN.md`, `ARCHITECTURE.md`, and `TEST_REPORT.md` updated to `v1.0.8` (`10008`) | **PASS** |
+
+---
+
+## 1. Build, Lint & APK Verification (`v1.0.7`, previous release)
 
 All Android builds and pure-JVM unit/integration tests succeeded **100% offline** (`--offline`) with zero errors.
 
@@ -30,7 +54,7 @@ All Android builds and pure-JVM unit/integration tests succeeded **100% offline*
 
 ---
 
-## 2. `v1.0.7` Requirement Verification Matrix
+## 2. `v1.0.7` Requirement Verification Matrix (previous)
 
 | # | Requirement | Verified Implementation & Files | Status |
 |---:|---|---|---|

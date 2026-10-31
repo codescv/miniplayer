@@ -39,6 +39,12 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 ---
 
+## What's New in `v1.0.8` (`versionCode = 10008`)
+
+1. **Self-Drawn Frosted Charcoal Dark Icon Plate (`values/colors.xml`, restored `values-night/colors.xml`, `ic_launcher_background.xml`)**: Real-device testing on a OnePlus 13T (ColorOS 15) showed that the launcher's built-in "暗色图标" (Dark Icon) auto-conversion only applies to whitelisted Play Store package IDs such as Google Maps and Discord; a custom `applicationId` (`com.miniplayer.app`) gets no substitution, so after `v1.0.7` dropped `values-night` the icon stayed on its light `#FFFFFF` plate in Dark Mode. `v1.0.8` brings back `res/values-night/colors.xml` and reproduces the ColorOS / Discord / Google Maps frosted dark charcoal plate ourselves: `ic_launcher_background.xml` is now a two-layer `<vector>` (`xmlns:aapt`) — a vertical linear gradient across the visible `[18, 90]` circle (`startX/endX = 54`, `startY = 16`, `endY = 92`; stops `@color/ic_launcher_bg_top` `0.0` / `@color/ic_launcher_bg_mid` `0.48` / `@color/ic_launcher_bg_bottom` `1.0`) plus a soft radial frosted-glass diffusion glow (`centerX = 48`, `centerY = 32`, `gradientRadius = 46`; stops `@color/ic_launcher_bg_glow_start` `0.0` / `@color/ic_launcher_bg_glow_mid` `0.55` / `#00FFFFFF` `1.0`). **Light `1D`** (`values/colors.xml`): `ic_launcher_background #F8FAFC`, `bg_top #FFFFFF`, `bg_mid #F8FAFC`, `bg_bottom #F1F5F9`, glow fully transparent (`#00FFFFFF` / `#00FFFFFF`), pick `#F97316`, play `#FFFFFF`. **Dark Frosted Charcoal** (`values-night/colors.xml`): `ic_launcher_background #282A30`, `bg_top #363940`, `bg_mid #282A30`, `bg_bottom #1E2025`, glow `#1AFFFFFF` → `#09FFFFFF`, pick `#FB923C`, play `#FFFBEB`. The system switches palettes automatically with the Dark theme.
+
+---
+
 ## What's New in `v1.0.7` (`versionCode = 10007`)
 
 1. **System Frosted/Blurred Dark Icon Plate on ColorOS 15 / OxygenOS 15, Same as Google Maps & Discord (`values/colors.xml`, removed `values-night/colors.xml`)**: Deleted the `values-night` launcher palette and set the light `<background>` to pure **`#FFFFFF`** (matching Google Maps). On ColorOS 15 / OxygenOS 15 "暗色图标" (Dark Icons) launchers, the system detects a bright/colored adaptive-icon `<background>` and replaces it with its own semi-translucent frosted/blurred dark glass plate — exactly what Google Maps and Discord get. When `values-night/colors.xml` supplied a pre-darkened solid `#0F172A`, the launcher skipped that replacement and drew a flat dark circle instead. The `#F97316` pick and `#FFFFFF` play triangle are now the same in both light and dark system themes.
@@ -106,7 +112,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.7.apk` | Signed Android Release APK (`versionCode = 10007`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.8.apk` | Signed Android Release APK (`versionCode = 10008`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `app-release.apk` | Identical signed Android Release APK artifact |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -135,6 +141,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.6` `Play` `38.4dp × 37.8dp` circular-mask adaptive icon, and `v1.0.7` system frosted dark icon plate / `evenOdd` monochrome cutout / Charcoal Dark surfaces)
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.6` `Play` `38.4dp × 37.8dp` circular-mask adaptive icon, `v1.0.7` `evenOdd` monochrome cutout / Charcoal Dark surfaces, and `v1.0.8` self-drawn frosted charcoal dark icon plate with restored `values-night`)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 2`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`BpmDetector` specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`71/71` tests), Lint, and `v1.0.7` verification report
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`71/71` tests), Lint, and `v1.0.8` verification report
