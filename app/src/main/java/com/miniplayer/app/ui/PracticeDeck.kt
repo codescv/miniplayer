@@ -7,12 +7,9 @@ package com.miniplayer.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -32,10 +29,15 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.miniplayer.app.core.model.*
@@ -44,11 +46,10 @@ import com.miniplayer.app.player.PracticeLoopEngine
 import com.miniplayer.app.ui.theme.tnum
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 
 /**
- * `44dp` RMS Waveform + Precision A-B Loop Ruler with `48×48dp` bottom waterdrop drag handles
- * (`DESIGN.md` §5.2 #1) so dragging `A` or `B` never occludes the waveform or millisecond readout.
+ * `44dp` RMS Waveform + Precision A-B Loop Ruler with prominent labeled `A` / `B` pill drag handles
+ * below the waveform so dragging `A` or `B` never occludes the waveform or millisecond readout.
  */
 @Composable
 fun WaveformLoopRuler(
@@ -64,9 +65,22 @@ fun WaveformLoopRuler(
 ) {
     val safeDuration = durationMs.coerceAtLeast(1L)
     var widthPx by remember { mutableFloatStateOf(1f) }
-    var draggingHandle by remember { mutableStateOf<Char?>(null) } // 'A' or 'B'
-    var dragTempAMs by remember(activeAMs) { mutableLongStateOf(activeAMs ?: 0L) }
-    var dragTempBMs by remember(activeBMs) { mutableLongStateOf(activeBMs ?: safeDuration) }
+    var draggingHandle by remember { mutableStateOf<String?>(null) } // "A" or "B"
+    var dragTempAMs by remember { mutableLongStateOf(activeAMs ?: 0L) }
+    var dragTempBMs by remember { mutableLongStateOf(activeBMs ?: safeDuration) }
+    var dragGrabOffsetPx by remember { mutableFloatStateOf(0f) }
+
+    val currentActiveAMs by rememberUpdatedState(activeAMs)
+    val currentActiveBMs by rememberUpdatedState(activeBMs)
+    val currentOnDragLoopPoints by rememberUpdatedState(onDragLoopPoints)
+    val currentOnSeek by rememberUpdatedState(onSeek)
+
+    LaunchedEffect(activeAMs, activeBMs, draggingHandle) {
+        if (draggingHandle == null) {
+            if (activeAMs != null) dragTempAMs = activeAMs
+            if (activeBMs != null) dragTempBMs = activeBMs
+        }
+    }
 
     val shownAMs = if (draggingHandle != null && activeAMs != null) dragTempAMs else activeAMs
     val shownBMs = if (draggingHandle != null && activeBMs != null) dragTempBMs else activeBMs
@@ -83,6 +97,18 @@ fun WaveformLoopRuler(
     } else {
         MaterialTheme.colorScheme.outline
     }
+    val handleLabelColor = if (loopEnabled) {
+        MaterialTheme.colorScheme.onTertiary
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val textMeasurer = rememberTextMeasurer()
+    val handleTextStyle = MaterialTheme.typography.labelSmall.copy(
+        fontSize = 11.sp,
+        lineHeight = 11.sp,
+        fontWeight = FontWeight.Bold,
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+    )
 
     Column(modifier = modifier.fillMaxWidth()) {
         // Coordinate & Timestamp Readout Row (`tnum`)
@@ -122,9 +148,9 @@ fun WaveformLoopRuler(
 
         Spacer(Modifier.height(4.dp))
 
-        // 44dp Waveform + 28dp Waterdrop Handle Gutter (total interactive height 72dp, handles >= 48x48dp hit zone)
-        val hasBothPoints = shownAMs != null && shownBMs != null
-        val canvasHeight = if (hasBothPoints) 70.dp else 48.dp
+        // 44dp Waveform + 32dp Pill Handle Gutter when A/B markers are present
+        val hasAnyPoint = shownAMs != null
+        val canvasHeight = if (hasAnyPoint) 76.dp else 48.dp
 
         Canvas(
             modifier = Modifier
@@ -134,67 +160,87 @@ fun WaveformLoopRuler(
                 .semantics {
                     contentDescription = "音频波形与 A-B 循环标尺，当前播放位置 ${PracticeMath.formatTimeMs(positionMs, true)}"
                 }
-                .pointerInput(safeDuration, activeAMs, activeBMs) {
+                .pointerInput(safeDuration) {
                     detectTapGestures { offset ->
                         val frac = (offset.x / widthPx).coerceIn(0f, 1f)
-                        onSeek((frac * safeDuration).toLong())
+                        currentOnSeek((frac * safeDuration).toLong())
                     }
                 }
-                .pointerInput(safeDuration, activeAMs, activeBMs) {
+                .pointerInput(safeDuration) {
                     detectHorizontalDragGestures(
                         onDragStart = { startOffset ->
-                            val a = activeAMs
-                            val b = activeBMs
-                            if (a != null && b != null) {
-                                val aX = (a.toFloat() / safeDuration) * widthPx
-                                val bX = (b.toFloat() / safeDuration) * widthPx
-                                val hitRadius = 32.dp.toPx()
+                            val aMs = currentActiveAMs
+                            val bMs = currentActiveBMs
+                            if (aMs != null && bMs != null) {
+                                val aX = (aMs.toFloat() / safeDuration) * widthPx
+                                val bX = (bMs.toFloat() / safeDuration) * widthPx
+                                val hitRadius = 44.dp.toPx()
                                 val distA = abs(startOffset.x - aX)
                                 val distB = abs(startOffset.x - bX)
-                                draggingHandle = when {
-                                    distA <= hitRadius && distA <= distB -> 'A'
-                                    distB <= hitRadius -> 'B'
+                                val chosen = when {
+                                    distA <= hitRadius && distB <= hitRadius -> {
+                                        if (abs(aX - bX) < 28.dp.toPx()) {
+                                            if (startOffset.x < (aX + bX) / 2f) "A" else "B"
+                                        } else {
+                                            if (distA <= distB) "A" else "B"
+                                        }
+                                    }
+                                    distA <= hitRadius -> "A"
+                                    distB <= hitRadius -> "B"
                                     else -> null
                                 }
-                                dragTempAMs = a
-                                dragTempBMs = b
+                                draggingHandle = chosen
+                                if (chosen != null) {
+                                    dragTempAMs = aMs
+                                    dragTempBMs = bMs
+                                    val chosenHandleX = if (chosen == "A") aX else bX
+                                    dragGrabOffsetPx = startOffset.x - chosenHandleX
+                                }
                             } else {
                                 draggingHandle = null
                             }
                         },
-                        onHorizontalDrag = { change, dragAmount ->
+                        onHorizontalDrag = { change, _ ->
                             val handle = draggingHandle
                             if (handle != null) {
                                 change.consume()
-                                val deltaMs = ((dragAmount / widthPx) * safeDuration).toLong()
-                                if (handle == 'A') {
-                                    dragTempAMs = (dragTempAMs + deltaMs)
-                                        .coerceIn(0L, (dragTempBMs - PracticeMath.MIN_LOOP_SPAN_MS).coerceAtLeast(0L))
-                                } else {
-                                    dragTempBMs = (dragTempBMs + deltaMs)
-                                        .coerceIn((dragTempAMs + PracticeMath.MIN_LOOP_SPAN_MS).coerceAtMost(safeDuration), safeDuration)
+                                val targetX = (change.position.x - dragGrabOffsetPx).coerceIn(0f, widthPx)
+                                val fingerMs = ((targetX / widthPx) * safeDuration).toLong()
+                                if (handle == "A") {
+                                    dragTempAMs = fingerMs.coerceIn(
+                                        0L,
+                                        (dragTempBMs - PracticeMath.MIN_LOOP_SPAN_MS).coerceAtLeast(0L),
+                                    )
+                                } else if (handle == "B") {
+                                    dragTempBMs = fingerMs.coerceIn(
+                                        (dragTempAMs + PracticeMath.MIN_LOOP_SPAN_MS).coerceAtMost(safeDuration),
+                                        safeDuration,
+                                    )
                                 }
-                                onDragLoopPoints(dragTempAMs, dragTempBMs, false)
+                                currentOnDragLoopPoints(dragTempAMs, dragTempBMs, false)
                             } else {
                                 change.consume()
                                 val frac = (change.position.x / widthPx).coerceIn(0f, 1f)
-                                onSeek((frac * safeDuration).toLong())
+                                currentOnSeek((frac * safeDuration).toLong())
                             }
                         },
                         onDragEnd = {
                             if (draggingHandle != null) {
-                                onDragLoopPoints(dragTempAMs, dragTempBMs, true)
+                                currentOnDragLoopPoints(dragTempAMs, dragTempBMs, true)
+                                draggingHandle = null
                             }
-                            draggingHandle = null
                         },
                         onDragCancel = {
-                            draggingHandle = null
+                            if (draggingHandle != null) {
+                                currentOnDragLoopPoints(dragTempAMs, dragTempBMs, true)
+                                draggingHandle = null
+                            }
                         },
                     )
                 },
         ) {
             val waveHeight = 44.dp.toPx()
-            val w = size.width
+            val w = size.width.coerceAtLeast(1f)
             val playFrac = (positionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
             val playX = playFrac * w
 
@@ -245,35 +291,111 @@ fun WaveformLoopRuler(
                 strokeWidth = 2.5.dp.toPx(),
             )
 
-            // 4. A & B vertical boundary lines + bottom waterdrop handles (`48x48dp` interactive zone)
-            fun drawWaterdropMarker(markerMs: Long) {
-                val x = ((markerMs.toFloat() / safeDuration) * w).coerceIn(8.dp.toPx(), w - 8.dp.toPx())
+            // 4. A & B vertical boundary lines + large rounded pill handles with "A" / "B" tags
+            val pillW = 26.dp.toPx()
+            val pillH = 22.dp.toPx()
+            val pillHalfW = pillW / 2f
+            val pillTopY = waveHeight + 8.dp.toPx()
+
+            fun drawHandlePill(
+                lineX: Float,
+                thumbCenterX: Float,
+                label: String,
+                isDragging: Boolean,
+            ) {
                 drawLine(
                     color = loopEdgeColor,
-                    start = Offset(x, 0f),
-                    end = Offset(x, waveHeight + 6.dp.toPx()),
-                    strokeWidth = 2.5.dp.toPx(),
+                    start = Offset(lineX, 0f),
+                    end = Offset(lineX, waveHeight + 4.dp.toPx()),
+                    strokeWidth = if (isDragging) 3.dp.toPx() else 2.5.dp.toPx(),
                 )
-                if (hasBothPoints) {
-                    val dropRadius = 9.dp.toPx()
-                    val dropCenterY = waveHeight + 15.dp.toPx()
-                    val path = Path().apply {
-                        moveTo(x, waveHeight + 2.dp.toPx())
-                        lineTo(x - dropRadius, dropCenterY)
-                        lineTo(x + dropRadius, dropCenterY)
-                        close()
-                    }
-                    drawPath(path, color = loopEdgeColor)
-                    drawCircle(
-                        color = loopEdgeColor,
-                        radius = dropRadius,
-                        center = Offset(x, dropCenterY),
+                val pointerPath = Path().apply {
+                    moveTo(lineX, waveHeight + 1.dp.toPx())
+                    lineTo(thumbCenterX - 5.dp.toPx(), pillTopY + 2.dp.toPx())
+                    lineTo(thumbCenterX + 5.dp.toPx(), pillTopY + 2.dp.toPx())
+                    close()
+                }
+                drawPath(pointerPath, color = loopEdgeColor)
+
+                if (isDragging) {
+                    drawRoundRect(
+                        color = loopEdgeColor.copy(alpha = 0.28f),
+                        topLeft = Offset(thumbCenterX - pillHalfW - 3.dp.toPx(), pillTopY - 3.dp.toPx()),
+                        size = Size(pillW + 6.dp.toPx(), pillH + 6.dp.toPx()),
+                        cornerRadius = CornerRadius((pillH + 6.dp.toPx()) / 2f, (pillH + 6.dp.toPx()) / 2f),
                     )
                 }
+
+                drawRoundRect(
+                    color = loopEdgeColor,
+                    topLeft = Offset(thumbCenterX - pillHalfW, pillTopY),
+                    size = Size(pillW, pillH),
+                    cornerRadius = CornerRadius(pillH / 2f, pillH / 2f),
+                )
+
+                val measured = textMeasurer.measure(
+                    text = label,
+                    style = handleTextStyle.copy(color = handleLabelColor),
+                )
+                drawText(
+                    textLayoutResult = measured,
+                    topLeft = Offset(
+                        x = thumbCenterX - measured.size.width / 2f,
+                        y = pillTopY + (pillH - measured.size.height) / 2f,
+                    ),
+                )
             }
 
-            if (shownAMs != null) drawWaterdropMarker(shownAMs)
-            if (shownBMs != null) drawWaterdropMarker(shownBMs)
+            if (shownAMs != null && shownBMs != null) {
+                val aLineX = ((shownAMs.toFloat() / safeDuration) * w)
+                    .coerceIn(1.dp.toPx(), (w - 1.dp.toPx()).coerceAtLeast(1.dp.toPx()))
+                val bLineX = ((shownBMs.toFloat() / safeDuration) * w)
+                    .coerceIn(1.dp.toPx(), (w - 1.dp.toPx()).coerceAtLeast(1.dp.toPx()))
+
+                val minThumbSeparation = pillW + 3.dp.toPx()
+                var aThumbX = aLineX
+                var bThumbX = bLineX
+                if (bThumbX - aThumbX < minThumbSeparation && w >= minThumbSeparation + pillW) {
+                    val mid = (aLineX + bLineX) / 2f
+                    aThumbX = mid - minThumbSeparation / 2f
+                    bThumbX = mid + minThumbSeparation / 2f
+                }
+                if (aThumbX < pillHalfW) {
+                    aThumbX = pillHalfW
+                    if (bThumbX - aThumbX < minThumbSeparation) {
+                        bThumbX = (aThumbX + minThumbSeparation).coerceAtMost((w - pillHalfW).coerceAtLeast(pillHalfW))
+                    }
+                }
+                if (bThumbX > w - pillHalfW) {
+                    bThumbX = (w - pillHalfW).coerceAtLeast(pillHalfW)
+                    if (bThumbX - aThumbX < minThumbSeparation) {
+                        aThumbX = (bThumbX - minThumbSeparation).coerceAtLeast(pillHalfW)
+                    }
+                }
+
+                drawHandlePill(
+                    lineX = aLineX,
+                    thumbCenterX = aThumbX,
+                    label = "A",
+                    isDragging = draggingHandle == "A",
+                )
+                drawHandlePill(
+                    lineX = bLineX,
+                    thumbCenterX = bThumbX,
+                    label = "B",
+                    isDragging = draggingHandle == "B",
+                )
+            } else if (shownAMs != null) {
+                val aLineX = ((shownAMs.toFloat() / safeDuration) * w)
+                    .coerceIn(1.dp.toPx(), (w - 1.dp.toPx()).coerceAtLeast(1.dp.toPx()))
+                val aThumbX = aLineX.coerceIn(pillHalfW, (w - pillHalfW).coerceAtLeast(pillHalfW))
+                drawHandlePill(
+                    lineX = aLineX,
+                    thumbCenterX = aThumbX,
+                    label = "A",
+                    isDragging = false,
+                )
+            }
         }
     }
 }
@@ -491,8 +613,8 @@ private enum class ExpandedDeckDrawer {
 
 /**
  * Compact 2-Row `练习工作台 (Practice Deck)` (`surfaceContainer`, `24dp` corners):
- * - Row 1: A-B Loop controls (`A`, `B`, `A -` / `+ A`, `B -` / `+ B`, Replay, Loop toggle, Clear) + Save Bookmark icon button.
- * - Row 2: `[-5%] [1.00x] [+5%]` speed stepper + icon-only toggles (Pitch Shift, Count-In, Keep Screen On, and Video Mirror when playing video).
+ * - Row 1: Unified A-B Loop strip (`[A]`, `[B]`, Loop toggle, Clear loop, Save Bookmark).
+ * - Row 2: `[-5%] [1.00x] [+5%]` speed stepper + Pitch Shift, Count-In, BPM drawer chip, `常亮` pill, and Video Mirror.
  */
 @Composable
 fun PracticeDeck(
@@ -501,12 +623,18 @@ fun PracticeDeck(
     currentPositionMs: Long,
     keepScreenOn: Boolean = true,
     isVideo: Boolean = false,
+    detectedBpm: Int? = null,
+    isDetectingBpm: Boolean = false,
+    onAutoDetectBpm: () -> Unit = {},
     onToggleKeepScreenOn: () -> Unit = {},
     onSaveNewBookmark: (label: String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var expandedDrawer by remember { mutableStateOf(ExpandedDeckDrawer.NONE) }
+    var showBpmDrawer by remember { mutableStateOf(false) }
     var showPresetSaveSheet by remember { mutableStateOf(false) }
+
+    val bpmBarVisible = practiceState.countInMode == CountInMode.BEAT_4 || showBpmDrawer
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -519,368 +647,70 @@ fun PracticeDeck(
                 .padding(horizontal = 10.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // === Row 1: A-B Loop & Save Bookmark ===
-            when (loopEngine.abUiState) {
-                AbLoopUiState.IDLE -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Button(
-                            onClick = { loopEngine.markPointA(currentPositionMs) },
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp),
-                        ) {
-                            Text(
-                                text = "A",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                        FilledTonalButton(
-                            onClick = {},
-                            enabled = false,
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp),
-                        ) {
-                            Text(
-                                text = "B",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                        FilledTonalIconButton(
-                            onClick = {},
-                            enabled = false,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.size(44.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.BookmarkAdd,
-                                contentDescription = "保存段落书签",
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
+            // === Row 1: Unified A-B Loop & Save Bookmark Strip ===
+            AbControlStrip(
+                abUiState = loopEngine.abUiState,
+                activeAMs = practiceState.activeAMs,
+                activeBMs = practiceState.activeBMs,
+                loopEnabled = practiceState.loopEnabled,
+                currentPositionMs = currentPositionMs,
+                fillWidth = true,
+                onTapA = {
+                    val aMs = practiceState.activeAMs
+                    val bMs = practiceState.activeBMs
+                    if (aMs != null && bMs != null && currentPositionMs <= bMs - PracticeMath.MIN_LOOP_SPAN_MS) {
+                        loopEngine.setLoopPointsFromDrag(currentPositionMs.coerceAtLeast(0L), bMs, true)
+                    } else {
+                        loopEngine.markPointA(currentPositionMs)
                     }
-                }
-
-                AbLoopUiState.A_SET_WAITING -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        FilledTonalButton(
-                            onClick = { loopEngine.markPointA(currentPositionMs) },
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp),
-                        ) {
-                            Text(
-                                text = "A",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                        Button(
-                            onClick = { loopEngine.markPointBAndLoop(currentPositionMs) },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.tertiary,
-                                contentColor = MaterialTheme.colorScheme.onTertiary,
-                            ),
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp),
-                        ) {
-                            Text(
-                                text = "B",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                        DeckIconToggleButton(
-                            icon = Icons.Outlined.Close,
-                            contentDescription = "清除 A 点",
-                            highlighted = false,
-                            onClick = { loopEngine.clearLoop() },
-                            modifier = Modifier.size(44.dp),
-                        )
-                        FilledTonalIconButton(
-                            onClick = {},
-                            enabled = false,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.size(44.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.BookmarkAdd,
-                                contentDescription = "保存段落书签",
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
+                },
+                onTapB = {
+                    val aMs = practiceState.activeAMs
+                    val bMs = practiceState.activeBMs
+                    if (aMs != null && bMs != null && currentPositionMs >= aMs + PracticeMath.MIN_LOOP_SPAN_MS) {
+                        loopEngine.setLoopPointsFromDrag(aMs, currentPositionMs, true)
+                    } else {
+                        loopEngine.markPointBAndLoop(currentPositionMs)
                     }
-                }
+                },
+                onToggleLoop = { loopEngine.toggleLoopSuspended() },
+                onClearLoop = { loopEngine.clearLoop() },
+                onSaveBookmarkClick = { showPresetSaveSheet = true },
+            )
 
-                AbLoopUiState.ACTIVE_OR_SUSPENDED -> {
-                    val aLabel = PracticeMath.formatTimeMs(practiceState.activeAMs ?: 0L, true)
-                    val bLabel = PracticeMath.formatTimeMs(practiceState.activeBMs ?: 0L, true)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        DeckIconToggleButton(
-                            icon = Icons.Outlined.Replay,
-                            contentDescription = "回到 A 点",
-                            highlighted = false,
-                            onClick = { loopEngine.restartFromA() },
-                            modifier = Modifier.size(width = 36.dp, height = 44.dp),
-                        )
-                        SplitNudgeControl(
-                            prefix = "A",
-                            currentFormatted = aLabel,
-                            onCoarseMinus = { loopEngine.nudgePointA(-PracticeMath.COARSE_NUDGE_MS) },
-                            onFineMinus = { loopEngine.nudgePointA(-PracticeMath.FINE_NUDGE_MS) },
-                            onCoarsePlus = { loopEngine.nudgePointA(PracticeMath.COARSE_NUDGE_MS) },
-                            onFinePlus = { loopEngine.nudgePointA(PracticeMath.FINE_NUDGE_MS) },
-                            modifier = Modifier.weight(1f),
-                        )
-                        SplitNudgeControl(
-                            prefix = "B",
-                            currentFormatted = bLabel,
-                            onCoarseMinus = { loopEngine.nudgePointB(-PracticeMath.COARSE_NUDGE_MS) },
-                            onFineMinus = { loopEngine.nudgePointB(-PracticeMath.FINE_NUDGE_MS) },
-                            onCoarsePlus = { loopEngine.nudgePointB(PracticeMath.COARSE_NUDGE_MS) },
-                            onFinePlus = { loopEngine.nudgePointB(PracticeMath.FINE_NUDGE_MS) },
-                            modifier = Modifier.weight(1f),
-                        )
-                        DeckIconToggleButton(
-                            icon = Icons.Outlined.Repeat,
-                            contentDescription = if (practiceState.loopEnabled) "挂起循环" else "恢复循环",
-                            highlighted = practiceState.loopEnabled,
-                            onClick = { loopEngine.toggleLoopSuspended() },
-                            modifier = Modifier.size(width = 36.dp, height = 44.dp),
-                        )
-                        DeckIconToggleButton(
-                            icon = Icons.Outlined.Close,
-                            contentDescription = "清除循环",
-                            highlighted = false,
-                            onClick = { loopEngine.clearLoop() },
-                            modifier = Modifier.size(width = 36.dp, height = 44.dp),
-                        )
-                        DeckIconToggleButton(
-                            icon = Icons.Outlined.BookmarkAdd,
-                            contentDescription = "保存段落书签",
-                            highlighted = false,
-                            onClick = { showPresetSaveSheet = true },
-                            modifier = Modifier.size(width = 36.dp, height = 44.dp),
-                        )
+            // === Row 2: Speed Stepper + Secondary Controls ===
+            SpeedAndSecondaryStrip(
+                practiceState = practiceState,
+                keepScreenOn = keepScreenOn,
+                isVideo = isVideo,
+                pitchDrawerOpen = expandedDrawer == ExpandedDeckDrawer.PITCH_SHIFT,
+                bpmDrawerOpen = bpmBarVisible,
+                onStepSpeed = { loopEngine.stepPracticeSpeed(it) },
+                onResetSpeed = { loopEngine.setPracticeSpeed(1.0f) },
+                onTogglePitchDrawer = {
+                    expandedDrawer = if (expandedDrawer == ExpandedDeckDrawer.PITCH_SHIFT) {
+                        ExpandedDeckDrawer.NONE
+                    } else {
+                        ExpandedDeckDrawer.PITCH_SHIFT
                     }
-                }
-            }
+                },
+                onCycleCountIn = { loopEngine.cycleCountInMode() },
+                onToggleBpmDrawer = { showBpmDrawer = !showBpmDrawer },
+                onToggleKeepScreenOn = onToggleKeepScreenOn,
+                onToggleVideoMirror = { loopEngine.toggleVideoMirror() },
+            )
 
-            // === Row 2: Speed Stepper + Icon Toggles ===
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Left: `[-5%]` · `[1.00x]` (tap to reset 1.0x) · `[+5%]`
-                val speedModified = abs(practiceState.practiceSpeed - 1.0f) >= 0.005f
-                Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Surface(
-                        onClick = { loopEngine.stepPracticeSpeed(-0.05f) },
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier
-                            .weight(0.9f)
-                            .height(44.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "-5%",
-                                style = MaterialTheme.typography.labelMedium.tnum(),
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                softWrap = false,
-                            )
-                        }
-                    }
-
-                    Surface(
-                        onClick = { loopEngine.setPracticeSpeed(1.0f) },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (speedModified) {
-                            MaterialTheme.colorScheme.tertiaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceContainerHigh
-                        },
-                        modifier = Modifier
-                            .weight(1.25f)
-                            .height(44.dp)
-                            .semantics {
-                                contentDescription = "当前练习倍速 ${String.format("%.2f", practiceState.practiceSpeed)} 倍，点击恢复 1.0 倍原速"
-                            },
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = String.format("%.2fx", practiceState.practiceSpeed),
-                                style = MaterialTheme.typography.labelMedium.tnum(),
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (speedModified) {
-                                    MaterialTheme.colorScheme.onTertiaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                                maxLines = 1,
-                                softWrap = false,
-                            )
-                        }
-                    }
-
-                    Surface(
-                        onClick = { loopEngine.stepPracticeSpeed(0.05f) },
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier
-                            .weight(0.9f)
-                            .height(44.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "+5%",
-                                style = MaterialTheme.typography.labelMedium.tnum(),
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                softWrap = false,
-                            )
-                        }
-                    }
-                }
-
-                // Right: Icon-only toggles (`44.dp`)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val pitchDrawerOpen = expandedDrawer == ExpandedDeckDrawer.PITCH_SHIFT
-                    val pitchShifted = practiceState.pitchSemitones != 0 || practiceState.pitchCents != 0
-                    DeckIconToggleButton(
-                        icon = Icons.Outlined.MusicNote,
-                        contentDescription = "调整音调",
-                        highlighted = pitchShifted || pitchDrawerOpen,
-                        onClick = {
-                            expandedDrawer = if (pitchDrawerOpen) {
-                                ExpandedDeckDrawer.NONE
-                            } else {
-                                ExpandedDeckDrawer.PITCH_SHIFT
-                            }
-                        },
-                        modifier = Modifier.size(44.dp),
-                    )
-
-                    val countInActive = practiceState.countInMode != CountInMode.OFF
-                    val countInBadge = when (practiceState.countInMode) {
-                        CountInMode.OFF -> null
-                        CountInMode.SEC_1 -> "1s"
-                        CountInMode.SEC_2 -> "2s"
-                        CountInMode.BEAT_4 -> "4"
-                    }
-                    DeckIconToggleButton(
-                        icon = Icons.Outlined.Timer,
-                        contentDescription = "预备倒计时",
-                        highlighted = countInActive,
-                        badgeText = countInBadge,
-                        onClick = { loopEngine.cycleCountInMode() },
-                        modifier = Modifier.size(44.dp),
-                    )
-
-                    DeckIconToggleButton(
-                        icon = if (keepScreenOn) Icons.Filled.LightMode else Icons.Outlined.LightMode,
-                        contentDescription = if (keepScreenOn) "屏幕常亮：已开启" else "屏幕常亮：已关闭",
-                        highlighted = keepScreenOn,
-                        onClick = onToggleKeepScreenOn,
-                        modifier = Modifier.size(44.dp),
-                    )
-
-                    if (isVideo) {
-                        DeckIconToggleButton(
-                            icon = Icons.Outlined.Flip,
-                            contentDescription = if (practiceState.videoMirror) "视频水平镜像：已开启" else "视频水平镜像：已关闭",
-                            highlighted = practiceState.videoMirror,
-                            onClick = { loopEngine.toggleVideoMirror() },
-                            modifier = Modifier.size(44.dp),
-                        )
-                    }
-                }
-            }
-
-            // Inline `4拍` BPM & Tap Tempo Bar (only when Count-In is set to `4拍`)
-            AnimatedVisibility(visible = practiceState.countInMode == CountInMode.BEAT_4) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        val effectiveBpm = (practiceState.bpm * practiceState.practiceSpeed).roundToInt()
-                        Column {
-                            Text(
-                                text = "${practiceState.bpm} BPM",
-                                style = MaterialTheme.typography.labelLarge.tnum(),
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                text = "慢放联动 ≈ $effectiveBpm BPM",
-                                style = MaterialTheme.typography.labelMedium.tnum(),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            OutlinedIconButton(
-                                onClick = { loopEngine.setBpm(practiceState.bpm - 1) },
-                                modifier = Modifier.size(44.dp),
-                            ) {
-                                Icon(Icons.Outlined.Remove, contentDescription = "BPM 减 1")
-                            }
-                            OutlinedIconButton(
-                                onClick = { loopEngine.setBpm(practiceState.bpm + 1) },
-                                modifier = Modifier.size(44.dp),
-                            ) {
-                                Icon(Icons.Outlined.Add, contentDescription = "BPM 加 1")
-                            }
-                            FilledTonalButton(
-                                onClick = { loopEngine.tapTempo() },
-                                modifier = Modifier.defaultMinSize(minHeight = 44.dp),
-                            ) {
-                                Text("Tap")
-                            }
-                        }
-                    }
-                }
+            // Inline BPM, Tap Tempo & Auto-Detect Bar (shown in 4-beat count-in or when toggled via BPM chip)
+            AnimatedVisibility(visible = bpmBarVisible) {
+                BpmQuickBar(
+                    bpm = practiceState.bpm,
+                    practiceSpeed = practiceState.practiceSpeed,
+                    detectedBpm = detectedBpm,
+                    isDetectingBpm = isDetectingBpm,
+                    onAdjustBpm = { delta -> loopEngine.setBpm(practiceState.bpm + delta) },
+                    onTapTempo = { loopEngine.tapTempo() },
+                    onAutoDetectBpm = onAutoDetectBpm,
+                )
             }
 
             // Inline Semitone & Cents Pitch Shift Panel
@@ -903,6 +733,568 @@ fun PracticeDeck(
 }
 
 @Composable
+internal fun AbControlStrip(
+    abUiState: AbLoopUiState,
+    activeAMs: Long?,
+    activeBMs: Long?,
+    loopEnabled: Boolean,
+    currentPositionMs: Long,
+    fillWidth: Boolean,
+    onTapA: () -> Unit,
+    onTapB: () -> Unit,
+    onToggleLoop: () -> Unit,
+    onClearLoop: () -> Unit,
+    onSaveBookmarkClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val hasA = activeAMs != null
+    val hasB = activeBMs != null
+    val hasBoth = hasA && hasB
+    val aText = if (activeAMs == null) "A" else "A ${PracticeMath.formatTimeMs(activeAMs, includeTenths = true)}"
+    val bText = if (activeBMs == null) "B" else "B ${PracticeMath.formatTimeMs(activeBMs, includeTenths = true)}"
+
+    Row(
+        modifier = if (fillWidth) modifier.fillMaxWidth() else modifier,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val aButtonModifier = if (fillWidth) {
+            Modifier.weight(1f).height(44.dp)
+        } else {
+            Modifier.widthIn(min = 76.dp).height(44.dp)
+        }
+        val bButtonModifier = if (fillWidth) {
+            Modifier.weight(1f).height(44.dp)
+        } else {
+            Modifier.widthIn(min = 76.dp).height(44.dp)
+        }
+
+        // [A] Button
+        if (abUiState == AbLoopUiState.IDLE) {
+            Button(
+                onClick = onTapA,
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp),
+                modifier = aButtonModifier,
+            ) {
+                Text(
+                    text = aText,
+                    style = MaterialTheme.typography.titleMedium.tnum(),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+        } else {
+            FilledTonalButton(
+                onClick = onTapA,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = if (hasBoth && loopEnabled) {
+                        MaterialTheme.colorScheme.tertiaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                    contentColor = if (hasBoth && loopEnabled) {
+                        MaterialTheme.colorScheme.onTertiaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                ),
+                contentPadding = PaddingValues(horizontal = 6.dp),
+                modifier = aButtonModifier.semantics {
+                    contentDescription = "设当前位置为 A 起点，当前 $aText"
+                },
+            ) {
+                Text(
+                    text = aText,
+                    style = MaterialTheme.typography.labelLarge.tnum(),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+        }
+
+        // [B] Button
+        if (abUiState == AbLoopUiState.A_SET_WAITING) {
+            Button(
+                onClick = onTapB,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary,
+                    contentColor = MaterialTheme.colorScheme.onTertiary,
+                ),
+                contentPadding = PaddingValues(horizontal = 6.dp),
+                modifier = bButtonModifier,
+            ) {
+                Text(
+                    text = bText,
+                    style = MaterialTheme.typography.titleMedium.tnum(),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+        } else {
+            val bEnabled = hasA || currentPositionMs >= PracticeMath.MIN_LOOP_SPAN_MS
+            FilledTonalButton(
+                onClick = onTapB,
+                enabled = bEnabled,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = if (hasBoth && loopEnabled) {
+                        MaterialTheme.colorScheme.tertiaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                    contentColor = if (hasBoth && loopEnabled) {
+                        MaterialTheme.colorScheme.onTertiaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                ),
+                contentPadding = PaddingValues(horizontal = 6.dp),
+                modifier = bButtonModifier.semantics {
+                    contentDescription = "设当前位置为 B 终点，当前 $bText"
+                },
+            ) {
+                Text(
+                    text = bText,
+                    style = if (hasB) MaterialTheme.typography.labelLarge.tnum() else MaterialTheme.typography.titleMedium.tnum(),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+        }
+
+        // Loop Toggle (`Icons.Outlined.Repeat`)
+        FilledTonalIconButton(
+            onClick = onToggleLoop,
+            enabled = hasBoth,
+            shape = RoundedCornerShape(12.dp),
+            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = if (hasBoth && loopEnabled) {
+                    MaterialTheme.colorScheme.tertiaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                },
+                contentColor = if (hasBoth && loopEnabled) {
+                    MaterialTheme.colorScheme.onTertiaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+            ),
+            modifier = Modifier.size(width = 40.dp, height = 44.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Repeat,
+                contentDescription = if (loopEnabled) "挂起循环" else "恢复循环",
+                modifier = Modifier.size(20.dp),
+            )
+        }
+
+        // Clear Loop (`Icons.Outlined.Close`)
+        FilledTonalIconButton(
+            onClick = onClearLoop,
+            enabled = hasA || hasB,
+            shape = RoundedCornerShape(12.dp),
+            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+            modifier = Modifier.size(width = 40.dp, height = 44.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Close,
+                contentDescription = "清除循环",
+                modifier = Modifier.size(20.dp),
+            )
+        }
+
+        // Save Bookmark (`Icons.Outlined.BookmarkAdd`)
+        FilledTonalIconButton(
+            onClick = onSaveBookmarkClick,
+            enabled = hasBoth,
+            shape = RoundedCornerShape(12.dp),
+            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+            modifier = Modifier.size(width = 40.dp, height = 44.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.BookmarkAdd,
+                contentDescription = "保存段落书签",
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SpeedAndSecondaryStrip(
+    practiceState: PracticeState,
+    keepScreenOn: Boolean,
+    isVideo: Boolean,
+    pitchDrawerOpen: Boolean,
+    bpmDrawerOpen: Boolean,
+    onStepSpeed: (Float) -> Unit,
+    onResetSpeed: () -> Unit,
+    onTogglePitchDrawer: () -> Unit,
+    onCycleCountIn: () -> Unit,
+    onToggleBpmDrawer: () -> Unit,
+    onToggleKeepScreenOn: () -> Unit,
+    onToggleVideoMirror: () -> Unit,
+) {
+    val toggleWidth = if (isVideo) 35.dp else 38.dp
+    val spacing = if (isVideo) 3.dp else 4.dp
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(spacing),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Left: `[-5%]` · `[1.00x]` (tap to reset 1.0x) · `[+5%]`
+        val speedModified = abs(practiceState.practiceSpeed - 1.0f) >= 0.005f
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                onClick = { onStepSpeed(-0.05f) },
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .weight(0.9f)
+                    .height(44.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "-5%",
+                        style = MaterialTheme.typography.labelMedium.tnum(),
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
+            }
+
+            Surface(
+                onClick = onResetSpeed,
+                shape = RoundedCornerShape(12.dp),
+                color = if (speedModified) {
+                    MaterialTheme.colorScheme.tertiaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                },
+                modifier = Modifier
+                    .weight(1.2f)
+                    .height(44.dp)
+                    .semantics {
+                        contentDescription = "当前练习倍速 ${String.format("%.2f", practiceState.practiceSpeed)} 倍，点击恢复 1.0 倍原速"
+                    },
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = String.format("%.2fx", practiceState.practiceSpeed),
+                        style = MaterialTheme.typography.labelMedium.tnum(),
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (speedModified) {
+                            MaterialTheme.colorScheme.onTertiaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
+            }
+
+            Surface(
+                onClick = { onStepSpeed(0.05f) },
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .weight(0.9f)
+                    .height(44.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "+5%",
+                        style = MaterialTheme.typography.labelMedium.tnum(),
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
+            }
+        }
+
+        // Right: Pitch, Count-In, BPM, Keep Screen On ("常亮"), and optional Video Mirror
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(spacing),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val pitchShifted = practiceState.pitchSemitones != 0 || practiceState.pitchCents != 0
+            DeckIconToggleButton(
+                icon = Icons.Outlined.MusicNote,
+                contentDescription = "调整音调",
+                highlighted = pitchShifted || pitchDrawerOpen,
+                onClick = onTogglePitchDrawer,
+                modifier = Modifier.size(width = toggleWidth, height = 44.dp),
+            )
+
+            val countInActive = practiceState.countInMode != CountInMode.OFF
+            val countInBadge = when (practiceState.countInMode) {
+                CountInMode.OFF -> null
+                CountInMode.SEC_1 -> "1s"
+                CountInMode.SEC_2 -> "2s"
+                CountInMode.BEAT_4 -> "4"
+            }
+            DeckIconToggleButton(
+                icon = Icons.Outlined.Timer,
+                contentDescription = "预备倒计时（长按展开 BPM 面板）",
+                highlighted = countInActive,
+                badgeText = countInBadge,
+                onClick = onCycleCountIn,
+                onLongClick = onToggleBpmDrawer,
+                modifier = Modifier.size(width = toggleWidth, height = 44.dp),
+            )
+
+            BpmCompactChipButton(
+                bpm = practiceState.bpm,
+                highlighted = bpmDrawerOpen,
+                onClick = onToggleBpmDrawer,
+                modifier = Modifier.height(44.dp),
+            )
+
+            KeepScreenOnPillButton(
+                keepScreenOn = keepScreenOn,
+                onClick = onToggleKeepScreenOn,
+                compact = isVideo,
+                modifier = Modifier.height(44.dp),
+            )
+
+            if (isVideo) {
+                DeckIconToggleButton(
+                    icon = Icons.Outlined.Flip,
+                    contentDescription = if (practiceState.videoMirror) "视频水平镜像：已开启" else "视频水平镜像：已关闭",
+                    highlighted = practiceState.videoMirror,
+                    onClick = onToggleVideoMirror,
+                    modifier = Modifier.size(width = toggleWidth, height = 44.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun BpmCompactChipButton(
+    bpm: Int,
+    highlighted: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val containerColor = if (highlighted) {
+        MaterialTheme.colorScheme.tertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val contentColor = if (highlighted) {
+        MaterialTheme.colorScheme.onTertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        modifier = modifier
+            .defaultMinSize(minWidth = 40.dp, minHeight = 44.dp)
+            .semantics {
+                role = Role.Button
+                contentDescription = "BPM 速度 $bpm，点击展开或收起 BPM 与自动测速栏"
+            },
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = "BPM",
+                style = TextStyle(
+                    fontSize = 9.sp,
+                    lineHeight = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                ),
+                color = contentColor.copy(alpha = 0.8f),
+                maxLines = 1,
+                softWrap = false,
+            )
+            Text(
+                text = "$bpm",
+                style = MaterialTheme.typography.labelMedium.tnum().copy(
+                    fontSize = 11.sp,
+                    lineHeight = 13.sp,
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                ),
+                fontWeight = FontWeight.Bold,
+                color = contentColor,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun KeepScreenOnPillButton(
+    keepScreenOn: Boolean,
+    onClick: () -> Unit,
+    compact: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val containerColor = if (keepScreenOn) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val contentColor = if (keepScreenOn) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        modifier = modifier
+            .defaultMinSize(minHeight = 44.dp)
+            .semantics {
+                role = Role.Switch
+                contentDescription = if (keepScreenOn) "屏幕常亮：已开启" else "屏幕常亮：已关闭"
+            },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = if (compact) 6.dp else 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 4.dp),
+        ) {
+            Icon(
+                imageVector = if (keepScreenOn) Icons.Filled.LightMode else Icons.Outlined.LightMode,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text = "常亮",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = if (compact) 11.sp else 12.sp,
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                ),
+                fontWeight = FontWeight.SemiBold,
+                color = contentColor,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun BpmQuickBar(
+    bpm: Int,
+    practiceSpeed: Float,
+    detectedBpm: Int?,
+    isDetectingBpm: Boolean,
+    onAdjustBpm: (Int) -> Unit,
+    onTapTempo: () -> Unit,
+    onAutoDetectBpm: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val effectiveBpm = (bpm * practiceSpeed).roundToInt()
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "$bpm BPM",
+                    style = MaterialTheme.typography.labelLarge.tnum(),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Text(
+                    text = buildString {
+                        append("慢放 ≈ $effectiveBpm")
+                        if (detectedBpm != null && detectedBpm != bpm) {
+                            append(" · 测得 $detectedBpm")
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall.tnum(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedIconButton(
+                    onClick = { onAdjustBpm(-1) },
+                    modifier = Modifier.size(38.dp),
+                ) {
+                    Icon(Icons.Outlined.Remove, contentDescription = "BPM 减 1", modifier = Modifier.size(18.dp))
+                }
+                OutlinedIconButton(
+                    onClick = { onAdjustBpm(1) },
+                    modifier = Modifier.size(38.dp),
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = "BPM 加 1", modifier = Modifier.size(18.dp))
+                }
+                FilledTonalButton(
+                    onClick = onTapTempo,
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(38.dp),
+                ) {
+                    Text("Tap", maxLines = 1, softWrap = false)
+                }
+                FilledTonalButton(
+                    onClick = onAutoDetectBpm,
+                    enabled = !isDetectingBpm,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(38.dp),
+                ) {
+                    Text(
+                        text = if (isDetectingBpm) "检测中…" else "自动",
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun DeckIconToggleButton(
     icon: ImageVector,
     contentDescription: String,
@@ -910,164 +1302,90 @@ internal fun DeckIconToggleButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier.size(44.dp),
     badgeText: String? = null,
+    onLongClick: (() -> Unit)? = null,
 ) {
-    FilledTonalIconButton(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        colors = IconButtonDefaults.filledTonalIconButtonColors(
-            containerColor = if (highlighted) {
-                MaterialTheme.colorScheme.tertiaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceContainerHigh
-            },
-            contentColor = if (highlighted) {
-                MaterialTheme.colorScheme.onTertiaryContainer
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-        ),
-        modifier = modifier,
-    ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                modifier = Modifier.size(20.dp),
-            )
-            if (badgeText != null) {
-                Text(
-                    text = badgeText,
-                    style = MaterialTheme.typography.labelSmall.tnum().copy(
-                        fontSize = 9.sp,
-                        lineHeight = 9.sp,
-                        platformStyle = PlatformTextStyle(includeFontPadding = false),
-                    ),
-                    fontWeight = FontWeight.Bold,
-                    color = if (highlighted) {
-                        MaterialTheme.colorScheme.onTertiaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 3.dp, bottom = 3.dp),
-                )
-            }
-        }
+    val containerColor = if (highlighted) {
+        MaterialTheme.colorScheme.tertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHigh
     }
-}
+    val contentColor = if (highlighted) {
+        MaterialTheme.colorScheme.onTertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
 
-@Composable
-internal fun SplitNudgeControl(
-    prefix: String,
-    currentFormatted: String,
-    onCoarseMinus: () -> Unit,
-    onFineMinus: () -> Unit,
-    onCoarsePlus: () -> Unit,
-    onFinePlus: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = modifier.height(44.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.CenterVertically,
+    if (onLongClick != null) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = containerColor,
+            modifier = modifier
+                .clip(RoundedCornerShape(12.dp))
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick,
+                )
+                .semantics {
+                    role = Role.Button
+                    this.contentDescription = contentDescription
+                },
         ) {
-            RepeatingNudgeHalf(
-                label = "$prefix -",
-                talkBackLabel = "将循环点 $prefix 提前 0.5 秒（长按精细微调 0.1 秒），当前 $currentFormatted",
-                onTap = onCoarseMinus,
-                onLongRepeat = onFineMinus,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
+            DeckIconBadgeContent(
+                icon = icon,
+                contentDescription = null,
+                contentColor = contentColor,
+                badgeText = badgeText,
             )
-            VerticalDivider(modifier = Modifier.height(20.dp))
-            RepeatingNudgeHalf(
-                label = "+ $prefix",
-                talkBackLabel = "将循环点 $prefix 延后 0.5 秒（长按精细微调 0.1 秒），当前 $currentFormatted",
-                onTap = onCoarsePlus,
-                onLongRepeat = onFinePlus,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
+        }
+    } else {
+        FilledTonalIconButton(
+            onClick = onClick,
+            shape = RoundedCornerShape(12.dp),
+            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = containerColor,
+                contentColor = contentColor,
+            ),
+            modifier = modifier,
+        ) {
+            DeckIconBadgeContent(
+                icon = icon,
+                contentDescription = contentDescription,
+                contentColor = contentColor,
+                badgeText = badgeText,
             )
         }
     }
 }
 
 @Composable
-private fun RepeatingNudgeHalf(
-    label: String,
-    talkBackLabel: String,
-    onTap: () -> Unit,
-    onLongRepeat: () -> Unit,
-    modifier: Modifier = Modifier,
+private fun DeckIconBadgeContent(
+    icon: ImageVector,
+    contentDescription: String?,
+    contentColor: androidx.compose.ui.graphics.Color,
+    badgeText: String?,
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val currentOnTap by rememberUpdatedState(onTap)
-    val currentOnRepeat by rememberUpdatedState(onLongRepeat)
-
-    LaunchedEffect(interactionSource) {
-        var isHeld = false
-        interactionSource.interactions.collect { interaction ->
-            when (interaction) {
-                is PressInteraction.Press -> {
-                    isHeld = true
-                    delay(360L)
-                    if (isHeld) {
-                        while (isHeld) {
-                            currentOnRepeat()
-                            delay(110L)
-                        }
-                    }
-                }
-                is PressInteraction.Release -> {
-                    if (isHeld) {
-                        isHeld = false
-                    }
-                }
-                is PressInteraction.Cancel -> {
-                    isHeld = false
-                }
-            }
-        }
-    }
-
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier
-            .semantics { contentDescription = talkBackLabel }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = { offset ->
-                        val press = PressInteraction.Press(offset)
-                        val startMs = android.os.SystemClock.elapsedRealtime()
-                        interactionSource.emit(press)
-                        val released = tryAwaitRelease()
-                        val heldMs = android.os.SystemClock.elapsedRealtime() - startMs
-                        if (released) {
-                            interactionSource.emit(PressInteraction.Release(press))
-                            if (heldMs < 360L) {
-                                currentOnTap()
-                            }
-                        } else {
-                            interactionSource.emit(PressInteraction.Cancel(press))
-                        }
-                    },
-                )
-            },
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium.tnum(),
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            softWrap = false,
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = contentColor,
+            modifier = Modifier.size(20.dp),
         )
+        if (badgeText != null) {
+            Text(
+                text = badgeText,
+                style = MaterialTheme.typography.labelSmall.tnum().copy(
+                    fontSize = 9.sp,
+                    lineHeight = 9.sp,
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                ),
+                fontWeight = FontWeight.Bold,
+                color = contentColor,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 3.dp, bottom = 3.dp),
+            )
+        }
     }
 }
 

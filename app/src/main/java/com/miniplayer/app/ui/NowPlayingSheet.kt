@@ -37,11 +37,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.ui.components.ArtworkLoader
+import com.miniplayer.app.ui.components.GuitarIcon
 import com.miniplayer.app.ui.components.MediaArtwork
 import com.miniplayer.app.ui.theme.AlbumPaletteExtractor
 import com.miniplayer.app.ui.theme.rememberAnimatedColorScheme
 import com.miniplayer.app.ui.theme.tnum
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -49,6 +51,9 @@ fun NowPlayingSheet(
     viewModel: MiniPlayerViewModel,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    detectedBpm: Int? = null,
+    isDetectingBpm: Boolean = false,
+    onAutoDetectBpm: () -> Unit = { viewModel.invokeAutoDetectBpm() },
 ) {
     val snapshot by viewModel.playbackSnapshot.collectAsState()
     val item = snapshot.currentItem ?: run {
@@ -66,6 +71,13 @@ fun NowPlayingSheet(
     val waveformBars by viewModel.waveformBars.collectAsState()
     val lyrics by viewModel.currentLyrics.collectAsState()
     val isLoadingLyrics by viewModel.isLoadingLyrics.collectAsState()
+
+    val vmDetectedBpmFlow = remember(viewModel) { viewModel.resolveDetectedBpmFlow() }
+    val vmIsDetectingBpmFlow = remember(viewModel) { viewModel.resolveIsDetectingBpmFlow() }
+    val vmDetectedBpm = vmDetectedBpmFlow?.collectAsState()?.value
+    val vmIsDetectingBpm = vmIsDetectingBpmFlow?.collectAsState()?.value ?: false
+    val effectiveDetectedBpm = detectedBpm ?: vmDetectedBpm
+    val effectiveIsDetectingBpm = isDetectingBpm || vmIsDetectingBpm
 
     val playerController = viewModel.playerController
     val loopEngine = playerController.loopEngine
@@ -161,6 +173,9 @@ fun NowPlayingSheet(
                 waveformBars = waveformBars,
                 countInProgress = countInProgress,
                 keepScreenOn = settings.keepScreenOnInPractice,
+                detectedBpm = effectiveDetectedBpm,
+                isDetectingBpm = effectiveIsDetectingBpm,
+                onAutoDetectBpm = onAutoDetectBpm,
                 onToggleKeepScreenOn = {
                     viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
                 },
@@ -338,7 +353,7 @@ fun NowPlayingSheet(
                                     modifier = Modifier.size(44.dp),
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Outlined.Tune,
+                                        imageVector = GuitarIcon,
                                         contentDescription = "练习模式",
                                         modifier = Modifier.size(20.dp),
                                     )
@@ -631,6 +646,9 @@ fun NowPlayingSheet(
                                 currentPositionMs = snapshot.positionMs,
                                 keepScreenOn = settings.keepScreenOnInPractice,
                                 isVideo = item.isVideo,
+                                detectedBpm = effectiveDetectedBpm,
+                                isDetectingBpm = effectiveIsDetectingBpm,
+                                onAutoDetectBpm = onAutoDetectBpm,
                                 onToggleKeepScreenOn = {
                                     viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
                                 },
@@ -799,7 +817,7 @@ private fun NowPlayingTopBar(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Icon(
-                            imageVector = Icons.Outlined.Tune,
+                            imageVector = GuitarIcon,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onTertiaryContainer,
                             modifier = Modifier.size(16.dp),
@@ -1128,6 +1146,37 @@ private fun SleepTimerBottomSheet(
                     Text("关闭睡眠定时")
                 }
             }
+        }
+    }
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun MiniPlayerViewModel.resolveDetectedBpmFlow(): StateFlow<Int?>? =
+    runCatching {
+        javaClass.getMethod("getDetectedBpm").invoke(this) as? StateFlow<Int?>
+    }.getOrNull() ?: runCatching {
+        playerController.javaClass.getMethod("getDetectedBpm").invoke(playerController) as? StateFlow<Int?>
+    }.getOrNull()
+
+@Suppress("UNCHECKED_CAST")
+private fun MiniPlayerViewModel.resolveIsDetectingBpmFlow(): StateFlow<Boolean>? =
+    runCatching {
+        val m = runCatching { javaClass.getMethod("isDetectingBpm") }.getOrNull()
+            ?: javaClass.getMethod("getIsDetectingBpm")
+        m.invoke(this) as? StateFlow<Boolean>
+    }.getOrNull() ?: runCatching {
+        val m = runCatching { playerController.javaClass.getMethod("isDetectingBpm") }.getOrNull()
+            ?: playerController.javaClass.getMethod("getIsDetectingBpm")
+        m.invoke(playerController) as? StateFlow<Boolean>
+    }.getOrNull()
+
+private fun MiniPlayerViewModel.invokeAutoDetectBpm() {
+    val invokedOnVm = runCatching {
+        javaClass.getMethod("autoDetectBpm").invoke(this)
+    }.isSuccess
+    if (!invokedOnVm) {
+        runCatching {
+            playerController.javaClass.getMethod("autoDetectBpm").invoke(playerController)
         }
     }
 }

@@ -38,6 +38,7 @@ import com.miniplayer.app.player.AbLoopUiState
 import com.miniplayer.app.player.CountInProgress
 import com.miniplayer.app.player.PlaybackSnapshot
 import com.miniplayer.app.player.PlayerController
+import com.miniplayer.app.ui.components.GuitarIcon
 import com.miniplayer.app.ui.theme.tnum
 import kotlin.math.abs
 import kotlinx.coroutines.delay
@@ -234,6 +235,9 @@ fun LandscapeVideoPlayerView(
     waveformBars: List<Float>,
     countInProgress: CountInProgress?,
     keepScreenOn: Boolean = true,
+    detectedBpm: Int? = null,
+    isDetectingBpm: Boolean = false,
+    onAutoDetectBpm: () -> Unit = {},
     onToggleKeepScreenOn: () -> Unit = {},
     onBack: () -> Unit,
     onTogglePracticeMode: () -> Unit,
@@ -245,6 +249,7 @@ fun LandscapeVideoPlayerView(
     val loopEngine = playerController.loopEngine
     var hudVisible by remember { mutableStateOf(true) }
     var lastInteractionTick by remember { mutableIntStateOf(0) }
+    var showBpmDrawer by remember { mutableStateOf(false) }
     var showPresetSaveSheet by remember { mutableStateOf(false) }
 
     fun bumpInteraction() {
@@ -330,7 +335,7 @@ fun LandscapeVideoPlayerView(
                             modifier = Modifier.size(44.dp),
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.Tune,
+                                imageVector = GuitarIcon,
                                 contentDescription = "练习模式",
                                 modifier = Modifier.size(20.dp),
                             )
@@ -489,7 +494,7 @@ fun LandscapeVideoPlayerView(
                             modifier = Modifier.size(40.dp),
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.Tune,
+                                imageVector = GuitarIcon,
                                 contentDescription = "退出练习模式",
                                 modifier = Modifier.size(20.dp),
                             )
@@ -548,141 +553,39 @@ fun LandscapeVideoPlayerView(
                                     }
                                 }
                                 item {
-                                    when (loopEngine.abUiState) {
-                                        AbLoopUiState.IDLE -> {
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                            ) {
-                                                Button(
-                                                    onClick = { bumpInteraction(); loopEngine.markPointA() },
-                                                    shape = RoundedCornerShape(12.dp),
-                                                    modifier = Modifier.height(44.dp),
-                                                ) {
-                                                    Text("A", fontWeight = FontWeight.SemiBold)
-                                                }
-                                                FilledTonalButton(
-                                                    onClick = {},
-                                                    enabled = false,
-                                                    shape = RoundedCornerShape(12.dp),
-                                                    modifier = Modifier.height(44.dp),
-                                                ) {
-                                                    Text("B", fontWeight = FontWeight.SemiBold)
-                                                }
-                                                FilledTonalIconButton(
-                                                    onClick = {},
-                                                    enabled = false,
-                                                    shape = RoundedCornerShape(12.dp),
-                                                    modifier = Modifier.size(44.dp),
-                                                ) {
-                                                    Icon(
-                                                        Icons.Outlined.BookmarkAdd,
-                                                        contentDescription = "保存段落书签",
-                                                        modifier = Modifier.size(20.dp),
-                                                    )
-                                                }
+                                    AbControlStrip(
+                                        abUiState = loopEngine.abUiState,
+                                        activeAMs = practiceState.activeAMs,
+                                        activeBMs = practiceState.activeBMs,
+                                        loopEnabled = practiceState.loopEnabled,
+                                        currentPositionMs = snapshot.positionMs,
+                                        fillWidth = false,
+                                        onTapA = {
+                                            bumpInteraction()
+                                            val aMs = practiceState.activeAMs
+                                            val bMs = practiceState.activeBMs
+                                            val pos = snapshot.positionMs
+                                            if (aMs != null && bMs != null && pos <= bMs - PracticeMath.MIN_LOOP_SPAN_MS) {
+                                                loopEngine.setLoopPointsFromDrag(pos.coerceAtLeast(0L), bMs, true)
+                                            } else {
+                                                loopEngine.markPointA(pos)
                                             }
-                                        }
-                                        AbLoopUiState.A_SET_WAITING -> {
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                            ) {
-                                                FilledTonalButton(
-                                                    onClick = { bumpInteraction(); loopEngine.markPointA() },
-                                                    shape = RoundedCornerShape(12.dp),
-                                                    modifier = Modifier.height(44.dp),
-                                                ) {
-                                                    Text("A", fontWeight = FontWeight.SemiBold)
-                                                }
-                                                Button(
-                                                    onClick = { bumpInteraction(); loopEngine.markPointBAndLoop() },
-                                                    shape = RoundedCornerShape(12.dp),
-                                                    colors = ButtonDefaults.buttonColors(
-                                                        containerColor = MaterialTheme.colorScheme.tertiary,
-                                                        contentColor = MaterialTheme.colorScheme.onTertiary,
-                                                    ),
-                                                    modifier = Modifier.height(44.dp),
-                                                ) {
-                                                    Text("B", fontWeight = FontWeight.SemiBold)
-                                                }
-                                                DeckIconToggleButton(
-                                                    icon = Icons.Outlined.Close,
-                                                    contentDescription = "清除 A 点",
-                                                    highlighted = false,
-                                                    onClick = { bumpInteraction(); loopEngine.clearLoop() },
-                                                    modifier = Modifier.size(44.dp),
-                                                )
-                                                FilledTonalIconButton(
-                                                    onClick = {},
-                                                    enabled = false,
-                                                    shape = RoundedCornerShape(12.dp),
-                                                    modifier = Modifier.size(44.dp),
-                                                ) {
-                                                    Icon(
-                                                        Icons.Outlined.BookmarkAdd,
-                                                        contentDescription = "保存段落书签",
-                                                        modifier = Modifier.size(20.dp),
-                                                    )
-                                                }
+                                        },
+                                        onTapB = {
+                                            bumpInteraction()
+                                            val aMs = practiceState.activeAMs
+                                            val bMs = practiceState.activeBMs
+                                            val pos = snapshot.positionMs
+                                            if (aMs != null && bMs != null && pos >= aMs + PracticeMath.MIN_LOOP_SPAN_MS) {
+                                                loopEngine.setLoopPointsFromDrag(aMs, pos, true)
+                                            } else {
+                                                loopEngine.markPointBAndLoop(pos)
                                             }
-                                        }
-                                        AbLoopUiState.ACTIVE_OR_SUSPENDED -> {
-                                            val aLabel = PracticeMath.formatTimeMs(practiceState.activeAMs ?: 0L, true)
-                                            val bLabel = PracticeMath.formatTimeMs(practiceState.activeBMs ?: 0L, true)
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                            ) {
-                                                DeckIconToggleButton(
-                                                    icon = Icons.Outlined.Replay,
-                                                    contentDescription = "回到 A 点",
-                                                    highlighted = false,
-                                                    onClick = { bumpInteraction(); loopEngine.restartFromA() },
-                                                    modifier = Modifier.size(44.dp),
-                                                )
-                                                SplitNudgeControl(
-                                                    prefix = "A",
-                                                    currentFormatted = aLabel,
-                                                    onCoarseMinus = { bumpInteraction(); loopEngine.nudgePointA(-PracticeMath.COARSE_NUDGE_MS) },
-                                                    onFineMinus = { bumpInteraction(); loopEngine.nudgePointA(-PracticeMath.FINE_NUDGE_MS) },
-                                                    onCoarsePlus = { bumpInteraction(); loopEngine.nudgePointA(PracticeMath.COARSE_NUDGE_MS) },
-                                                    onFinePlus = { bumpInteraction(); loopEngine.nudgePointA(PracticeMath.FINE_NUDGE_MS) },
-                                                    modifier = Modifier.width(96.dp),
-                                                )
-                                                SplitNudgeControl(
-                                                    prefix = "B",
-                                                    currentFormatted = bLabel,
-                                                    onCoarseMinus = { bumpInteraction(); loopEngine.nudgePointB(-PracticeMath.COARSE_NUDGE_MS) },
-                                                    onFineMinus = { bumpInteraction(); loopEngine.nudgePointB(-PracticeMath.FINE_NUDGE_MS) },
-                                                    onCoarsePlus = { bumpInteraction(); loopEngine.nudgePointB(PracticeMath.COARSE_NUDGE_MS) },
-                                                    onFinePlus = { bumpInteraction(); loopEngine.nudgePointB(PracticeMath.FINE_NUDGE_MS) },
-                                                    modifier = Modifier.width(96.dp),
-                                                )
-                                                DeckIconToggleButton(
-                                                    icon = Icons.Outlined.Repeat,
-                                                    contentDescription = if (practiceState.loopEnabled) "挂起循环" else "恢复循环",
-                                                    highlighted = practiceState.loopEnabled,
-                                                    onClick = { bumpInteraction(); loopEngine.toggleLoopSuspended() },
-                                                    modifier = Modifier.size(44.dp),
-                                                )
-                                                DeckIconToggleButton(
-                                                    icon = Icons.Outlined.Close,
-                                                    contentDescription = "清除循环",
-                                                    highlighted = false,
-                                                    onClick = { bumpInteraction(); loopEngine.clearLoop() },
-                                                    modifier = Modifier.size(44.dp),
-                                                )
-                                                DeckIconToggleButton(
-                                                    icon = Icons.Outlined.BookmarkAdd,
-                                                    contentDescription = "保存段落书签",
-                                                    highlighted = false,
-                                                    onClick = { bumpInteraction(); showPresetSaveSheet = true },
-                                                    modifier = Modifier.size(44.dp),
-                                                )
-                                            }
-                                        }
-                                    }
+                                        },
+                                        onToggleLoop = { bumpInteraction(); loopEngine.toggleLoopSuspended() },
+                                        onClearLoop = { bumpInteraction(); loopEngine.clearLoop() },
+                                        onSaveBookmarkClick = { bumpInteraction(); showPresetSaveSheet = true },
+                                    )
                                 }
                                 item {
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -717,20 +620,27 @@ fun LandscapeVideoPlayerView(
                                     }
                                     DeckIconToggleButton(
                                         icon = Icons.Outlined.Timer,
-                                        contentDescription = "预备倒计时",
+                                        contentDescription = "预备倒计时（长按展开 BPM 面板）",
                                         highlighted = practiceState.countInMode != CountInMode.OFF,
                                         badgeText = countInBadge,
                                         onClick = { bumpInteraction(); loopEngine.cycleCountInMode() },
+                                        onLongClick = { bumpInteraction(); showBpmDrawer = !showBpmDrawer },
                                         modifier = Modifier.size(44.dp),
                                     )
                                 }
                                 item {
-                                    DeckIconToggleButton(
-                                        icon = Icons.Outlined.LightMode,
-                                        contentDescription = if (keepScreenOn) "关闭保持常亮" else "开启保持常亮",
-                                        highlighted = keepScreenOn,
+                                    BpmCompactChipButton(
+                                        bpm = practiceState.bpm,
+                                        highlighted = practiceState.countInMode == CountInMode.BEAT_4 || showBpmDrawer,
+                                        onClick = { bumpInteraction(); showBpmDrawer = !showBpmDrawer },
+                                        modifier = Modifier.height(44.dp),
+                                    )
+                                }
+                                item {
+                                    KeepScreenOnPillButton(
+                                        keepScreenOn = keepScreenOn,
                                         onClick = { bumpInteraction(); onToggleKeepScreenOn() },
-                                        modifier = Modifier.size(44.dp),
+                                        modifier = Modifier.height(44.dp),
                                     )
                                 }
                                 items(bookmarks, key = { it.bookmarkId }) { bm ->
@@ -741,6 +651,27 @@ fun LandscapeVideoPlayerView(
                                         modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                                     )
                                 }
+                            }
+
+                            AnimatedVisibility(visible = practiceState.countInMode == CountInMode.BEAT_4 || showBpmDrawer) {
+                                BpmQuickBar(
+                                    bpm = practiceState.bpm,
+                                    practiceSpeed = practiceState.practiceSpeed,
+                                    detectedBpm = detectedBpm,
+                                    isDetectingBpm = isDetectingBpm,
+                                    onAdjustBpm = { delta ->
+                                        bumpInteraction()
+                                        loopEngine.setBpm(practiceState.bpm + delta)
+                                    },
+                                    onTapTempo = {
+                                        bumpInteraction()
+                                        loopEngine.tapTempo()
+                                    },
+                                    onAutoDetectBpm = {
+                                        bumpInteraction()
+                                        onAutoDetectBpm()
+                                    },
+                                )
                             }
                         }
                     }
