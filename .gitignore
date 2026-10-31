@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+**/build/
+.kotlin/
+
+# Local configuration
+local.properties
+.idea/
+*.iml
+.vscode/
+
+# Android Studio / Release artifacts
+.DS_Store
+*.apk
+*.aab
+*.ap_
+*.jks
+*.keystore
+SHA256SUMS.txt
+captures/
+
+# Git Worktrees
+.worktrees/
