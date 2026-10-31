@@ -2,7 +2,8 @@
 
 **Version:** `1.0.6` (`versionCode = 10006`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch Verified (`v1.0.6`):** `wt/coder-7`
+**Branch Verified (`v1.0.6`):** `wt/coder-7` (`fabd4dc`), re-verified \& release-signed on `wt/tester-7`  
+**Release APK:** `MiniPlayer-v1.0.6.apk` — `14,295,186` bytes, SHA-256 `5a30f654c1767f66880ccd854d6d32f8e6b65812002905b08dbcf569fe390e52`
 
 ---
 
@@ -13,13 +14,16 @@ All Android builds and pure-JVM unit/integration tests succeeded **100% offline*
 | Check | Details / Result | Status |
 |---|---|---|
 | **Toolchain** | JDK `21` (`JAVA_HOME`), Android `compileSdk = 35`, `targetSdk = 35`, `minSdk = 26`, Build-Tools `35.0.0`, AGP `8.7.1`, Kotlin `2.0.21`, Jetpack Compose Material 3, AndroidX Media3 `1.5.1` | **PASS** |
-| **Offline Verification Command** | `./gradlew --offline testDebugUnitTest assembleDebug` (`BUILD SUCCESSFUL`) | **PASS** |
+| **Offline Verification Command** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug assembleRelease` (`BUILD SUCCESSFUL`, `ANDROID_HOME=~/Android/Sdk`) | **PASS** |
+| **Android Lint (`lintDebug`)** | **0** errors, `36` warnings (`app/build/reports/lint-results-debug.html`) | **PASS** |
 | **Zero Broad Storage Permissions** | Strictly **0** `READ_MEDIA_AUDIO`, `READ_MEDIA_VIDEO`, `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`, or `MANAGE_EXTERNAL_STORAGE` permissions in `AndroidManifest.xml`; pure SAF (`ACTION_OPEN_DOCUMENT_TREE`) folder grants | **PASS** |
 | **Network Surface Hygiene** | `android:usesCleartextTraffic="false"`; outbound traffic limited to HTTPS keyless metadata APIs (MusicBrainz / Cover Art Archive / iTunes CDN / LRCLIB), HTTPS GitHub Releases auto-updater, and the user-started LAN/loopback Web Studio (`:8088`). Staged `coverRemoteUrl` downloads reuse `OnlineMetadataCompleter.downloadCoverBytes` | **PASS** |
 | **Terminology & Emoji Hygiene** | **0** `练琴` strings in `app/src/main/**`; **0** emojis in Compose screens and `LanStudioWebApp`. Only the plain `✓` text marks remain (`歌词✓` / `封面✓`) | **PASS** |
 | **Debug APK (`v1.0.6`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,435,210` bytes, `versionName = "1.0.6-DEBUG"`, `versionCode = 10006`) | **PASS** |
+| **Release APK (`v1.0.6`)** | `MiniPlayer-v1.0.6.apk` (byte-identical to `app/build/outputs/apk/release/app-release.apk`): **`14,295,186` bytes**, SHA-256 **`5a30f654c1767f66880ccd854d6d32f8e6b65812002905b08dbcf569fe390e52`** (recorded in `SHA256SUMS.txt`); `zipalign -f -p 4` + `apksigner sign` with `~/.android/miniplayer-release.jks` (alias `miniplayer`); `zipalign -c -p 4` OK | **PASS** |
+| **`apksigner verify -v --print-certs`** | `Verifies`; v2 `true`, v3 `true`; `1` signer; certificate SHA-256 `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5` (same signing identity as `v1.0.5`, so in-place upgrade works) | **PASS** |
 | **`aapt2 dump badging`** | `package: name='com.miniplayer.app' versionCode='10006' versionName='1.0.6'`, `application-label:'Play'`, `minSdkVersion:'26'`, `targetSdkVersion:'35'` | **PASS** |
-| **Adaptive Icon Resources in APK** | `drawable/ic_launcher_foreground.xml` (`108×108dp` canvas, `38.4dp × 37.8dp` `0.60x` wide-shoulder 351 pick `x ∈ [34.8, 73.2]`, `y ∈ [36.5, 74.3]`, `r_shoulder = 19.6dp`, `r_tip = 20.3dp`, ~`15dp–16dp` uniform margin in `72×72dp` circular mask); `color/ic_launcher_background` `()` `#F8FAFC` / `(night)` `#0F172A`; `color/ic_launcher_pick` `#F97316` / `#FB923C`; `color/ic_launcher_play` `#FFFFFF` / `#FFFBEB` | **PASS** |
+| **Adaptive Icon Resources in APK** | `aapt2 dump xmltree` of the compiled foreground in the signed APK shows the exact `0.60x` pick + play path data. Independent Bézier sampling: pick bbox `38.40dp × 37.78dp`, `x ∈ [34.80, 73.20]`, `y ∈ [36.50, 74.28]`, area centroid `(54.00, 53.13)` (optically centered on `(54, 54)`), max radius `20.48dp` from center (≥ `15.5dp` margin inside the `r = 36dp` mask); play-triangle centroid `(54.16, 52.40)`. `drawable/ic_launcher_foreground.xml` (`108×108dp` canvas, `38.4dp × 37.8dp` `0.60x` wide-shoulder 351 pick `x ∈ [34.8, 73.2]`, `y ∈ [36.5, 74.3]`, `r_shoulder = 19.6dp`, `r_tip = 20.3dp`, ~`15dp–16dp` uniform margin in `72×72dp` circular mask); `color/ic_launcher_background` `()` `#F8FAFC` / `(night)` `#0F172A`; `color/ic_launcher_pick` `#F97316` / `#FB923C`; `color/ic_launcher_play` `#FFFFFF` / `#FFFBEB` | **PASS** |
 
 ---
 
