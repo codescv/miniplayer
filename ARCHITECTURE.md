@@ -18,6 +18,10 @@ flowchart TD
         PL["com.miniplayer.app.player.*\nPlaybackService · PlayerController\nPracticeLoopEngine · CountInMetronome · WaveformExtractor"]
     end
 
+    subgraph LAN_Studio["feat/lan-studio (@coder-lan)"]
+        LAN["com.miniplayer.app.lan.*\nLanStudioServer (:8088 HTTP/1.1 + 206 Range)\nQrCodeGenerator · LanStudioSheet · Web SPA"]
+    end
+
     subgraph Shared["main 基座共享契约 (禁止破坏已有签名)"]
         Models["com.miniplayer.app.core.model.*\nModels.kt (不可变领域模型与枚举)"]
         Contracts["com.miniplayer.app.core.*\nCoreContracts.kt & CoreRegistry"]
@@ -32,6 +36,8 @@ flowchart TD
     end
 
     UI --> VM
+    UI -. "💻 入口呼出" .-> LAN
+    LAN --> Contracts
     VM --> PL
     VM --> Contracts
     PL --> Contracts
@@ -47,9 +53,10 @@ flowchart TD
 | 角色 / 分支 | 隔离工作树路径 | 独占新增/修改范围 | 严禁触碰的文件（防止合并冲突） |
 |---|---|---|---|
 | **基座 (`main`)** | `/usr/local/google/home/chii/Developer/miniplayer` | Gradle 构建脚本、`AndroidManifest.xml`、`res/` 基础资源、`core/model/Models.kt`、`core/CoreContracts.kt` | — |
-| **`@coder-core` (`feat/core`)** | `.worktrees/coder-core` | `core/DefaultMiniPlayerCore.kt`、`core/db/**`、`core/scanner/**`、`core/metadata/**`、`core/update/**`、`app/src/test/java/com/miniplayer/app/core/**` | **严禁修改** `MainActivity.kt`、`MiniPlayerApplication.kt`、`player/**`、`ui/**`、`AndroidManifest.xml`、`build.gradle.kts` |
-| **`@coder-ui` (`feat/ui-player`)** | `.worktrees/coder-ui` | `MainActivity.kt`、`MiniPlayerApplication.kt`、`player/**`、`ui/**`、`res/values/strings.xml`（仅追加若需） | **严禁修改** `core/db/**`、`core/scanner/**`、`core/metadata/**`、`core/update/**`、`build.gradle.kts` |
-| **`@tester` (`feat/verify`)** | `.worktrees/tester` | 合并 `feat/core` + `feat/ui-player`、集成测试 `app/src/test/**`、`README.md`、`TEST_REPORT.md`、Release 打包与 GitHub 发布 | — |
+| **`@coder-core` (`feat/core`)** | `.worktrees/coder-core` | `core/DefaultMiniPlayerCore.kt`、`core/db/**`、`core/scanner/**`、`core/metadata/**`、`core/update/**`、`app/src/test/java/com/miniplayer/app/core/**` | **严禁修改** `MainActivity.kt`、`MiniPlayerApplication.kt`、`player/**`、`ui/**`、`lan/**`、`AndroidManifest.xml`、`build.gradle.kts` |
+| **`@coder-ui` (`feat/ui-player`)** | `.worktrees/coder-ui` | `MainActivity.kt`、`MiniPlayerApplication.kt`、`player/**`、`ui/**`（预留 `💻` 顶栏按钮与设置入口回调） | **严禁修改** `core/db/**`、`core/scanner/**`、`core/metadata/**`、`core/update/**`、`lan/**`、`build.gradle.kts` |
+| **`@coder-lan` (`feat/lan-studio`)** | `.worktrees/coder-lan` | `lan/LanStudioServer.kt`、`lan/QrCodeGenerator.kt`、`lan/LanStudioSheet.kt` 及 `lan/**` 内部辅助类、`app/src/test/java/com/miniplayer/app/lan/**` | **严禁修改** `core/**`、`player/**`、`ui/**`、`MainActivity.kt`、`build.gradle.kts` |
+| **`@tester` (`feat/verify`)** | `.worktrees/tester` | 合并 `feat/core` + `feat/ui-player` + `feat/lan-studio`、挂接 `LanStudioSheet`、集成测试 `app/src/test/**`、`README.md`、`TEST_REPORT.md`、Release 打包与 GitHub 发布 | — |
 
 > **关键离线构建约束**：本地 Gradle 离线缓存已预置 `media3-exoplayer:1.5.1`、`media3-session:1.5.1`、`media3-common:1.5.1`、`media3-extractor:1.5.1`、`media3-datasource:1.5.1`、`media3-decoder:1.5.1`、`media3-container:1.5.1`（已全部配入 `app/build.gradle.kts`）。**注意本地离线缓存不含 `media3-ui`**：视频渲染统一使用 Jetpack Compose `AndroidView(factory = { TextureView(it) })` 配合 `exoPlayer.setVideoTextureView(textureView)`，天然完美支持 `1.0x–4.0x` 缩放平移变换与 `scaleX = -1f` 水平镜像翻转！
 
@@ -274,3 +281,31 @@ CREATE TABLE app_settings (
    - ③ 新包 `longVersionCode > currentVersionCode`（严防版本降级攻击）；
    - ④ 签名证书集合与当前已安装宿主应用签名证书完全一致。
 4. **安全拉起安装**：落盘至 `context.cacheDir/updates/MiniPlayer-<tag>.apk`，通过 `FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)` 构造 `Intent.ACTION_VIEW`（若 `canRequestPackageInstalls()` 为 `false` 则先引导跳转 `Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES`）。
+
+---
+
+## 7. 内置 PC 局域网 Web 管理台协议规范 (`com.miniplayer.app.lan.*`, `@coder-lan`)
+
+1. **核心组件**：
+   - `QrCodeGenerator.kt`：零第三方依赖的纯 Kotlin ISO/IEC 18004 二维码矩阵生成器，在手机端渲染 `http://<lan-ip>:8088` 扫码图。
+   - `LanStudioServer.kt`：基于纯 JVM `ServerSocket` + 协程线程池实现的轻量 HTTP/1.1 服务（默认端口 `8088`，单元测试支持传 `0` 绑定随机空闲端口），直接桥接 `MiniPlayerCoreProvider`。
+   - `LanStudioSheet.kt`：Jetpack Compose M3 模态面板，展示服务运行状态、局域网 IP 地址、二维码画布、一键复制地址、请求计数与启停开关。
+2. **网络访问控制与安全边界**：
+   - **私有局域网 IP 防火墙**：`accept()` 后立即校验对端 `InetAddress`，仅放行回环与局域网私网段（`127.0.0.0/8` / `::1`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、链路本地 `169.254.0.0/16` / `fe80::/10`），一切公网 IP 连接立即返回 `403 Forbidden` 并断开。
+   - 支持可选会话 PIN / Bearer Token 校验与上传文件名路径穿越清洗（剥离 `..`、`/`、`\` 与控制字符）。
+3. **REST API 与 HTTP `206` 媒体流端点规范**：
+   - `GET /`：返回单页内联响应式 M3 风格 **PC Web Studio SPA**（纯原生 HTML5/CSS3/ES2022，支持深浅色自适应）。
+   - **目录与无线上传**：
+     - `GET /api/roots` · `GET /api/folders?rootId=&relPath=`：列出 SAF 根目录与子目录内容。
+     - `POST /api/upload?rootId=&relPath=&fileName=`：流式接收二进制或 `multipart/form-data` 上传文件写入目标 SAF 目录（或测试目录），写入完成后自动调用 `scanner.rescanRoot(rootId, incremental = true)` 即刻入库。
+     - `POST /api/folders/mkdir` · `POST /api/folders/rule`：新建子文件夹、一键切换子文件夹 `🎯 设为练习文件夹` (`isPracticeFolder`)。
+   - **曲库表格与免 Key 联网补全**：
+     - `GET /api/items?view=all|albums|artists|videos&q=`：返回曲库列表与有效标签、练习摘要。
+     - `POST /api/metadata/update` · `POST /api/metadata/batch-update`：单曲或批量（遵循 `dirtyFields` 保护单曲标题/音轨号）保存标签。
+     - `POST /api/metadata/auto-match?itemId=` · `POST /api/metadata/batch-auto-complete`：调用 `MetadataEngineContract` 执行免 Key 联网候选检索与批量自动补全。
+   - **播放列表与 `🎯 练习列表` 编排**：
+     - `GET /api/playlists` · `POST /api/playlists` · `PUT /api/playlists/{id}` · `DELETE /api/playlists/{id}`：增删改播放列表、切换 `isPracticePlaylist`、调整曲序。
+     - `POST /api/playlists/import` · `GET /api/playlists/export?id=`：`.m3u8` 导入导出。
+   - **PC 在线预听与键盘 `[` / `]` 段落书签工作台**：
+     - `GET /api/stream?itemId=`：支持标准 **HTTP `206 Partial Content`**（解析 `Range: bytes=start-end` 请求头，返回 `Content-Range: bytes start-end/total` 与 `Accept-Ranges: bytes`），使 PC 浏览器 `<audio>` / `<video>` 元素可毫秒级任意拖拽进度条！
+     - `GET /api/practice?itemId=` · `POST /api/practice/state` · `POST /api/practice/bookmark` · `DELETE /api/practice/bookmark?id=`：读写单曲 `PracticeState`（倍速、半音、音分、BPM）与命名 `PracticeBookmark`（PC 端支持快捷键 `Space` 播停、`[` 设 A、`]` 设 B 一键存书签，手机端打开即用）。
