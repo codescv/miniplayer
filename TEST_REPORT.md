@@ -2,22 +2,27 @@
 
 **Version:** `1.0.8` (`versionCode = 10008`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch Verified (`v1.0.8`):** `wt/coder-10` (stacked on `v1.0.7` @ `a926ce3`; `71/71` unit tests, debug APK built offline)  
+**Branch Verified (`v1.0.8`):** `wt/tester-10` (stacked on `wt/coder-10` @ `f4d2d7e` → `v1.0.7` @ `a926ce3`; `71/71` unit tests, `0` lint errors, release APK signed offline)  
+**Release APK (`v1.0.8`):** `MiniPlayer-v1.0.8.apk` — **`14,274,675` bytes**, SHA-256 **`bcbb1dba7abbb5dbe6447d3b1122a0cb72ea238e8bcf0951a5d2cdcd39c762e8`**  
 **Previous Release APK (`v1.0.7`):** `MiniPlayer-v1.0.7.apk` — `14,274,563` bytes, SHA-256 `5bd30fbac643f5741ac920380e2a6b0f9bf025902f92fa7fa6d01a594505d4f2`  
 **Previous Release APK (`v1.0.6`):** `MiniPlayer-v1.0.6.apk` — `14,295,186` bytes, SHA-256 `5a30f654c1767f66880ccd854d6d32f8e6b65812002905b08dbcf569fe390e52`
 
 ---
 
-## 0. `v1.0.8` Build & Launcher-Icon Resource Verification
+## 0. `v1.0.8` Build, Lint, Release-Signing & Launcher-Icon Resource Verification
 
-Run on `wt/coder-10` with `ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`, **100% offline**.
+Run on `wt/tester-10` (`wt/coder-10` @ `f4d2d7e`) with `ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`, Build-Tools `35.0.0`, **100% offline**.
 
 | Check | Details / Result | Status |
 |---|---|---|
-| **Offline Verification Command (`v1.0.8`)** | `./gradlew --offline testDebugUnitTest assembleDebug` — `BUILD SUCCESSFUL in 58s`, `43` actionable tasks (`34` executed, `9` from cache) | **PASS** |
-| **Unit & Cross-Module Integration Tests** | `app/build/test-results/testDebugUnitTest/*.xml`: **`71/71`** tests, `0` failures, `0` errors (unchanged from `v1.0.7`; no Kotlin sources touched) | **PASS** |
-| **Debug APK (`v1.0.8`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,437,645` bytes); `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10008' versionName='1.0.8-DEBUG'`, `compileSdkVersion='35'`, `platformBuildVersionCode='35'` | **PASS** |
-| **`values-night` Launcher Palette Restored** | `aapt2 dump resources` shows every launcher color with **both** `()` and `(night)` configs: `ic_launcher_background` `#fff8fafc` / `#ff282a30`, `ic_launcher_bg_top` `#ffffffff` / `#ff363940`, `ic_launcher_bg_mid` `#fff8fafc` / `#ff282a30`, `ic_launcher_bg_bottom` `#fff1f5f9` / `#ff1e2025`, `ic_launcher_bg_glow_start` `#00ffffff` / `#1affffff`, `ic_launcher_bg_glow_mid` `#00ffffff` / `#09ffffff`, `ic_launcher_pick` `#fff97316` / `#fffb923c`, `ic_launcher_play` `#ffffffff` / `#fffffbeb` | **PASS** |
+| **Offline Verification Command (`v1.0.8`)** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug assembleRelease` — `BUILD SUCCESSFUL in 1m 25s`, `102` actionable tasks (`68` executed, `34` from cache) | **PASS** |
+| **Unit & Cross-Module Integration Tests** | `app/build/test-results/testDebugUnitTest/*.xml`: **`71/71`** tests, `0` failures, `0` errors, `0` skipped (unchanged from `v1.0.7`; no Kotlin sources touched) | **PASS** |
+| **Android Lint (`lintDebug`)** | **0** errors, `37` warnings (`app/build/reports/lint-results-debug.{html,xml}`); `lintVitalRelease` also passed during `assembleRelease` | **PASS** |
+| **Debug APK (`v1.0.8`)** | `app/build/outputs/apk/debug/app-debug.apk`; `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10008' versionName='1.0.8-DEBUG'`, `compileSdkVersion='35'`, `platformBuildVersionCode='35'` | **PASS** |
+| **Release APK (`v1.0.8`)** | `MiniPlayer-v1.0.8.apk` (byte-identical to `app/build/outputs/apk/release/app-release.apk`): **`14,274,675` bytes**, SHA-256 **`bcbb1dba7abbb5dbe6447d3b1122a0cb72ea238e8bcf0951a5d2cdcd39c762e8`** (recorded in `SHA256SUMS.txt`); Gradle `assembleRelease` output re-aligned with `zipalign -f -p 4` and re-signed with `apksigner sign` (v2 + v3, v1 disabled) using `~/.android/miniplayer-release.jks` (alias `miniplayer`); `zipalign -c -p 4` OK | **PASS** |
+| **`apksigner verify -v --print-certs` (`v1.0.8`)** | `Verifies`; v1 `false`, v2 `true`, v3 `true`, v3.1 `false`, v4 `false`; `Number of signers: 1`; certificate DN `C=US, O=Android, CN=Android Debug`; certificate SHA-256 `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5`, SHA-1 `f5d0cccfda49440bbb5422cb880fc8c68166a654`; RSA `2048`; public-key SHA-256 `7cf9fa0eae8ab472ea68688a0754ac4e3e7f62486a37d51c00964caaeb023c83` — identical to the `keytool -list` fingerprint of `miniplayer-release.jks` / alias `miniplayer` and to `v1.0.5` / `v1.0.6` / `v1.0.7`, so in-place upgrades work | **PASS** |
+| **`aapt2 dump badging` (`v1.0.8` release)** | `package: name='com.miniplayer.app' versionCode='10008' versionName='1.0.8' platformBuildVersionName='15' platformBuildVersionCode='35' compileSdkVersion='35'`, `targetSdkVersion:'35'`, `application-label:'Play'` | **PASS** |
+| **`values-night` Launcher Palette in Signed Release APK** | `aapt2 dump resources MiniPlayer-v1.0.8.apk \| grep -A 4 'color/ic_launcher_'` shows every launcher color with **both** `()` and `(night)` configs: `ic_launcher_background` (`0x7f020004`) `#fff8fafc` / `#ff282a30`, `ic_launcher_bg_bottom` (`0x7f020005`) `#fff1f5f9` / `#ff1e2025`, `ic_launcher_bg_glow_mid` (`0x7f020006`) `#00ffffff` / `#09ffffff`, `ic_launcher_bg_glow_start` (`0x7f020007`) `#00ffffff` / `#1affffff`, `ic_launcher_bg_mid` (`0x7f020008`) `#fff8fafc` / `#ff282a30`, `ic_launcher_bg_top` (`0x7f020009`) `#ffffffff` / `#ff363940`, `ic_launcher_pick` (`0x7f02000a`) `#fff97316` / `#fffb923c`, `ic_launcher_play` (`0x7f02000b`) `#ffffffff` / `#fffffbeb` | **PASS** |
 | **Two-Layer Frosted Charcoal Gradient Plate** | `aapt2 dump xmltree res/drawable/ic_launcher_background.xml`: `<vector>` `108dp × 108dp`, two `<path pathData="M0,0h108v108h-108z">` whose `fillColor` reference AAPT-inlined gradients `drawable/$ic_launcher_background__0` (`type = 0` linear, `startX = 54`, `startY = 16`, `endX = 54`, `endY = 92`; stops `@color/ic_launcher_bg_top` `0.0`, `@color/ic_launcher_bg_mid` `0.48`, `@color/ic_launcher_bg_bottom` `1.0`) and `drawable/$ic_launcher_background__1` (`type = 1` radial, `centerX = 48`, `centerY = 32`, `gradientRadius = 46`; stops `@color/ic_launcher_bg_glow_start` `0.0`, `@color/ic_launcher_bg_glow_mid` `0.55`, `#00ffffff` `1.0`) | **PASS** |
 | **Adaptive Icon Wiring Unchanged** | `mipmap-anydpi-v26/ic_launcher.xml` / `ic_launcher_round.xml` still reference `@drawable/ic_launcher_background`, `@drawable/ic_launcher_foreground`, and `<monochrome>` `@drawable/ic_launcher_monochrome` (`evenOdd`); `ic_launcher_foreground.xml` (`0.60x` pick) untouched | **PASS** |
 
