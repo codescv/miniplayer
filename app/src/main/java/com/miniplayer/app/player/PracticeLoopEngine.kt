@@ -73,6 +73,9 @@ class PracticeLoopEngine(
     private var pendingLoopSeekStartElapsedMs: Long? = null
     private var lastPrevTapElapsedMs: Long? = null
 
+    val isClickSoundEnabled: Boolean
+        get() = clickSoundEnabled
+
     val abUiState: AbLoopUiState
         get() {
             val s = _practiceState.value

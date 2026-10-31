@@ -373,6 +373,45 @@ class PracticeLoopEngineTest {
         assertNull(ArtworkLoader.normalizeTrustedCoverUrl("http://example.com/front.jpg"))
     }
 
+    @Test
+    fun pitchShiftFlushDecisionAndDefaultClickSound_behaveDeterministically() {
+        assertTrue(AppSettings().countInClickSound)
+        assertTrue(engine.isClickSoundEnabled)
+
+        // 1. Identity -> Identity: no flush needed
+        val idToId = PlayerController.evaluatePlaybackParametersUpdate(1.0f, 1.0f, 1.0f, 1.0f)
+        assertFalse(idToId.shouldFlushAudioSink)
+
+        // 2. Identity -> +1 semitone: Sonic activates & pitch changed -> flush required
+        val plusOnePitch = PracticeMath.computePitchFactor(1, 0)
+        val idToPitch = PlayerController.evaluatePlaybackParametersUpdate(1.0f, plusOnePitch, 1.0f, 1.0f)
+        assertTrue(idToPitch.shouldFlushAudioSink)
+        assertEquals(plusOnePitch, idToPitch.safePitch, 0.0001f)
+
+        // 3. +1 semitone -> +2 semitones: pitch changed while Sonic active -> flush required
+        val plusTwoPitch = PracticeMath.computePitchFactor(2, 0)
+        val pitchToPitch = PlayerController.evaluatePlaybackParametersUpdate(1.0f, plusTwoPitch, 1.0f, plusOnePitch)
+        assertTrue(pitchToPitch.shouldFlushAudioSink)
+
+        // 4. Identity -> 0.85x speed (pitch 1.0): Sonic active state flips false -> true -> flush required
+        val idToSlow = PlayerController.evaluatePlaybackParametersUpdate(0.85f, 1.0f, 1.0f, 1.0f)
+        assertTrue(idToSlow.shouldFlushAudioSink)
+
+        // 5. 0.85x -> 0.80x speed (pitch constant 1.0): Sonic remains active, pitch unchanged -> no flush needed
+        val slowToSlower = PlayerController.evaluatePlaybackParametersUpdate(0.80f, 1.0f, 0.85f, 1.0f)
+        assertFalse(slowToSlower.shouldFlushAudioSink)
+
+        // 6. 0.80x -> 1.0x speed (pitch 1.0): Sonic active state flips true -> false -> flush required
+        val slowToId = PlayerController.evaluatePlaybackParametersUpdate(1.0f, 1.0f, 0.80f, 1.0f)
+        assertTrue(slowToId.shouldFlushAudioSink)
+
+        // 7. Out-of-bounds clamping
+        val clamped = PlayerController.evaluatePlaybackParametersUpdate(0.05f, 4.0f, 1.0f, 1.0f)
+        assertEquals(0.25f, clamped.safeSpeed, 0.0001f)
+        assertEquals(2.0f, clamped.safePitch, 0.0001f)
+        assertTrue(clamped.shouldFlushAudioSink)
+    }
+
     private class FakeLoopPlayerPort(override var durationMs: Long) : LoopPlayerPort {
         var attachedEngine: PracticeLoopEngine? = null
         override var currentPositionMs: Long = 0L

@@ -12,6 +12,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -43,8 +45,24 @@ internal object SharedExoPlayerHolder {
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                 .build()
-            val renderersFactory = DefaultRenderersFactory(appContext)
+            val renderersFactory = object : DefaultRenderersFactory(appContext) {
+                override fun buildAudioSink(
+                    context: Context,
+                    enableFloatOutput: Boolean,
+                    enableAudioTrackPlaybackParams: Boolean,
+                ): AudioSink {
+                    // Force 16-bit PCM + SonicAudioProcessor deterministically (disabling float output
+                    // and platform AudioTrack playback params) so pitch shifting never hits
+                    // UnhandledAudioFormatException or device-specific AudioTrack mute bugs.
+                    return DefaultAudioSink.Builder(appContext)
+                        .setEnableFloatOutput(false)
+                        .setEnableAudioTrackPlaybackParams(false)
+                        .build()
+                }
+            }
                 .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+                .setEnableAudioFloatOutput(false)
+                .setEnableAudioTrackPlaybackParams(false)
             val created = ExoPlayer.Builder(appContext, renderersFactory)
                 .setLooper(Looper.getMainLooper())
                 .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)

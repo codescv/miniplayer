@@ -162,6 +162,38 @@ class MiniPlayerEndToEndIntegrationTest {
         assertTrue(videoLesson.isInPracticeFolder && videoLesson.isVideo)
         assertFalse(casualTrack.isInPracticeFolder)
 
+        // Practice Folder isolation (§v1.0.1 #4):
+        // With `Backing` marked as a Practice Folder, `backingTrack` and `videoLesson` MUST NOT appear in
+        // `albums`, `artists`, or `videoItems`, while remaining browsable in `browseFolder` (TREE & FLAT)!
+        assertTrue("Practice folder video must be excluded from videoItems", env.repository.videoItems.value.isEmpty())
+        assertEquals("Only casual track should appear in 未知专辑", 1, env.repository.albums.value.single().trackCount)
+        assertEquals(
+            listOf(casualTrack.itemId),
+            env.repository.getAlbumTracks(AlbumSummary.UNKNOWN_ALBUM_KEY).map { it.itemId },
+        )
+        assertEquals(
+            listOf(casualTrack.itemId),
+            env.repository.artists.value.flatMap { art -> env.repository.getArtistDetail(art.artistNorm)!!.tracks.map { it.itemId } },
+        )
+        assertEquals(2, env.repository.browseFolder(rootId, "Backing", flat = true)!!.mediaItems.size)
+        assertEquals(1, env.repository.browseFolder(rootId, "Backing/J-Rock", flat = false)!!.mediaItems.size)
+
+        // Marking root (`relPath = ""`) as a Practice Folder hides casual siblings too,
+        // and unmarking both root and `Backing` (`isPracticeFolder = false`) restores all audio & video items!
+        env.scanner.setFolderPracticeRule(rootId, "", env.rootGrant.treeUri, isPracticeFolder = true)
+        assertTrue(env.repository.albums.value.isEmpty())
+        assertTrue(env.repository.artists.value.isEmpty())
+        assertTrue(env.repository.videoItems.value.isEmpty())
+        assertEquals(3, env.repository.browseFolder(rootId, "", flat = true)!!.mediaItems.size)
+
+        env.scanner.setFolderPracticeRule(rootId, "", env.rootGrant.treeUri, isPracticeFolder = false)
+        env.scanner.setFolderPracticeRule(rootId, "Backing", backingDirUri, isPracticeFolder = false)
+        assertEquals(1, env.repository.videoItems.value.size)
+        assertEquals(2, env.repository.albums.value.single().trackCount)
+
+        // Restore Backing = true for the remainder of the practice state machine scenario
+        env.scanner.setFolderPracticeRule(rootId, "Backing", backingDirUri, isPracticeFolder = true)
+
         // Persist PracticeState (0.80x speed, -1 semitone) and 2 Section Bookmarks (`Intro`, `Solo 1`)
         env.repository.savePracticeState(
             PracticeState(
@@ -208,6 +240,9 @@ class MiniPlayerEndToEndIntegrationTest {
             onStatePersisted = { state -> runBlocking { env.repository.savePracticeState(state) } },
         )
         port.attachedEngine = loopEngine
+        // Count-in click sound must be enabled by default in both AppSettings and PracticeLoopEngine (§v1.0.1 #2 & #7)
+        assertTrue(env.repository.settings.value.countInClickSound)
+        assertTrue(loopEngine.isClickSoundEnabled)
         loopEngine.setClickSoundEnabled(false)
 
         // Case A: Playing from `🎯 练习列表` (`PlayContext.PRACTICE_PLAYLIST`) -> auto-activates Practice Mode

@@ -87,6 +87,8 @@ class PlayerController(
     private var suppressAutoTransitionLoad: Boolean = false
     private var internalPauseDepth: Int = 0
     private var internalSeekDepth: Int = 0
+    private var lastAppliedSpeed: Float = 1.0f
+    private var lastAppliedPitch: Float = 1.0f
 
     val metronome = CountInMetronome(mainScope)
     val waveformExtractor = WaveformExtractor(appContext)
@@ -153,7 +155,24 @@ class PlayerController(
 
         override fun applyPlaybackParameters(speed: Float, pitch: Float) {
             runOnPlayerThread {
-                exoPlayer.playbackParameters = PlaybackParameters(speed, pitch)
+                val decision = evaluatePlaybackParametersUpdate(
+                    requestedSpeed = speed,
+                    requestedPitch = pitch,
+                    previousSpeed = lastAppliedSpeed,
+                    previousPitch = lastAppliedPitch,
+                )
+                exoPlayer.playbackParameters = PlaybackParameters(decision.safeSpeed, decision.safePitch)
+                lastAppliedSpeed = decision.safeSpeed
+                lastAppliedPitch = decision.safePitch
+                if (decision.shouldFlushAudioSink &&
+                    exoPlayer.mediaItemCount > 0 &&
+                    exoPlayer.playbackState != Player.STATE_IDLE
+                ) {
+                    performInternalSeek {
+                        exoPlayer.seekTo(exoPlayer.currentPosition.coerceAtLeast(0L))
+                    }
+                    updateSnapshotFromPlayer()
+                }
                 syncEffectiveRepeatModeOnPlayerThread()
             }
         }
@@ -340,6 +359,8 @@ class PlayerController(
 
     init {
         runOnPlayerThread {
+            lastAppliedSpeed = exoPlayer.playbackParameters.speed
+            lastAppliedPitch = exoPlayer.playbackParameters.pitch
             exoPlayer.addListener(playerListener)
             exoPlayer.repeatMode = Player.REPEAT_MODE_ALL
             ensureMediaServiceBound()
@@ -777,9 +798,37 @@ class PlayerController(
     }
 
     companion object {
+        private const val SONIC_IDENTITY_EPSILON = 0.0001f
+
         private val FAST_VIDEO_KEYFRAME_SEEK = SeekParameters(
             /* toleranceBeforeUs = */ 1_500_000L,
             /* toleranceAfterUs = */ 0L,
         )
+
+        internal data class PlaybackParamsDecision(
+            val safeSpeed: Float,
+            val safePitch: Float,
+            val shouldFlushAudioSink: Boolean,
+        )
+
+        internal fun evaluatePlaybackParametersUpdate(
+            requestedSpeed: Float,
+            requestedPitch: Float,
+            previousSpeed: Float,
+            previousPitch: Float,
+        ): PlaybackParamsDecision {
+            val safeSpeed = requestedSpeed.coerceIn(0.25f, 2.0f)
+            val safePitch = requestedPitch.coerceIn(0.5f, 2.0f)
+            val wasIdentity = kotlin.math.abs(previousSpeed - 1.0f) < SONIC_IDENTITY_EPSILON &&
+                kotlin.math.abs(previousPitch - 1.0f) < SONIC_IDENTITY_EPSILON
+            val isIdentity = kotlin.math.abs(safeSpeed - 1.0f) < SONIC_IDENTITY_EPSILON &&
+                kotlin.math.abs(safePitch - 1.0f) < SONIC_IDENTITY_EPSILON
+            val pitchChanged = kotlin.math.abs(safePitch - previousPitch) > SONIC_IDENTITY_EPSILON
+            return PlaybackParamsDecision(
+                safeSpeed = safeSpeed,
+                safePitch = safePitch,
+                shouldFlushAudioSink = pitchChanged || (wasIdentity != isIdentity),
+            )
+        }
     }
 }

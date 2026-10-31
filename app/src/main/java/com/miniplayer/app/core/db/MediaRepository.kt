@@ -557,11 +557,14 @@ class MediaRepository(
             )
         }
 
+        // Practice Folder isolation (§v1.0.1 #4): items inside a Practice Folder (root or inherited subfolder)
+        // appear ONLY in `文件夹 (Folders)` (`safRoots` + `browseFolder`) and explicit `播放列表` / `bookmarkedTracks`,
+        // and MUST NOT pollute `专辑 (Albums)`, `歌手 (Artists)`, or `视频 (Videos)`.
         val videoItems = allItems
-            .filter { it.isVideo }
+            .filter { it.isVideo && !it.isInPracticeFolder }
             .sortedWith { a, b -> SmartFilenameParser.naturalCompare(a.fileName, b.fileName) }
 
-        val audioItems = allItems.filter { !it.isVideo }
+        val audioItems = allItems.filter { !it.isVideo && !it.isInPracticeFolder }
 
         // --- Album Aggregation (`(Album, AlbumArtist)` + trailing `未知专辑`) ---
         val tracksByAlbumKey = LinkedHashMap<String, MutableList<MediaItem>>()

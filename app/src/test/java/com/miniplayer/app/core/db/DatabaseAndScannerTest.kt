@@ -463,7 +463,13 @@ class DatabaseAndScannerTest {
             assertTrue(repo.isPracticeFolder(rootId, "Practice/Guitar"))
             assertFalse(repo.isPracticeFolder(rootId, "Rock"))
 
-            // Override child subfolder rule to false -> nearest ancestor wins!
+            // While Practice/Guitar inherits isPracticeFolder = true, its audio & video items must be excluded from albums, artists, and videoItems
+            assertTrue(repo.videoItems.value.isEmpty())
+            assertEquals(listOf("Back in Black"), repo.albums.value.map { it.title })
+            assertEquals(setOf("AC/DC"), repo.artists.value.map { it.displayName }.toSet())
+            assertEquals(2, repo.browseFolder(rootId, "Practice/Guitar", flat = false)!!.mediaItems.size)
+
+            // Override child subfolder rule to false -> nearest ancestor wins, restoring items to videoItems, albums, and artists!
             backend.upsertFolderRule(FolderRuleRow("content://saf/Practice/Guitar", rootId, "Practice/Guitar", isPracticeFolder = false, respectNomedia = null))
             repo.refreshNow()
             assertFalse(repo.isPracticeFolder(rootId, "Practice/Guitar"))
@@ -755,5 +761,128 @@ class DatabaseAndScannerTest {
         } finally {
             tempDir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun `practice folder isolation excludes root and subfolder items from albums artists and videos while keeping folders playlists and bookmarks`() = runBlocking {
+        val backend = InMemoryMediaStoreBackend()
+        val repo = MediaRepository(backend = backend, ioDispatcher = Dispatchers.Unconfined)
+        val ds = FakeSafTreeDataSource()
+        val scanner = SafFolderScanner(repository = repo, dataSource = ds, ioDispatcher = Dispatchers.Unconfined)
+
+        val musicTreeUri = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3AMusic"
+        val lessonsTreeUri = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3ALessons"
+
+        // Root 1 (`Music`): contains casual track `CasualSong.mp3`, casual video `LiveConcert.mp4`,
+        // and subfolder `Backing` containing `BackingTrack.mp3` + `DrillVideo.mp4`.
+        ds.childrenByDirDocId["primary:Music"] = mutableListOf(
+            SafChildEntry("primary:Music/CasualSong.mp3", "", "CasualSong.mp3", "audio/mpeg", 4_000_000L, 100L),
+            SafChildEntry("primary:Music/LiveConcert.mp4", "", "LiveConcert.mp4", "video/mp4", 20_000_000L, 100L),
+            SafChildEntry("primary:Music/Backing", "", "Backing", DocumentsContract.Document.MIME_TYPE_DIR, 0L, 100L),
+        )
+        ds.childrenByDirDocId["primary:Music/Backing"] = mutableListOf(
+            SafChildEntry("primary:Music/Backing/BackingTrack.mp3", "", "BackingTrack.mp3", "audio/mpeg", 5_000_000L, 100L),
+            SafChildEntry("primary:Music/Backing/DrillVideo.mp4", "", "DrillVideo.mp4", "video/mp4", 15_000_000L, 100L),
+        )
+        ds.probesByUri["primary:Music/CasualSong.mp3"] = ExtractedMediaProbe(
+            durationMs = 210_000L,
+            rawTitle = "Casual Song",
+            rawArtist = "Casual Artist",
+            rawAlbum = "Casual Album",
+        )
+        ds.probesByUri["primary:Music/LiveConcert.mp4"] = ExtractedMediaProbe(
+            durationMs = 300_000L,
+            width = 1920,
+            height = 1080,
+        )
+        ds.probesByUri["primary:Music/Backing/BackingTrack.mp3"] = ExtractedMediaProbe(
+            durationMs = 195_000L,
+            rawTitle = "Backing Track",
+            rawArtist = "Practice Artist",
+            rawAlbum = "Practice Backing Vol 1",
+        )
+        ds.probesByUri["primary:Music/Backing/DrillVideo.mp4"] = ExtractedMediaProbe(
+            durationMs = 150_000L,
+            width = 1280,
+            height = 720,
+        )
+
+        // Root 2 (`Lessons`): dedicated root folder with audio + video
+        ds.childrenByDirDocId["primary:Lessons"] = mutableListOf(
+            SafChildEntry("primary:Lessons/Etude01.mp3", "", "Etude01.mp3", "audio/mpeg", 3_000_000L, 100L),
+            SafChildEntry("primary:Lessons/Etude01.mp4", "", "Etude01.mp4", "video/mp4", 12_000_000L, 100L),
+        )
+        ds.probesByUri["primary:Lessons/Etude01.mp3"] = ExtractedMediaProbe(
+            durationMs = 120_000L,
+            rawTitle = "Etude 01",
+            rawArtist = "Tutor Artist",
+            rawAlbum = "Guitar Etudes",
+        )
+        ds.probesByUri["primary:Lessons/Etude01.mp4"] = ExtractedMediaProbe(
+            durationMs = 120_000L,
+            width = 1920,
+            height = 1080,
+        )
+
+        val musicRootId = (scanner.addSafRootFromGrant(
+            SafGrantInfo(musicTreeUri, FakeSafTreeDataSource.AUTHORITY, "primary:Music", "Music", isWritable = true),
+        ) as AddRootResult.Added).root.rootId
+        val lessonsRootId = (scanner.addSafRootFromGrant(
+            SafGrantInfo(lessonsTreeUri, FakeSafTreeDataSource.AUTHORITY, "primary:Lessons", "Lessons", isWritable = true),
+        ) as AddRootResult.Added).root.rootId
+
+        // Initially nothing is marked as a Practice Folder -> all 3 albums, 3 artists, and 3 videos appear
+        assertEquals(setOf("Casual Album", "Guitar Etudes", "Practice Backing Vol 1"), repo.albums.value.map { it.title }.toSet())
+        assertEquals(setOf("Casual Artist", "Practice Artist", "Tutor Artist"), repo.artists.value.map { it.displayName }.toSet())
+        assertEquals(setOf("DrillVideo.mp4", "Etude01.mp4", "LiveConcert.mp4"), repo.videoItems.value.map { it.fileName }.toSet())
+
+        // Add practice items to a playlist and attach a bookmark to verify playlist & bookmark preservation
+        val backingAudio = repo.allMediaItems.value.first { it.fileName == "BackingTrack.mp3" }
+        val etudeVideo = repo.allMediaItems.value.first { it.fileName == "Etude01.mp4" }
+        val playlistId = repo.createPlaylist("Daily Routine", isPracticePlaylist = true)
+        repo.addItemsToPlaylist(playlistId, listOf(backingAudio.itemId, etudeVideo.itemId))
+        repo.saveBookmark(backingAudio.itemId, "Chorus Solo", 30_000L, 55_000L, 0.80f, null)
+
+        // 1. Mark subfolder `Music/Backing` AND root `Lessons` as Practice Folders
+        scanner.setFolderPracticeRule(musicRootId, "Backing", "$musicTreeUri/document/primary:Music/Backing", isPracticeFolder = true)
+        scanner.setFolderPracticeRule(lessonsRootId, "", lessonsTreeUri, isPracticeFolder = true)
+
+        // Practice audio & video items MUST disappear from albums, artists, and videoItems!
+        assertEquals(listOf("Casual Album"), repo.albums.value.map { it.title })
+        assertTrue(repo.getAlbumTracks("practice backing vol 1|practice artist").isEmpty())
+        assertTrue(repo.getAlbumTracks("guitar etudes|tutor artist").isEmpty())
+        assertEquals(listOf("Casual Artist"), repo.artists.value.map { it.displayName })
+        assertEquals(null, repo.getArtistDetail("practice artist"))
+        assertEquals(null, repo.getArtistDetail("tutor artist"))
+        assertEquals(listOf("LiveConcert.mp4"), repo.videoItems.value.map { it.fileName })
+
+        // Meanwhile safRoots, browseFolder (TREE & FLAT), playlists, and bookmarkedTracks MUST still include them!
+        assertEquals(4, repo.safRoots.value.first { it.rootId == musicRootId }.itemCount)
+        assertEquals(2, repo.safRoots.value.first { it.rootId == lessonsRootId }.itemCount)
+        assertEquals(
+            setOf("BackingTrack.mp3", "DrillVideo.mp4"),
+            repo.browseFolder(musicRootId, "Backing", flat = false)!!.mediaItems.map { it.fileName }.toSet(),
+        )
+        assertEquals(
+            4,
+            repo.browseFolder(musicRootId, "", flat = true)!!.mediaItems.size,
+        )
+        assertEquals(
+            setOf("Etude01.mp3", "Etude01.mp4"),
+            repo.browseFolder(lessonsRootId, "", flat = false)!!.mediaItems.map { it.fileName }.toSet(),
+        )
+        assertEquals(
+            listOf(backingAudio.itemId, etudeVideo.itemId),
+            repo.getPlaylistDetail(playlistId)!!.items.map { it.itemId },
+        )
+        assertEquals(listOf(backingAudio.itemId), repo.bookmarkedTracks.value.map { it.mediaItem.itemId })
+
+        // 2. Unmark both folders (`isPracticeFolder = false`) -> items immediately reappear in albums, artists, and videoItems!
+        scanner.setFolderPracticeRule(musicRootId, "Backing", "$musicTreeUri/document/primary:Music/Backing", isPracticeFolder = false)
+        scanner.setFolderPracticeRule(lessonsRootId, "", lessonsTreeUri, isPracticeFolder = false)
+
+        assertEquals(setOf("Casual Album", "Guitar Etudes", "Practice Backing Vol 1"), repo.albums.value.map { it.title }.toSet())
+        assertEquals(setOf("Casual Artist", "Practice Artist", "Tutor Artist"), repo.artists.value.map { it.displayName }.toSet())
+        assertEquals(setOf("DrillVideo.mp4", "Etude01.mp4", "LiveConcert.mp4"), repo.videoItems.value.map { it.fileName }.toSet())
     }
 }
