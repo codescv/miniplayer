@@ -412,4 +412,185 @@ class AudioTagCodecTest {
         assertTrue("Expected stco to upgrade to co64 upon 32-bit overflow", hasCo64)
         assertEquals("4GB Overflow Safe Track", AudioTagCodec.readTags(upgradedOut).title)
     }
+
+    @Test
+    fun seekableReadDoesNotReadFullAudioPayloadAndHardensOggGranuleId3FlagsAndMp4LargeSize() {
+        // 1. Verify SeekableByteSource reads < 96 KiB from a 4 MiB Ogg/Opus file with zero temp files
+        val opusHead = ByteBuffer.allocate(19).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("OpusHead".toByteArray(Charsets.ISO_8859_1))
+            put(1)
+            put(2)
+            putShort(312)
+            putInt(48_000)
+            putShort(0)
+            put(0)
+        }.array()
+
+        val vendorBytes = "MiniPlayer".toByteArray(Charsets.UTF_8)
+        val entryBytes = "TITLE=ZeroCopyScan".toByteArray(Charsets.UTF_8)
+        val commentBody = ByteBuffer.allocate(4 + vendorBytes.size + 4 + 4 + entryBytes.size)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .apply {
+                putInt(vendorBytes.size)
+                put(vendorBytes)
+                putInt(1)
+                putInt(entryBytes.size)
+                put(entryBytes)
+            }.array()
+        val vorbisCommentPkt = "\u0003vorbis".toByteArray(Charsets.ISO_8859_1) + commentBody + byteArrayOf(1)
+        val vorbisIdPkt = ByteBuffer.allocate(30).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put(1)
+            put("vorbis".toByteArray(Charsets.ISO_8859_1))
+            putInt(0)
+            put(2)
+            putInt(48_000)
+            putInt(0); putInt(192_000); putInt(0)
+            put(0xB8.toByte())
+            put(1)
+        }.array()
+        // Setup packet > 64 KiB so `[commentPkt, setupPkt]` spans multiple Ogg pages while `commentPkt` finishes on page 1!
+        val bigSetupPkt = ByteArray(70_000) { idx -> (idx and 0x7F).toByte() }.also {
+            it[0] = 5
+            System.arraycopy("vorbis".toByteArray(Charsets.ISO_8859_1), 0, it, 1, 6)
+        }
+
+        fun encodeSinglePacketPage(headerType: Int, granule: Long, seq: Int, pkt: ByteArray): ByteArray {
+            val segs = ArrayList<ByteArray>()
+            var off = 0
+            while (off < pkt.size) {
+                val n = minOf(255, pkt.size - off)
+                segs.add(pkt.copyOfRange(off, off + n))
+                off += n
+            }
+            if (pkt.size % 255 == 0) segs.add(ByteArray(0))
+            val raw = ByteArray(27 + segs.size + pkt.size)
+            val bb = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN)
+            bb.put("OggS".toByteArray(Charsets.ISO_8859_1))
+            bb.put(0)
+            bb.put(headerType.toByte())
+            bb.putLong(granule)
+            bb.putInt(0x55AA1122)
+            bb.putInt(seq)
+            bb.putInt(0)
+            bb.put(segs.size.toByte())
+            segs.forEach { bb.put(it.size.toByte()) }
+            segs.forEach { bb.put(it) }
+            bb.putInt(22, AudioTagCodec.computeOggCrc32(raw))
+            return raw
+        }
+
+        // Build 4 MiB Opus byte array (100 middle audio pages of ~40 KB each)
+        val largeOpusBaos = java.io.ByteArrayOutputStream()
+        val opusCommentPkt = "OpusTags".toByteArray(Charsets.ISO_8859_1) + commentBody
+        largeOpusBaos.write(encodeSinglePacketPage(0x02, 0L, 0, opusHead))
+        largeOpusBaos.write(encodeSinglePacketPage(0x00, 0L, 1, opusCommentPkt))
+        val chunk40k = ByteArray(40_000) { 0x3C }
+        for (p in 2..102) {
+            val isLast = p == 102
+            val gran = (p - 1) * 48_000L + 312L
+            largeOpusBaos.write(encodeSinglePacketPage(if (isLast) 0x04 else 0x00, gran, p, chunk40k))
+        }
+        val largeOpusBytes = largeOpusBaos.toByteArray()
+        assertTrue(largeOpusBytes.size > 4_000_000)
+
+        var bytesReadCount = 0L
+        val countingSource = object : AudioTagCodec.SeekableByteSource {
+            override val size: Long get() = largeOpusBytes.size.toLong()
+            override fun readAt(position: Long, dest: ByteArray, offset: Int, length: Int): Int {
+                val n = AudioTagCodec.ByteArrayByteSource(largeOpusBytes).readAt(position, dest, offset, length)
+                if (n > 0) bytesReadCount += n
+                return n
+            }
+        }
+        val opusTagsRead = AudioTagCodec.readTagsFromSource(countingSource, "large.opus", "audio/opus")
+        assertEquals("ZeroCopyScan", opusTagsRead.title)
+        assertEquals(101_000L, opusTagsRead.durationMs)
+        assertTrue(
+            "Seekable Ogg reader must skip middle audio pages (read $bytesReadCount of ${largeOpusBytes.size} bytes)",
+            bytesReadCount < 96 * 1024L,
+        )
+
+        // 2. Verify Vorbis `[commentPkt, bigSetupPkt]` group page 1 gets granulePosition = 0L (RFC 3533 §6), NOT -1L!
+        val vorbisSrc = tempFolder.newFile("vorbis_multipage.ogg")
+        // Put both commentPkt and bigSetupPkt into header group by building initial file and rewriting tags
+        val groupBaos = java.io.ByteArrayOutputStream()
+        groupBaos.write(encodeSinglePacketPage(0x02, 0L, 0, vorbisIdPkt))
+        // Pack commentPkt + start of bigSetupPkt onto page 1, rest of bigSetupPkt onto page 2
+        val combinedHdrSegs = ArrayList<ByteArray>()
+        for (pkt in listOf(vorbisCommentPkt, bigSetupPkt)) {
+            var off = 0
+            while (off < pkt.size) {
+                val n = minOf(255, pkt.size - off)
+                combinedHdrSegs.add(pkt.copyOfRange(off, off + n))
+                off += n
+            }
+            if (pkt.size % 255 == 0) combinedHdrSegs.add(ByteArray(0))
+        }
+        var segIdx = 0
+        var seq = 1
+        while (segIdx < combinedHdrSegs.size) {
+            val end = minOf(segIdx + 255, combinedHdrSegs.size)
+            val slice = combinedHdrSegs.subList(segIdx, end)
+            val bodyLen = slice.sumOf { it.size }
+            val raw = ByteArray(27 + slice.size + bodyLen)
+            val bb = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN)
+            bb.put("OggS".toByteArray(Charsets.ISO_8859_1))
+            bb.put(0)
+            bb.put((if (segIdx > 0) 0x01 else 0x00).toByte())
+            bb.putLong(0L)
+            bb.putInt(0x55AA1122)
+            bb.putInt(seq++)
+            bb.putInt(0)
+            bb.put(slice.size.toByte())
+            slice.forEach { bb.put(it.size.toByte()) }
+            slice.forEach { bb.put(it) }
+            bb.putInt(22, AudioTagCodec.computeOggCrc32(raw))
+            groupBaos.write(raw)
+            segIdx = end
+        }
+        groupBaos.write(encodeSinglePacketPage(0x04, 48_000L * 10L, seq, ByteArray(512) { 0x11 }))
+        vorbisSrc.writeBytes(groupBaos.toByteArray())
+
+        val vorbisRewritten = File(tempFolder.root, "vorbis_rewritten.ogg")
+        AudioTagCodec.writeTagsToTempFile(
+            sourceFile = vorbisSrc,
+            tempOutputFile = vorbisRewritten,
+            spec = TagWriteSpec(title = OptionalField.Set("RFC3533 Compliant")),
+        )
+        // Inspect page 1 header (immediately after page 0) -> granulePosition at offset +6 must be 0L (not -1L)
+        val rewrittenBytes = vorbisRewritten.readBytes()
+        val page0Segs = rewrittenBytes[26].toInt() and 0xFF
+        var page0Body = 0
+        for (i in 0 until page0Segs) page0Body += rewrittenBytes[27 + i].toInt() and 0xFF
+        val page1Offset = 27 + page0Segs + page0Body
+        assertEquals("OggS", String(rewrittenBytes, page1Offset, 4, Charsets.ISO_8859_1))
+        val page1Granule = ByteBuffer.wrap(rewrittenBytes, page1Offset + 6, 8).order(ByteOrder.LITTLE_ENDIAN).long
+        assertEquals("Intermediate page where comment packet finished must have granulePosition = 0L", 0L, page1Granule)
+
+        // 3. Malformed 64-bit MP4 largesize (> Int.MAX_VALUE) & ID3v2.3 compressed/overflow headers do not throw or corrupt
+        val malformedBox = ByteBuffer.allocate(24).order(ByteOrder.BIG_ENDIAN).apply {
+            putInt(1) // 64-bit largesize marker
+            put("free".toByteArray(Charsets.ISO_8859_1))
+            putLong(0x0000_0001_8000_0010L) // > 6 GiB -> would wrap negative if `.toInt()` unchecked!
+            putLong(0L)
+        }.array()
+        assertTrue(AudioTagCodec.parseMemBoxes(malformedBox).isEmpty())
+
+        val overflowId3Hdr = byteArrayOf('I'.code.toByte(), 'D'.code.toByte(), '3'.code.toByte(), 3, 0, 0x40, 0, 0, 0, 20)
+        val overflowId3Body = ByteBuffer.allocate(20).order(ByteOrder.BIG_ENDIAN).apply {
+            putInt(0x7FFF_FFFF) // Int.MAX_VALUE extended header size -> `4 + size` must NOT overflow Int!
+        }.array()
+        assertTrue(AudioTagCodec.parseId3v2HeaderAndBody(overflowId3Hdr, overflowId3Body).isEmpty())
+
+        // Compressed ID3v2.3 frame (`flag2 = 0x80`) is safely skipped rather than re-emitted with cleared flags
+        val compressedFrameHdr = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN).apply {
+            put("TXXX".toByteArray(Charsets.ISO_8859_1))
+            putInt(6)
+            put(0)
+            put(0x80.toByte()) // zlib compression flag
+            put(byteArrayOf(1, 2, 3, 4, 5, 6))
+        }.array()
+        val normalHdr = byteArrayOf('I'.code.toByte(), 'D'.code.toByte(), '3'.code.toByte(), 3, 0, 0, 0, 0, 0, 16)
+        assertTrue(AudioTagCodec.parseId3v2HeaderAndBody(normalHdr, compressedFrameHdr).isEmpty())
+    }
 }

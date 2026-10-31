@@ -42,6 +42,7 @@ class OnlineMetadataCompleterTest {
             readTimeoutMs: Int,
             maxBytes: Int,
             headOnly: Boolean,
+            totalTimeoutMs: Long,
         ): RawHttpResponse {
             requests.add(RecordedRequest(url, headers, headOnly, System.currentTimeMillis()))
             return handler(url, headers, headOnly)
@@ -419,6 +420,89 @@ class OnlineMetadataCompleterTest {
             "https://is1-ssl.mzstatic.com/image/thumb/a/b/1000x1000bb.jpg",
             ItunesSearchClient.upgradeArtworkTo1000x1000("https://is1-ssl.mzstatic.com/image/thumb/a/b/60x60bb.jpg"),
         )
+
+        // 1. Trusted `http://*.archive.org` redirect from `https://coverartarchive.org` auto-upgrades to `https://`
+        val visitedUrls = CopyOnWriteArrayList<String>()
+        val archiveRedirectClient = UrlConnectionOnlineHttpClient(
+            allowInsecureLoopback = false,
+            openConnection = { url ->
+                visitedUrls.add(url.toString())
+                object : java.net.HttpURLConnection(url) {
+                    override fun connect() {}
+                    override fun disconnect() {}
+                    override fun usingProxy(): Boolean = false
+                    override fun getResponseCode(): Int =
+                        if (url.host == "coverartarchive.org") 307 else 200
+                    override fun getHeaderField(name: String?): String? =
+                        if (url.host == "coverartarchive.org" && name.equals("Location", ignoreCase = true)) {
+                            "http://ia800500.us.archive.org/12/items/mbid-abc/front-500.jpg"
+                        } else {
+                            null
+                        }
+                }
+            },
+        )
+        val caaResolved = CoverArtArchiveClient(archiveRedirectClient, timeoutMs = 1_000L)
+            .resolveFrontCoverUrl("mbid-abc")
+        assertEquals("https://ia800500.us.archive.org/12/items/mbid-abc/front-500.jpg", caaResolved)
+        assertEquals(
+            listOf(
+                "https://coverartarchive.org/release/mbid-abc/front-500",
+                "https://ia800500.us.archive.org/12/items/mbid-abc/front-500.jpg",
+            ),
+            visitedUrls.toList(),
+        )
+
+        // 2. Untrusted `https -> http` redirect to non-archive host is strictly rejected
+        val evilRedirectClient = UrlConnectionOnlineHttpClient(
+            allowInsecureLoopback = false,
+            openConnection = { url ->
+                object : java.net.HttpURLConnection(url) {
+                    override fun connect() {}
+                    override fun disconnect() {}
+                    override fun usingProxy(): Boolean = false
+                    override fun getResponseCode(): Int = 302
+                    override fun getHeaderField(name: String?): String? =
+                        if (name.equals("Location", ignoreCase = true)) "http://evil.example.com/front.jpg" else null
+                }
+            },
+        )
+        assertNull(CoverArtArchiveClient(evilRedirectClient, timeoutMs = 1_000L).resolveFrontCoverUrl("mbid-evil"))
+
+        // 3. Multi-hop slow redirect chain respects total wall-clock timeout and triggers `conn.disconnect()` on cancel
+        val disconnectedCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val stalledMultiHopClient = UrlConnectionOnlineHttpClient(
+            allowInsecureLoopback = false,
+            openConnection = { url ->
+                object : java.net.HttpURLConnection(url) {
+                    @Volatile private var aborted = false
+                    override fun connect() {}
+                    override fun disconnect() {
+                        aborted = true
+                        disconnectedCount.incrementAndGet()
+                    }
+                    override fun usingProxy(): Boolean = false
+                    override fun getResponseCode(): Int {
+                        val hop = url.path.substringAfterLast('/').toIntOrNull() ?: 0
+                        for (tick in 0 until 20) {
+                            if (aborted) throw java.io.IOException("Disconnected on timeout")
+                            Thread.sleep(10L) // 200ms per hop; 5 hops = 1000ms without total deadline!
+                        }
+                        return 302
+                    }
+                    override fun getHeaderField(name: String?): String? {
+                        val hop = url.path.substringAfterLast('/').toIntOrNull() ?: 0
+                        return if (name.equals("Location", ignoreCase = true)) "https://coverartarchive.org/hop/${hop + 1}" else null
+                    }
+                }
+            },
+        )
+        val t0 = System.currentTimeMillis()
+        val timedOutUrl = CoverArtArchiveClient(stalledMultiHopClient, timeoutMs = 280L).resolveFrontCoverUrl("mbid-slow")
+        val dt = System.currentTimeMillis() - t0
+        assertNull(timedOutUrl)
+        assertTrue("Multi-hop CAA deadline should abort around 280ms, took ${dt}ms", dt < 700L)
+        assertTrue(disconnectedCount.get() >= 1)
     }
 
     private fun sampleItem(

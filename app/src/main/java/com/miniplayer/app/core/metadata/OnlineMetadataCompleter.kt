@@ -8,16 +8,24 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -53,6 +61,7 @@ interface OnlineHttpClient {
         readTimeoutMs: Int = 8_000,
         maxBytes: Int = 2 * 1024 * 1024,
         headOnly: Boolean = false,
+        totalTimeoutMs: Long = (connectTimeoutMs.toLong() + readTimeoutMs.toLong()).coerceAtLeast(500L),
     ): RawHttpResponse
 }
 
@@ -64,6 +73,22 @@ class UrlConnectionOnlineHttpClient(
     companion object {
         private const val MAX_REDIRECTS = 5
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
+        private val TRUSTED_ARCHIVE_HOST_REGEX = Regex(
+            """^(?:[a-z0-9-]+\.)*archive\.org$|^coverartarchive\.org$""",
+            RegexOption.IGNORE_CASE,
+        )
+
+        @Suppress("DEPRECATION")
+        internal fun upgradeArchiveRedirectIfTrusted(current: URL, next: URL): URL {
+            if (current.protocol.equals("https", ignoreCase = true) &&
+                next.protocol.equals("http", ignoreCase = true) &&
+                TRUSTED_ARCHIVE_HOST_REGEX.matches(next.host.orEmpty()) &&
+                (next.port == -1 || next.port == 80)
+            ) {
+                return URL("https", next.host, -1, next.file)
+            }
+            return next
+        }
     }
 
     override suspend fun get(
@@ -73,20 +98,40 @@ class UrlConnectionOnlineHttpClient(
         readTimeoutMs: Int,
         maxBytes: Int,
         headOnly: Boolean,
+        totalTimeoutMs: Long,
     ): RawHttpResponse = withContext(Dispatchers.IO) {
         @Suppress("DEPRECATION")
         var current = URL(url)
         validateScheme(current)
 
+        val budgetMs = totalTimeoutMs.coerceAtLeast(100L)
+        val deadlineNano = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs)
+
         var hops = 0
         while (true) {
+            ensureActive()
+            val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNano - System.nanoTime())
+            if (remainingMs <= 0L) {
+                throw SocketTimeoutException("Online HTTP total deadline (${budgetMs}ms) exceeded")
+            }
+
             val conn = openConnection(current)
+            val normalFinish = AtomicBoolean(false)
+            val cancelWatcher = launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    if (!normalFinish.get()) {
+                        runCatching { conn.disconnect() }
+                    }
+                }
+            }
             try {
                 conn.requestMethod = if (headOnly) "HEAD" else "GET"
                 conn.instanceFollowRedirects = false
                 conn.useCaches = false
-                conn.connectTimeout = connectTimeoutMs.coerceAtLeast(250)
-                conn.readTimeout = readTimeoutMs.coerceAtLeast(250)
+                conn.connectTimeout = minOf(connectTimeoutMs.toLong(), remainingMs).coerceAtLeast(50L).toInt()
+                conn.readTimeout = minOf(readTimeoutMs.toLong(), remainingMs).coerceAtLeast(50L).toInt()
                 headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
 
                 val code = conn.responseCode
@@ -97,7 +142,8 @@ class UrlConnectionOnlineHttpClient(
                         throw IOException("Exceeded max redirects ($MAX_REDIRECTS)")
                     }
                     @Suppress("DEPRECATION")
-                    val next = URL(current, loc)
+                    val rawNext = URL(current, loc)
+                    val next = upgradeArchiveRedirectIfTrusted(current, rawNext)
                     if (current.protocol.equals("https", ignoreCase = true) &&
                         next.protocol.equals("http", ignoreCase = true)
                     ) {
@@ -112,7 +158,7 @@ class UrlConnectionOnlineHttpClient(
                 val body = if (headOnly || code !in 200..299) {
                     ByteArray(0)
                 } else {
-                    conn.inputStream.use { readCapped(it, maxBytes) }
+                    conn.inputStream.use { readCapped(it, maxBytes, deadlineNano) }
                 }
                 return@withContext RawHttpResponse(
                     statusCode = code,
@@ -121,6 +167,8 @@ class UrlConnectionOnlineHttpClient(
                     body = body,
                 )
             } finally {
+                normalFinish.set(true)
+                cancelWatcher.cancel()
                 conn.disconnect()
             }
         }
@@ -136,10 +184,14 @@ class UrlConnectionOnlineHttpClient(
         throw IOException("Refusing insecure non-HTTPS URL: $url")
     }
 
-    private fun readCapped(input: InputStream, maxBytes: Int): ByteArray {
+    private suspend fun readCapped(input: InputStream, maxBytes: Int, deadlineNano: Long): ByteArray {
         val baos = ByteArrayOutputStream()
         val buf = ByteArray(16 * 1024)
         while (true) {
+            currentCoroutineContext().ensureActive()
+            if (System.nanoTime() > deadlineNano) {
+                throw SocketTimeoutException("Online HTTP payload read exceeded total deadline")
+            }
             val n = input.read(buf)
             if (n < 0) break
             if (n == 0) continue
@@ -303,6 +355,7 @@ class CoverArtArchiveClient(
         val sockTimeout = timeoutMs.coerceIn(100L, 3_000L).toInt()
 
         return withTimeoutOrNull(timeoutMs) {
+            val caaStartNano = System.nanoTime()
             runCatching {
                 val resp = http.get(
                     url = url,
@@ -311,18 +364,22 @@ class CoverArtArchiveClient(
                     readTimeoutMs = sockTimeout,
                     maxBytes = 64,
                     headOnly = true,
+                    totalTimeoutMs = timeoutMs,
                 )
                 if (resp.statusCode in 200..299) {
                     resp.finalUrl.ifBlank { url }
                 } else if (resp.statusCode == 405) {
+                    val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - caaStartNano)
+                    val remainingMs = (timeoutMs - elapsedMs).coerceAtLeast(100L)
                     // Fallback in case endpoint dislikes HEAD
                     val getResp = http.get(
                         url = url,
                         headers = mapOf("User-Agent" to MusicBrainzClient.USER_AGENT, "Range" to "bytes=0-15"),
-                        connectTimeoutMs = sockTimeout,
-                        readTimeoutMs = sockTimeout,
+                        connectTimeoutMs = remainingMs.coerceAtMost(3_000L).toInt(),
+                        readTimeoutMs = remainingMs.coerceAtMost(3_000L).toInt(),
                         maxBytes = 1024,
                         headOnly = false,
+                        totalTimeoutMs = remainingMs,
                     )
                     if (getResp.statusCode in 200..299) getResp.finalUrl.ifBlank { url } else null
                 } else {

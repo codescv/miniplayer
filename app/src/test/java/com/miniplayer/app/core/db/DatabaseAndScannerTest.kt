@@ -4,6 +4,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import com.miniplayer.app.core.metadata.ArtistSplitter
 import com.miniplayer.app.core.metadata.DefaultMetadataEngine
+import com.miniplayer.app.core.metadata.OptionalField
 import com.miniplayer.app.core.metadata.PhysicalTagWriter
 import com.miniplayer.app.core.metadata.TagWriteSpec
 import com.miniplayer.app.core.model.AddRootResult
@@ -569,6 +570,50 @@ class DatabaseAndScannerTest {
             engine.resetMetadataOverride(listOf(item1.itemId))
             assertEquals("Uchiage Hanabi", repo.getMediaItemById(item1.itemId)!!.title)
             assertFalse(repo.getMediaItemById(item1.itemId)!!.hasMetadataOverride)
+
+            // Explicitly clearing optional fields & cover while item2 is playing:
+            // 1) Must NOT snap back to stale `rawAlbum`, `rawAlbumArtist`, `rawTrackNum`, `rawYear`, or `embeddedCoverPath`!
+            // 2) Must flush `OptionalField.Set(null)` (NOT `Unchanged`) when playback switches away!
+            writtenCalls.clear()
+            val clearOutcome = engine.saveMetadata(
+                itemIds = listOf(item2.itemId),
+                draft = MetadataDraft(
+                    album = "",
+                    albumArtist = "",
+                    trackNumber = null,
+                    year = null,
+                    coverBytes = null,
+                    dirtyFields = setOf(
+                        MetadataField.ALBUM,
+                        MetadataField.ALBUM_ARTIST,
+                        MetadataField.TRACK_NUMBER,
+                        MetadataField.YEAR,
+                        MetadataField.COVER,
+                    ),
+                    writeBackToFile = true,
+                ),
+                currentlyPlayingItemId = item2.itemId,
+            )
+            assertEquals(MetadataSaveOutcome.SAVED_DB_DEFERRED_FILE, clearOutcome)
+            val clearedItem2 = repo.getMediaItemById(item2.itemId)!!
+            assertEquals("Hells Bells", clearedItem2.title) // Untouched field kept!
+            assertEquals(null, clearedItem2.album)
+            assertEquals(null, clearedItem2.albumArtist)
+            assertEquals(null, clearedItem2.trackNumber)
+            assertEquals(null, clearedItem2.year)
+            assertEquals(null, clearedItem2.coverPathOrUri)
+
+            // Transition active playback to item3 -> flushes deferred clear spec to physicalTagWriter!
+            repo.savePlaybackPosition(item3.itemId, 1_000L)
+            delay(50L)
+            assertEquals(1, writtenCalls.size)
+            val flushedSpec = writtenCalls.single().second
+            assertEquals(OptionalField.Unchanged, flushedSpec.title)
+            assertEquals(OptionalField.Set<String?>(null), flushedSpec.album)
+            assertEquals(OptionalField.Set<String?>(null), flushedSpec.albumArtist)
+            assertEquals(OptionalField.Set<Int?>(null), flushedSpec.trackNumber)
+            assertEquals(OptionalField.Set<Int?>(null), flushedSpec.year)
+            assertEquals(OptionalField.Set(null), flushedSpec.cover)
         } finally {
             tempDir.deleteRecursively()
         }

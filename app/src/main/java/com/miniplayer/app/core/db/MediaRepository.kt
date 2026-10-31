@@ -405,7 +405,7 @@ class MediaRepository(
             val coversDir = File(files, "covers")
             if (coversDir.isDirectory) {
                 val protectedPaths = backend.readSnapshot().overridesByItemId.values
-                    .mapNotNull { it.coverLocalPath }
+                    .mapNotNull { it.coverLocalPath?.takeIf { p -> p.isNotBlank() } }
                     .toSet()
                 coversDir.listFiles()?.forEach { f ->
                     if (f.isFile && f.absolutePath !in protectedPaths) {
@@ -455,29 +455,49 @@ class MediaRepository(
             val bms = db.bookmarksByItemId[row.itemId].orEmpty()
             val rulesForRoot = rulesByRootAndPath[row.rootId].orEmpty()
 
-            // Effective metadata priority chain: COALESCE(override, embedded, parsedFilename)
-            val effectiveTitle = ov?.title?.takeIf { it.isNotBlank() }
-                ?: row.rawTitle?.takeIf { it.isNotBlank() }
-                ?: row.parsedTitle.ifBlank { row.fileName }
+            // Effective metadata priority chain: COALESCE(override, embedded, parsedFilename),
+            // honoring explicit clear sentinels (`CLEARED_TEXT = ""` / `CLEARED_INT = -1`) so cleared tags
+            // never snap back to stale `row.raw_*` or `embeddedCoverPath`.
+            val effectiveTitle = when (val ovTitle = ov?.title) {
+                null -> row.rawTitle?.takeIf { it.isNotBlank() }
+                    ?: row.parsedTitle.ifBlank { row.fileName }
+                else -> ovTitle.takeIf { it.isNotBlank() }
+                    ?: row.parsedTitle.ifBlank { row.fileName }
+            }
 
-            val effectiveArtist = ov?.artist?.takeIf { it.isNotBlank() }
-                ?: row.rawArtist?.takeIf { it.isNotBlank() }
-                ?: row.parsedArtist?.takeIf { it.isNotBlank() }
-                ?: ArtistSplitter.UNKNOWN_ARTIST_DISPLAY
+            val effectiveArtist = when (val ovArtist = ov?.artist) {
+                null -> row.rawArtist?.takeIf { it.isNotBlank() }
+                    ?: row.parsedArtist?.takeIf { it.isNotBlank() }
+                    ?: ArtistSplitter.UNKNOWN_ARTIST_DISPLAY
+                else -> ovArtist.takeIf { it.isNotBlank() }
+                    ?: ArtistSplitter.UNKNOWN_ARTIST_DISPLAY
+            }
 
-            val effectiveAlbum = ov?.album?.takeIf { it.isNotBlank() }
-                ?: row.rawAlbum?.takeIf { it.isNotBlank() }
-                ?: row.parsedAlbum?.takeIf { it.isNotBlank() }
+            val effectiveAlbum = when (val ovAlbum = ov?.album) {
+                null -> row.rawAlbum?.takeIf { it.isNotBlank() }
+                    ?: row.parsedAlbum?.takeIf { it.isNotBlank() }
+                else -> ovAlbum.takeIf { it.isNotBlank() }
+            }
 
-            val effectiveAlbumArtist = ov?.albumArtist?.takeIf { it.isNotBlank() }
-                ?: row.rawAlbumArtist?.takeIf { it.isNotBlank() }
+            val effectiveAlbumArtist = when (val ovAlbumArtist = ov?.albumArtist) {
+                null -> row.rawAlbumArtist?.takeIf { it.isNotBlank() }
+                else -> ovAlbumArtist.takeIf { it.isNotBlank() }
+            }
 
-            val effectiveTrackNum = ov?.trackNum ?: row.rawTrackNum
-            val effectiveYear = ov?.year ?: row.rawYear
+            val effectiveTrackNum = when (val ovTrack = ov?.trackNum) {
+                null -> row.rawTrackNum
+                else -> ovTrack.takeIf { it > 0 }
+            }
+            val effectiveYear = when (val ovYear = ov?.year) {
+                null -> row.rawYear
+                else -> ovYear.takeIf { it > 0 }
+            }
 
-            val effectiveCover = ov?.coverLocalPath?.takeIf { it.isNotBlank() }
-                ?: row.embeddedCoverPath?.takeIf { it.isNotBlank() }
-                ?: row.folderCoverUri?.takeIf { it.isNotBlank() }
+            val effectiveCover = when (val ovCover = ov?.coverLocalPath) {
+                null -> row.embeddedCoverPath?.takeIf { it.isNotBlank() }
+                    ?: row.folderCoverUri?.takeIf { it.isNotBlank() }
+                else -> ovCover.takeIf { it.isNotBlank() }
+            }
 
             val inPracticeFolder = resolveIsPracticeFolder(rulesForRoot, row.parentRelPath)
             val hasPracticeRec = bms.isNotEmpty() || (pState?.isNonDefault == true)
