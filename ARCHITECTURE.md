@@ -1,6 +1,6 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.5 (`versionCode = 10005`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.6 (`versionCode = 10006`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
 > **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · SQLite (`SQLiteOpenHelper` + Kotlin `StateFlow`)
 
@@ -275,6 +275,8 @@ CREATE TABLE app_settings (
    - 全应用（日常播放页、练习顶栏、横屏视频 HUD、曲库/列表菜单）统一采用自绘矢量吉他图标 **`GuitarIcon`** 标识练习模式，屏幕常亮采用纯图标切换按钮（`DeckIconToggleButton` + `Icons.Outlined.LightMode`）。
    - 点播入口携带 `PlayContext` 枚举：`PRACTICE_PLAYLIST` | `PRACTICE_FOLDER` | `BOOKMARK_JUMP(bookmarkId)` | `CASUAL`。
    - 前三者立即置 `isPracticeModeActive = true`、展开 `PracticeDeck` 并应用 `PracticeState`（倍速 + 半音/音分 + BPM + A/B 区间）；`CASUAL` 置 `isPracticeModeActive = false`、播放参数保持 `(1.0f, 1.0f)`。
+4. **自适应启动图标圆形蒙版光学居中 (`res/drawable/ic_launcher_foreground.xml`, `v1.0.6`)**：
+   - 针对 Android `AdaptiveIconDrawable` 将 `108×108dp` 画布裁剪为内圈 `72×72dp`（`cx = 54, cy = 54, r = 36dp`，光学安全区 `r = 22dp..24dp`）的圆形桌面遮罩，`ic_launcher_foreground.xml` 将「版型 A」宽肩 351 拨片与居中圆角播放三角按 **`0.60x`（`38.4dp × 37.8dp`）** 缩放并光学居中于 `x ∈ [34.8, 73.2]`、`y ∈ [36.5, 74.3]`（左右肩半径 `19.6dp`、底尖半径 `20.3dp`，四周留出 `~15dp–16dp` 均匀边距），配合 `values` / `values-night` 颜色资源自动切换深浅色主题。
 
 ---
 

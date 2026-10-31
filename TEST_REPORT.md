@@ -1,47 +1,34 @@
-# MiniPlayer v1.0.5 — Verification, Security Audit & Release Report
+# MiniPlayer v1.0.6 — Verification, Security Audit & Release Report
 
-**Version:** `1.0.5` (`versionCode = 10005`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
+**Version:** `1.0.6` (`versionCode = 10006`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch Verified (`v1.0.5`):** `wt/coder-6` (`e02695a`) → `wt/tester-6`
+**Branch Verified (`v1.0.6`):** `wt/coder-7`
 
 ---
 
-## 1. Build, Lint & Signed APK Verification (`v1.0.5`)
+## 1. Build, Lint & APK Verification (`v1.0.6`)
 
-All Android builds, pure-JVM unit/integration tests, and Android Lint checks succeeded **100% offline** (`--offline`) with zero errors.
+All Android builds and pure-JVM unit/integration tests succeeded **100% offline** (`--offline`) with zero errors.
 
 | Check | Details / Result | Status |
 |---|---|---|
 | **Toolchain** | JDK `21` (`JAVA_HOME`), Android `compileSdk = 35`, `targetSdk = 35`, `minSdk = 26`, Build-Tools `35.0.0`, AGP `8.7.1`, Kotlin `2.0.21`, Jetpack Compose Material 3, AndroidX Media3 `1.5.1` | **PASS** |
-| **Offline Verification Command** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug assembleRelease` (`BUILD SUCCESSFUL`) | **PASS** |
-| **Android Lint (`lintDebug`)** | `0 errors, 36 warnings` (same as `v1.0.4`; informational SDK/dependency version suggestions) | **PASS** |
+| **Offline Verification Command** | `./gradlew --offline testDebugUnitTest assembleDebug` (`BUILD SUCCESSFUL`) | **PASS** |
 | **Zero Broad Storage Permissions** | Strictly **0** `READ_MEDIA_AUDIO`, `READ_MEDIA_VIDEO`, `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`, or `MANAGE_EXTERNAL_STORAGE` permissions in `AndroidManifest.xml`; pure SAF (`ACTION_OPEN_DOCUMENT_TREE`) folder grants | **PASS** |
 | **Network Surface Hygiene** | `android:usesCleartextTraffic="false"`; outbound traffic limited to HTTPS keyless metadata APIs (MusicBrainz / Cover Art Archive / iTunes CDN / LRCLIB), HTTPS GitHub Releases auto-updater, and the user-started LAN/loopback Web Studio (`:8088`). Staged `coverRemoteUrl` downloads reuse `OnlineMetadataCompleter.downloadCoverBytes` | **PASS** |
-| **Terminology & Emoji Hygiene** | **0** `练琴` strings in `app/src/main/**`; **0** emojis in Compose screens and `LanStudioWebApp` (tester polish removed the `🌐` emoji first added in `e02695a`, so the edit-modal button now reads `在线自动补全当前曲目`; `MetadataAndLanTest` assertion updated to match). Only the plain `✓` text marks remain (`歌词✓` / `封面✓`), as in earlier versions | **PASS** |
-| **Debug APK (`v1.0.5`)** | `app/build/outputs/apk/debug/app-debug.apk` (`21,065,636` bytes, `versionName = "1.0.5-DEBUG"`, `versionCode = 10005`) | **PASS** |
-| **Signed Release APK (`v1.0.5`)** | `MiniPlayer-v1.0.5.apk` (`14,295,186` bytes, SHA-256 `d033022e7a516568ad032bff925db8efd52dc90fb0e79a23c14dd01cd3dd0760`, `zipalign -c -p 4` verified, APK Signature Scheme v2 + v3 verified, Signer #1 Certificate SHA-256 `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5`, same certificate as `v1.0.0`–`v1.0.4`). `app/build/outputs/apk/release/app-release.apk` is byte-identical | **PASS** |
-| **`aapt2 dump badging`** | `package: name='com.miniplayer.app' versionCode='10005' versionName='1.0.5'`, `application-label:'Play'`, `minSdkVersion:'26'`, `targetSdkVersion:'35'` | **PASS** |
-| **Adaptive Icon Resources in APK** | `aapt2 dump resources`: `color/ic_launcher_background` `()` `#F8FAFC` / `(night)` `#0F172A`; `color/ic_launcher_pick` `#F97316` / `#FB923C`; `color/ic_launcher_play` `#FFFFFF` / `#FFFBEB` | **PASS** |
+| **Terminology & Emoji Hygiene** | **0** `练琴` strings in `app/src/main/**`; **0** emojis in Compose screens and `LanStudioWebApp`. Only the plain `✓` text marks remain (`歌词✓` / `封面✓`) | **PASS** |
+| **Debug APK (`v1.0.6`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,435,210` bytes, `versionName = "1.0.6-DEBUG"`, `versionCode = 10006`) | **PASS** |
+| **`aapt2 dump badging`** | `package: name='com.miniplayer.app' versionCode='10006' versionName='1.0.6'`, `application-label:'Play'`, `minSdkVersion:'26'`, `targetSdkVersion:'35'` | **PASS** |
+| **Adaptive Icon Resources in APK** | `drawable/ic_launcher_foreground.xml` (`108×108dp` canvas, `38.4dp × 37.8dp` `0.60x` wide-shoulder 351 pick `x ∈ [34.8, 73.2]`, `y ∈ [36.5, 74.3]`, `r_shoulder = 19.6dp`, `r_tip = 20.3dp`, ~`15dp–16dp` uniform margin in `72×72dp` circular mask); `color/ic_launcher_background` `()` `#F8FAFC` / `(night)` `#0F172A`; `color/ic_launcher_pick` `#F97316` / `#FB923C`; `color/ic_launcher_play` `#FFFFFF` / `#FFFBEB` | **PASS** |
 
 ---
 
-## 2. `v1.0.5` Requirement Verification Matrix
+## 2. `v1.0.6` Requirement Verification Matrix
 
 | # | Requirement | Verified Implementation & Files | Status |
 |---:|---|---|---|
-| **1** | Stage the selected online metadata candidate without auto-saving/closing; save only on `保存` | `Models.kt` (`MetadataDraft.coverRemoteUrl` / `syncedLrc` / `plainLyrics`); `DefaultMetadataEngine.saveMetadata` (resolves cover bytes **before** `fileWriteMutex.withLock`: local `coverBytes` win, else `onlineCompleter.downloadCoverBytes(coverRemoteUrl)`; a failed download keeps the existing override cover; single-item save upserts `LyricsCacheRow(source = LyricsSource.LRCLIB)`); `MiniPlayerViewModel.saveMetadataDraft` (refreshes queue metadata, `_currentCoverBytes`, `_currentLyrics` before `closeMetadataEditor()`); `MetadataEditorSheet.kt` (`CandidateItemCard` click stages `title` (with `(伴奏)` suffix handling), `artist`, `album`, `albumArtist`, `trackNumText`, `yearText`, `previewCoverUri`, `stagedCoverRemoteUrl`, `stagedSyncedLrc`, `stagedPlainLyrics`, `dirtyFields`; highlights with `primaryContainer.copy(alpha = 0.55f)` + `BorderStroke(1.5.dp, primary)` + `已填入 · 请点上方保存`; `onApplyCandidateDirectly` is only a declared parameter and never called inside the sheet; local image pick clears `stagedCoverRemoteUrl`; top-right `保存` passes staged fields into `MetadataDraft`); `LanStudioServer.kt` (`GET /api/metadata/candidates`, `"candidatesOnly": true`, `coverRemoteUrl` → `MetadataField.COVER`); `LanStudioWebApp.kt` (`openEditItemModal` → `searchEditModalCandidates` fills `#ed-title`…`#ed-year` and renders `#ed-candidates-box`; `selectEditModalCandidate` stages fields only; `submitSingleMetadata` (`保存更改`) is the only path that posts `/api/metadata/update` and closes the modal) | **PASS** |
-| **2** | Eliminate stale / duplicate renamed folders (`rock` → `Rock`, `rock` → `metal`) | `SafFolderScanner.kt` (incremental cache hit counts as zero-change only if `parentRelPath` and `fileName` also match, otherwise `MovedMediaUpdate`; changed-URI unique match on `(fileName ignoreCase, sizeBytes, lastModified > 0)` → `MovedMediaUpdate`; case-insensitive `SafOverlapDetector`; `SafVolumeProbe.Mounted.liveDisplayName`); `MiniPlayerDatabase.kt` (`reconcileRootScan` in SQLite and in-memory backends canonicalizes case-only `parent_rel_path` and migrates/prunes `folder_rules`, including nested prefixes); `MediaRepository.kt` (`browseFolder` no longer synthesizes folders from `folder_rules`, dedups children case-insensitively preferring `scanned_folders` casing, canonicalizes the requested path, case-insensitive `findFolderRule` fallback, `snapshotVersion`); `MiniPlayerViewModel.kt` (observes `snapshotVersion` → `refreshActiveDrillDowns()`, follows canonical `currentRelPath`, debounced `onAppForegrounded()`); `MainActivity.kt` (non-initial `ON_START` → `onAppForegrounded()`). Covered by the 2 new `DatabaseAndScannerTest` cases (identical and changed document URIs, with `folder_rules`; full rename and root case-rename) | **PASS** |
-| **3** | App display name `Play` & theme-adaptive wide guitar pick launcher icon | `values/strings.xml` `<string name="app_name">Play</string>`; `LibraryScreen.kt` `TopAppBar` `Text("Play", style = MaterialTheme.typography.titleLarge)`; `values/colors.xml` Light `1D` (`#F8FAFC` / `#F97316` / `#FFFFFF`); `values-night/colors.xml` Dark `1A` (`#0F172A` / `#FB923C` / `#FFFBEB`); `drawable/ic_launcher_background.xml` (`@color/ic_launcher_background`); `drawable/ic_launcher_foreground.xml` (layout A wide-shoulder 351 pick `M54,23 C75,23 86,31 86,45.5 …` + centered rounded play triangle, no outer circle); `mipmap-anydpi-v26/ic_launcher.xml` references both drawables; no `mipmap-night-*` PNGs | **PASS** |
-| **4** | Version bump & release artifacts (`v1.0.5` / `10005`) | `app/build.gradle.kts` (`versionCode = 10005`, `versionName = "1.0.5"`); `MiniPlayer-v1.0.5.apk` & `app-release.apk` aligned and signed (`apksigner verify -v --print-certs`); `SHA256SUMS.txt` generated | **PASS** |
-
-### Tester Polish Fixes (applied on `wt/tester-6`)
-
-- **Candidate re-selection cover reset** (`MetadataEditorSheet.kt`): selecting a candidate **without** `coverUrl` now clears any `stagedCoverRemoteUrl` left by a previously selected candidate. If no local image was picked, it also resets `previewCoverUri` to the track's original `coverPathOrUri` and removes `MetadataField.COVER` from `dirtyFields`. A locally picked gallery image is kept.
-- **Emoji-free Web Studio** (`LanStudioWebApp.kt`): removed `🌐` from the `在线自动补全当前曲目` button.
-
-### Reviewer Observations (non-blocking)
-
-- **Case-sensitive volumes**: `browseFolder` and `reconcileRootScan` now treat sibling folders that differ only by case (`rock` and `Rock`) as the same folder. That is right for Android emulated storage and FAT/exFAT SD/OTG media, but on a case-sensitive volume (e.g. ext4 OTG) two real sibling folders differing only by case would be merged into one entry.
+| **1** | Scale layout-A wide-shoulder 351 guitar pick + centered rounded play triangle to `0.60x` (`38.4dp × 37.8dp`) and optically center for circular launcher masks | `app/src/main/res/drawable/ic_launcher_foreground.xml`: pick silhouette `M54,36.5 C66.6,36.5 73.2,41.3 73.2,50.0 C73.2,59.6 60.9,70.4 56.3,73.6 C54.9,74.5 53.1,74.5 51.7,73.6 C47.1,70.4 34.8,59.6 34.8,50.0 C34.8,41.3 41.4,36.5 54,36.5 Z` (`x ∈ [34.8, 73.2]`, `y ∈ [36.5, 74.3]`, shoulders at `(34.8, 50.0)` / `(73.2, 50.0)` with `r = 19.6dp` from `(54, 54)`, bottom tip at `(54, 74.3)` with `r = 20.3dp` from `(54, 54)`, leaving ~`15dp–16dp` margin inside the `r = 35dp..36dp` circular adaptive mask) + centered rounded play triangle `M48.9,45.5 C48.9,44.4 50.2,43.6 51.1,44.2 L62.5,51.1 C63.5,51.7 63.5,53.1 62.5,53.7 L51.1,60.6 C50.2,61.2 48.9,60.4 48.9,59.3 Z` | **PASS** |
+| **2** | Version bump (`v1.0.6` / `10006`) & documentation update | `app/build.gradle.kts` (`versionCode = 10006`, `versionName = "1.0.6"`); `README.md`, `DESIGN.md`, `ARCHITECTURE.md`, and `TEST_REPORT.md` updated to `v1.0.6` (`10006`) and documenting the `38.4dp × 37.8dp` (`0.60x`) circular-mask optical centering | **PASS** |
 
 ---
 

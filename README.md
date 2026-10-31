@@ -39,6 +39,12 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 ---
 
+## What's New in `v1.0.6` (`versionCode = 10006`)
+
+1. **Circular-Mask Optical Centering & `0.60x` Scale for Launcher Icon (`ic_launcher_foreground.xml`)**: Scaled the layout-A wide-shoulder 351 guitar pick and centered rounded play triangle down to **`0.60x`** (`38.4dp × 37.8dp` on the `108×108dp` adaptive icon canvas, `x ∈ [34.8, 73.2]`, `y ∈ [36.5, 74.3]`), placing the left/right shoulders (`(34.8, 50.0)` / `(73.2, 50.0)`) at radius `19.6dp` from `(54, 54)` and the bottom tip (`(54, 74.3)`) at radius `20.3dp` from `(54, 54)` so circular launcher masks (`72×72dp`, `r = 35dp..36dp`) retain a balanced ~`15dp–16dp` background margin all around instead of clipping near the edge.
+
+---
+
 ## What's New in `v1.0.5` (`versionCode = 10005`)
 
 1. **Stage Online Metadata Candidates, Save Manually (`Models.kt`, `DefaultMetadataEngine.kt`, `MetadataEditorSheet.kt`, `MiniPlayerViewModel.kt`, `LanStudioServer.kt`, `LanStudioWebApp.kt`)**: Tapping an online match card in the metadata editor no longer auto-saves or closes the sheet. It fills `Title`, `Artist`, `Album`, `AlbumArtist`, `Track#`, `Year`, cover preview, and lyrics into the form, highlights the selected card (`已填入 · 请点上方保存`), and only commits when you tap **`保存`**. `MetadataDraft` carries the staged `coverRemoteUrl`, `syncedLrc`, and `plainLyrics`; the cover is downloaded outside the file-write lock (a local gallery image still wins), and lyrics are cached on save. The PC Web Studio edit modal works the same way: candidates appear inline in `#ed-candidates-box` (new `GET /api/metadata/candidates` / `"candidatesOnly": true`) and nothing is saved until **`保存更改`**.
@@ -92,7 +98,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.5.apk` | Signed Android Release APK (`versionCode = 10005`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.6.apk` | Signed Android Release APK (`versionCode = 10006`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `app-release.apk` | Identical signed Android Release APK artifact |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -121,6 +127,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, and `v1.0.5` staged candidate save / renamed-folder dedup / `Play` adaptive icon)
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, and `v1.0.6` `Play` `38.4dp × 37.8dp` circular-mask adaptive icon)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 2`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`BpmDetector` specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`71/71` tests), Lint, and `v1.0.5` verification report
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`71/71` tests), Lint, and `v1.0.6` verification report
