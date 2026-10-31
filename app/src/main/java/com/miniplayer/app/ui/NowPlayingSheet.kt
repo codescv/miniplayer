@@ -160,6 +160,10 @@ fun NowPlayingSheet(
                 completedLoopCount = completedLoops,
                 waveformBars = waveformBars,
                 countInProgress = countInProgress,
+                keepScreenOn = settings.keepScreenOnInPractice,
+                onToggleKeepScreenOn = {
+                    viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
+                },
                 onBack = {
                     cancelPendingOrientationReset()
                     if (forcedLandscape) {

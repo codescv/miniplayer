@@ -571,7 +571,7 @@ fun LanStudioSheetContent(
                         }
                     } else if (state.endpoints.isEmpty()) {
                         Text(
-                            text = "⚠️ 当前未检测到 Wi-Fi 或热点连接，请将手机与电脑接入同一局域网后点击右上角刷新",
+                            text = "当前未检测到 Wi-Fi 或热点连接，请将手机与电脑接入同一局域网后点击右上角刷新",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             textAlign = TextAlign.Center,
@@ -693,10 +693,10 @@ fun LanStudioSheetContent(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "• 📁 无线拖拽传歌/教学视频与 🎯 练习文件夹标记\n" +
-                            "• 🏷️ 曲库大表格行内改标签与 ✨ 免 Key 批量联网补全\n" +
-                            "• 🎯 播放列表与练习列表拖拽编排及 .m3u8 导入导出\n" +
-                            "• 🎸 PC 在线预听与键盘 [ / ] 键极速 A-B 段落书签打点",
+                        text = "• 无线拖拽传歌/教学视频与练习文件夹标记\n" +
+                            "• 曲库大表格行内改标签与免 Key 批量联网补全\n" +
+                            "• 播放列表与练习列表拖拽编排及 .m3u8 导入导出\n" +
+                            "• PC 在线预听与键盘 [ / ] 键极速 A-B 段落书签打点",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

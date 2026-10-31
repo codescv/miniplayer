@@ -46,8 +46,8 @@ import kotlinx.coroutines.delay
  * Interactive video canvas supporting:
  * - Smooth `1.0x – 4.0x` pinch-to-zoom & single-finger pan on guitar fretboard / scrolling tab
  * - Gesture isolation (`scale == 1.0f` lets parent sheet swipe down; `scale > 1.0f` pans viewport)
- * - `[🔍 2.4x · 重置]` 1-tap reset pill
- * - `🪞` horizontal mirror flip (`scaleX = -zoom` on the video layer only, never flipping UI labels)
+ * - `[2.4x · 重置]` 1-tap reset pill
+ * - Horizontal mirror flip (`scaleX = -zoom` on the video layer only, never flipping UI labels)
  */
 @Composable
 fun VideoPracticeSurface(
@@ -218,8 +218,8 @@ fun VideoPracticeSurface(
 
 /**
  * Full-screen landscape video player supporting two distinct ergonomics (§4.3B):
- * 1. Casual Landscape: Ultra-clean M3 chrome auto-hiding after 3s, with `[🎯 练习模式]` pill + `⏾`.
- * 2. Practice Landscape HUD: Translucent dockable HUD (`[⬆ 移至顶部 / ⬇ 置底]` to avoid covering
+ * 1. Casual Landscape: Ultra-clean M3 chrome auto-hiding after 3s, with icon-only Practice Mode toggle + Sleep Timer.
+ * 2. Practice Landscape HUD: Translucent dockable HUD (top/bottom dockable to avoid covering
  *    bottom-burned guitar tabs), auto-fading after 4s into a minimal corner status capsule.
  */
 @Composable
@@ -233,6 +233,8 @@ fun LandscapeVideoPlayerView(
     completedLoopCount: Int,
     waveformBars: List<Float>,
     countInProgress: CountInProgress?,
+    keepScreenOn: Boolean = true,
+    onToggleKeepScreenOn: () -> Unit = {},
     onBack: () -> Unit,
     onTogglePracticeMode: () -> Unit,
     onOpenSleepTimer: () -> Unit,
@@ -719,6 +721,15 @@ fun LandscapeVideoPlayerView(
                                         highlighted = practiceState.countInMode != CountInMode.OFF,
                                         badgeText = countInBadge,
                                         onClick = { bumpInteraction(); loopEngine.cycleCountInMode() },
+                                        modifier = Modifier.size(44.dp),
+                                    )
+                                }
+                                item {
+                                    DeckIconToggleButton(
+                                        icon = Icons.Outlined.LightMode,
+                                        contentDescription = if (keepScreenOn) "关闭保持常亮" else "开启保持常亮",
+                                        highlighted = keepScreenOn,
+                                        onClick = { bumpInteraction(); onToggleKeepScreenOn() },
                                         modifier = Modifier.size(44.dp),
                                     )
                                 }

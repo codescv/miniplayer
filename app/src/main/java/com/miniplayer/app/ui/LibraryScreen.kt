@@ -930,7 +930,7 @@ private fun AlbumsGridContent(
                 val maxByPair = HashMap<String, Long>()
                 val maxByTitle = HashMap<String, Long>()
                 for (item in allMediaItems) {
-                    if (item.isVideo) continue
+                    if (item.isVideo || item.isInPracticeFolder) continue
                     val albumName = item.album?.trim()?.takeIf { it.isNotEmpty() } ?: continue
                     val artistName = (item.albumArtist?.takeIf { it.isNotBlank() } ?: item.artist).trim()
                     val pairKey = "${albumName.lowercase()}|${artistName.lowercase()}"

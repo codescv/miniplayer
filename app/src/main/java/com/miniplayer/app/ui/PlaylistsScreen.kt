@@ -999,8 +999,8 @@ private fun MultiSelectTracksToAddSheet(
 }
 
 /**
- * Reusable M3 Bottom Sheet for `[ + 列表 ]` allowing 1-tap addition of track(s) to an existing
- * normal playlist or `🎯 练习列表`, or creating a new playlist on the spot.
+ * Reusable M3 Bottom Sheet for adding track(s) in 1 tap to an existing
+ * normal playlist or Practice Playlist (`练习列表`), or creating a new playlist on the spot.
  */
 @Composable
 fun AddToPlaylistBottomSheet(

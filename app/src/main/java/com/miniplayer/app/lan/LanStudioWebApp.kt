@@ -242,7 +242,7 @@ tr:hover td { background: var(--hover); }
 <div class="app-shell">
   <header class="topbar">
     <div class="brand">
-      <div class="brand-logo">🎸</div>
+      <div class="brand-logo">MP</div>
       <div>
         <h1>MiniPlayer · PC 局域网 Web 管理台</h1>
         <div class="brand-sub">
@@ -253,15 +253,15 @@ tr:hover td { background: var(--hover); }
     </div>
 
     <nav class="nav-tabs" role="tablist">
-      <button class="nav-tab active" data-tab="folders" onclick="switchTab('folders')">📁 无线传文件与目录</button>
-      <button class="nav-tab" data-tab="metadata" onclick="switchTab('metadata')">🏷️ 曲库表格与联网补全</button>
-      <button class="nav-tab" data-tab="playlists" onclick="switchTab('playlists')">🎯 播放列表与练习列表</button>
-      <button class="nav-tab" data-tab="studio" onclick="switchTab('studio')">🎸 PC 预听与 A-B 打点器</button>
+      <button class="nav-tab active" data-tab="folders" onclick="switchTab('folders')">无线传文件与目录</button>
+      <button class="nav-tab" data-tab="metadata" onclick="switchTab('metadata')">曲库表格与联网补全</button>
+      <button class="nav-tab" data-tab="playlists" onclick="switchTab('playlists')">播放列表与练习列表</button>
+      <button class="nav-tab" data-tab="studio" onclick="switchTab('studio')">PC 预听与 A-B 打点器</button>
     </nav>
 
     <div class="top-actions">
-      <button class="btn btn-outline" onclick="triggerRescanAll()" title="增量扫描所有已添加文件夹">⟳ 刷新曲库</button>
-      <button class="btn btn-outline" onclick="toggleTheme()" id="theme-btn" title="切换深色/浅色主题">🌓 主题</button>
+      <button class="btn btn-outline" onclick="triggerRescanAll()" title="增量扫描所有已添加文件夹">刷新曲库</button>
+      <button class="btn btn-outline" onclick="toggleTheme()" id="theme-btn" title="切换深色/浅色主题">主题</button>
     </div>
   </header>
 
@@ -270,12 +270,12 @@ tr:hover td { background: var(--hover); }
     <div class="grid-sidebar">
       <aside class="card">
         <div class="card-title">
-          <span>📱 已挂载文件夹</span>
+          <span>已挂载文件夹</span>
           <span class="badge badge-muted tnum" id="roots-count">0</span>
         </div>
         <div id="roots-list"></div>
         <p style="font-size:12px;color:var(--muted);margin:12px 0 0;">
-          提示：出于 Android SAF 隐私安全规范，新增顶层文件夹请在手机端点击「+ 添加文件夹」授权；授权后即可在此无线上传文件、建子目录或标记练习目录。
+          提示：出于 Android SAF 隐私安全规范，新增顶层文件夹请在手机端点击右下角「添加文件夹」按钮授权；授权后即可在此无线上传文件、建子目录或标记练习目录。
         </p>
       </aside>
 
@@ -285,10 +285,10 @@ tr:hover td { background: var(--hover); }
           <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer;" class="badge badge-practice">
               <input type="checkbox" id="folder-practice-toggle" onchange="toggleCurrentFolderPractice(this.checked)">
-              🎯 设为练习文件夹（手机点播自动开练习模式）
+              设为练习文件夹（手机点播自动开练习模式，且不混入专辑/歌手/视频）
             </label>
             <button class="btn btn-tonal" onclick="promptCreateSubfolder()">+ 新建子文件夹</button>
-            <label class="btn btn-primary" for="upload-input">⬆ 上传音视频 / 歌词</label>
+            <label class="btn btn-primary" for="upload-input">上传音视频 / 歌词</label>
             <input id="upload-input" type="file" multiple hidden
                    accept=".mp3,.flac,.wav,.m4a,.aac,.ogg,.opus,.mp4,.mkv,.webm,.mov,.lrc,.jpg,.jpeg,.png,.m3u,.m3u8"
                    onchange="uploadFilesToCurrentFolder(this.files); this.value='';">
@@ -334,25 +334,25 @@ tr:hover td { background: var(--hover); }
     <div class="card">
       <div class="chip-row">
         <button class="chip active" data-filter="all" onclick="setMetaFilter('all')">全部曲库</button>
-        <button class="chip" data-filter="folder" onclick="setMetaFilter('folder')">📁 按文件夹</button>
-        <button class="chip" data-filter="album" onclick="setMetaFilter('album')">💿 按专辑</button>
-        <button class="chip" data-filter="unknown_album" onclick="setMetaFilter('unknown_album')">⚠️ 未知专辑</button>
-        <button class="chip" data-filter="artist" onclick="setMetaFilter('artist')">🎤 按歌手</button>
-        <button class="chip" data-filter="video" onclick="setMetaFilter('video')">🎬 视频</button>
+        <button class="chip" data-filter="folder" onclick="setMetaFilter('folder')">按文件夹</button>
+        <button class="chip" data-filter="album" onclick="setMetaFilter('album')">按专辑</button>
+        <button class="chip" data-filter="unknown_album" onclick="setMetaFilter('unknown_album')">未知专辑</button>
+        <button class="chip" data-filter="artist" onclick="setMetaFilter('artist')">按歌手</button>
+        <button class="chip" data-filter="video" onclick="setMetaFilter('video')">视频</button>
 
         <select id="meta-subfilter" class="hidden" onchange="onMetaSubfilterChange()"></select>
         <input id="meta-search" class="input" style="min-width:240px;margin-left:auto;"
                placeholder="搜索标题 / 歌手 / 专辑 / 文件名…" oninput="renderMetadataTable()">
-        <button class="btn btn-tertiary" onclick="runBatchAutoCompletePreview()">✨ 批量联网补全当前列表</button>
+        <button class="btn btn-tertiary" onclick="runBatchAutoCompletePreview()">批量联网补全当前列表</button>
       </div>
 
       <div id="meta-batch-bar" class="batch-bar hidden">
         <div>已选中 <strong id="meta-sel-count" class="tnum">0</strong> 项（双击表格单元格可直接行内快改）</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
-          <button class="btn btn-primary btn-xs" onclick="openBatchEditModal()">✏️ 批量修改专辑/歌手/年份</button>
-          <button class="btn btn-tertiary btn-xs" onclick="runBatchAutoCompleteSelected()">✨ 批量自动联网补全</button>
-          <button class="btn btn-outline btn-xs" onclick="openAddSelectedToPlaylistModal()">🎯 加入播放/练习列表</button>
-          <button class="btn btn-danger btn-xs" onclick="resetSelectedMetadata()">↺ 恢复原始标签</button>
+          <button class="btn btn-primary btn-xs" onclick="openBatchEditModal()">批量修改专辑/歌手/年份</button>
+          <button class="btn btn-tertiary btn-xs" onclick="runBatchAutoCompleteSelected()">批量自动联网补全</button>
+          <button class="btn btn-outline btn-xs" onclick="openAddSelectedToPlaylistModal()">加入播放/练习列表</button>
+          <button class="btn btn-danger btn-xs" onclick="resetSelectedMetadata()">恢复原始标签</button>
         </div>
       </div>
 
@@ -384,19 +384,19 @@ tr:hover td { background: var(--hover); }
           <span>播放列表</span>
           <div style="display:flex;gap:6px;">
             <button class="btn btn-tonal btn-xs" onclick="openCreatePlaylistModal()">+ 新建</button>
-            <label class="btn btn-outline btn-xs" for="m3u-import-input">📥 导入 .m3u8</label>
+            <label class="btn btn-outline btn-xs" for="m3u-import-input">导入 .m3u8</label>
             <input id="m3u-import-input" type="file" accept=".m3u,.m3u8" hidden onchange="importM3uFile(this.files[0]); this.value='';">
           </div>
         </div>
         <div class="chip-row" style="margin-bottom:8px;">
           <button class="chip active" id="pl-filter-all" onclick="setPlaylistFilter('all')">全部</button>
-          <button class="chip" id="pl-filter-practice" onclick="setPlaylistFilter('practice')">🎯 练习列表</button>
+          <button class="chip" id="pl-filter-practice" onclick="setPlaylistFilter('practice')">练习列表</button>
         </div>
         <div id="playlists-sidebar"></div>
       </aside>
 
       <main class="card" id="playlist-detail-pane">
-        <div style="padding:36px;text-align:center;color:var(--muted);">请选择左侧播放列表，或点击「+ 新建」创建 🎯 练习列表</div>
+        <div style="padding:36px;text-align:center;color:var(--muted);">请选择左侧播放列表，或点击「+ 新建」创建练习列表</div>
       </main>
     </div>
   </section>
@@ -427,7 +427,7 @@ tr:hover td { background: var(--hover); }
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <label id="studio-mirror-wrap" class="btn btn-outline btn-xs hidden" style="cursor:pointer;">
-                <input type="checkbox" id="studio-mirror-chk" onchange="toggleVideoMirror(this.checked)"> 🪞 视频水平镜像
+                <input type="checkbox" id="studio-mirror-chk" onchange="toggleVideoMirror(this.checked)"> 视频水平镜像
               </label>
               <span style="font-size:12px;color:var(--muted);">
                 快捷键: <span class="kbd">Space</span> 播/停 · <span class="kbd">[</span> 设A · <span class="kbd">]</span> 设B · <span class="kbd">\</span> 循环开关 · <span class="kbd">R</span> 回A
@@ -438,7 +438,7 @@ tr:hover td { background: var(--hover); }
           <div class="player-stage">
             <video id="studio-video" class="hidden" controls playsinline></video>
             <div id="studio-audio-box" class="audio-hero">
-              <div style="font-size:36px;margin-bottom:8px;">🎵</div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:0.08em;opacity:0.75;margin-bottom:10px;">AUDIO PREVIEW</div>
               <audio id="studio-audio" controls style="width:min(560px,92%);"></audio>
             </div>
           </div>
@@ -458,11 +458,11 @@ tr:hover td { background: var(--hover); }
 
           <!-- A-B Loop Controls & Nudge -->
           <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;">
-            <button class="btn btn-tertiary" onclick="setPointA()">[ 设 A 点 (<span id="btn-a-label" class="tnum">--:--</span>)</button>
-            <button class="btn btn-tertiary" onclick="setPointB()">] 设 B 点 (<span id="btn-b-label" class="tnum">--:--</span>)</button>
-            <button class="btn btn-tonal" id="btn-loop-toggle" onclick="toggleAbLoop()">🔁 循环: 关</button>
-            <button class="btn btn-outline" onclick="jumpToPointA()">↺ 回 A 点</button>
-            <button class="btn btn-outline" onclick="clearAbPoints()">✕ 清除 A-B</button>
+            <button class="btn btn-tertiary" onclick="setPointA()">[ A (<span id="btn-a-label" class="tnum">--:--</span>)</button>
+            <button class="btn btn-tertiary" onclick="setPointB()">] B (<span id="btn-b-label" class="tnum">--:--</span>)</button>
+            <button class="btn btn-tonal" id="btn-loop-toggle" onclick="toggleAbLoop()">循环: 关</button>
+            <button class="btn btn-outline" onclick="jumpToPointA()">回 A</button>
+            <button class="btn btn-outline" onclick="clearAbPoints()">清除 A-B</button>
             <span style="margin-left:auto;display:flex;gap:4px;flex-wrap:wrap;">
               <button class="btn btn-outline btn-xs" onclick="nudgePoint('A', -500)">A -0.5s</button>
               <button class="btn btn-outline btn-xs" onclick="nudgePoint('A', -100)">A -0.1s</button>
@@ -478,7 +478,7 @@ tr:hover td { background: var(--hover); }
           <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:14px;">
             <!-- Named Bookmarks Card -->
             <div class="card" style="background:var(--surface-low);box-shadow:none;">
-              <div class="card-title"><span>🔖 段落书签（直存手机数据库）</span></div>
+              <div class="card-title"><span>段落书签（直存手机数据库）</span></div>
               <div class="chip-row" id="preset-label-chips"></div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
                 <input id="bm-label-input" class="input" placeholder="书签名称，如 Solo 1" style="flex:1;min-width:130px;">
@@ -492,19 +492,16 @@ tr:hover td { background: var(--hover); }
 
             <!-- Practice Speed / Pitch / BPM State Card -->
             <div class="card" style="background:var(--surface-low);box-shadow:none;">
-              <div class="card-title"><span>🎛️ 手机默认练习状态配置</span></div>
+              <div class="card-title"><span>手机默认练习状态配置</span></div>
               <div class="form-grid">
                 <div class="form-field full">
                   <label>变速不变调倍速 (<strong id="speed-val" class="tnum">1.00x</strong> — 浏览器实时同步预听)</label>
                   <input type="range" id="practice-speed-range" min="0.25" max="2.00" step="0.05" value="1.00"
                          oninput="onSpeedSliderChange(this.value)">
-                  <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">
-                    <button class="btn btn-outline btn-xs" onclick="onSpeedSliderChange(0.5)">0.5x</button>
-                    <button class="btn btn-outline btn-xs" onclick="onSpeedSliderChange(0.65)">0.65x</button>
-                    <button class="btn btn-outline btn-xs" onclick="onSpeedSliderChange(0.75)">0.75x</button>
-                    <button class="btn btn-outline btn-xs" onclick="onSpeedSliderChange(0.85)">0.85x</button>
-                    <button class="btn btn-outline btn-xs" onclick="onSpeedSliderChange(1.0)">1.0x</button>
-                    <button class="btn btn-outline btn-xs" onclick="onSpeedSliderChange(1.25)">1.25x</button>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+                    <button class="btn btn-outline btn-xs" onclick="stepSpeedSlider(-0.05)">-5%</button>
+                    <button class="btn btn-outline btn-xs" onclick="onSpeedSliderChange(1.0)">1.00x 复位</button>
+                    <button class="btn btn-outline btn-xs" onclick="stepSpeedSlider(0.05)">+5%</button>
                   </div>
                 </div>
                 <div class="form-field">
@@ -528,7 +525,7 @@ tr:hover td { background: var(--hover); }
                   </select>
                 </div>
               </div>
-              <button class="btn btn-primary" style="width:100%;" onclick="savePracticeStateToPhone()">💾 保存练习参数到手机</button>
+              <button class="btn btn-primary" style="width:100%;" onclick="savePracticeStateToPhone()">保存练习参数到手机</button>
             </div>
           </div>
         </div>
@@ -640,7 +637,7 @@ async function api(path, opts) {
 
 function promptPinAuth() {
   const box = document.getElementById('modal-box');
-  box.innerHTML = '<h3 style="margin-top:0;">🔒 输入局域网访问 PIN 码</h3>' +
+  box.innerHTML = '<h3 style="margin-top:0;">输入局域网访问 PIN 码</h3>' +
     '<p style="font-size:13px;color:var(--muted);">请在手机端「PC 局域网 Web 管理台」面板查看 4 位 PIN 码：</p>' +
     '<input id="pin-modal-input" class="input tnum" style="width:100%;font-size:18px;margin-bottom:14px;" placeholder="例如 1234">' +
     '<div style="display:flex;justify-content:flex-end;gap:8px;">' +
@@ -703,7 +700,7 @@ async function loadRootsAndCurrentFolder() {
   } else {
     document.getElementById('folder-crumbs').innerHTML = '<span style="color:var(--muted);">尚未在手机上添加本地文件夹</span>';
     document.getElementById('folder-entries-tbody').innerHTML =
-      '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">请先在手机端 MiniPlayer 点击「+ 添加文件夹」挂载音乐或练习伴奏目录</td></tr>';
+      '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">请先在手机端 MiniPlayer 点击右下角「添加文件夹」按钮挂载音乐或练习伴奏目录</td></tr>';
   }
 }
 
@@ -716,9 +713,9 @@ function renderRootsSidebar() {
   container.innerHTML = state.roots.map(r => {
     const sel = r.rootId === state.currentRootId ? ' selected' : '';
     const ro = r.isWritable ? '' : ' <span class="badge badge-warn">只读</span>';
-    const pf = r.isPracticeFolder ? ' <span class="badge badge-practice">🎯</span>' : '';
+    const pf = r.isPracticeFolder ? ' <span class="badge badge-practice">练习</span>' : '';
     return '<div class="list-item' + sel + '" onclick="selectRoot(' + r.rootId + ')">' +
-      '<div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📁 ' +
+      '<div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
       esc(r.displayName) + pf + ro + '</div>' +
       '<div style="font-size:11px;opacity:0.78;" class="tnum">' + r.itemCount + ' 项 · ' + esc(r.mountState) + '</div></div></div>';
   }).join('');
@@ -740,7 +737,7 @@ async function browseFolder(rootId, relPath) {
 
   // Breadcrumbs
   const rootName = (data.root && data.root.displayName) || '根目录';
-  let crumbsHtml = '<button class="crumb-link" onclick="browseFolder(' + rootId + ', \'\')">📁 ' + esc(rootName) + '</button>';
+  let crumbsHtml = '<button class="crumb-link" onclick="browseFolder(' + rootId + ', \'\')">' + esc(rootName) + '</button>';
   const parts = state.currentRelPath ? state.currentRelPath.split('/').filter(Boolean) : [];
   let acc = '';
   for (const seg of parts) {
@@ -752,29 +749,29 @@ async function browseFolder(rootId, relPath) {
 
   const subRows = (data.subfolders || []).map(sf => {
     const safeRel = escJs(sf.relPath || '');
-    const pfBadge = sf.isPracticeFolder ? '<span class="badge badge-practice">🎯 练习目录</span>' : '<span class="badge badge-muted">普通目录</span>';
+    const pfBadge = sf.isPracticeFolder ? '<span class="badge badge-practice">练习目录</span>' : '<span class="badge badge-muted">普通目录</span>';
     return '<tr>' +
-      '<td><a href="javascript:void(0)" onclick="browseFolder(' + rootId + ', \'' + safeRel + '\')" style="color:var(--primary);font-weight:600;text-decoration:none;">📁 ' + esc(sf.name) + '</a></td>' +
+      '<td><a href="javascript:void(0)" onclick="browseFolder(' + rootId + ', \'' + safeRel + '\')" style="color:var(--primary);font-weight:600;text-decoration:none;">' + esc(sf.name) + ' /</a></td>' +
       '<td class="tnum">子文件夹 · ' + (sf.itemCount || 0) + ' 项</td>' +
       '<td>—</td>' +
       '<td>' + pfBadge + '</td>' +
       '<td style="text-align:right;"><button class="btn btn-outline btn-xs" onclick="toggleSubfolderPractice(' + rootId + ', \'' + safeRel + '\', ' + (!sf.isPracticeFolder) + ')">' +
-      (sf.isPracticeFolder ? '取消练习标记' : '🎯 设为练习目录') + '</button></td></tr>';
+      (sf.isPracticeFolder ? '取消练习标记' : '设为练习目录') + '</button></td></tr>';
   });
 
   const itemRows = (data.mediaItems || []).map(it => {
-    const kind = it.isVideo ? ('🎬 视频' + (it.resolutionBadge ? ' ' + it.resolutionBadge : '')) : '🎵 音频';
+    const kind = it.isVideo ? ('视频' + (it.resolutionBadge ? ' ' + it.resolutionBadge : '')) : '音频';
     const badges = [];
-    if (it.isInPracticeFolder) badges.push('<span class="badge badge-practice">🎯 练习目录</span>');
-    if (it.bookmarkCount > 0) badges.push('<span class="badge badge-ok">🔖 ' + it.bookmarkCount + ' 段</span>');
+    if (it.isInPracticeFolder) badges.push('<span class="badge badge-practice">练习目录</span>');
+    if (it.bookmarkCount > 0) badges.push('<span class="badge badge-ok">书签 ' + it.bookmarkCount + ' 段</span>');
     return '<tr>' +
       '<td><div style="font-weight:600;">' + esc(it.title) + '</div><div style="font-size:11px;color:var(--muted);">' + esc(it.fileName) + '</div></td>' +
       '<td class="tnum">' + esc(kind) + ' · ' + fmtMs(it.durationMs, false) + ' · ' + fmtBytes(it.sizeBytes) + '</td>' +
       '<td>' + esc(it.artist) + ' · <span style="color:var(--muted);">' + esc(it.displayAlbum) + '</span></td>' +
       '<td>' + (badges.join(' ') || '—') + '</td>' +
       '<td style="text-align:right;white-space:nowrap;">' +
-      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">🎸 预听/打点</button> ' +
-      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ')">✏️ 标签</button></td></tr>';
+      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">预听/打点</button> ' +
+      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ')">标签</button></td></tr>';
   });
 
   const allRows = subRows.concat(itemRows);
@@ -805,7 +802,7 @@ async function toggleCurrentFolderPractice(checked) {
       method: 'POST',
       json: { rootId: state.currentRootId, relPath: state.currentRelPath, isPracticeFolder: checked }
     });
-    showToast(checked ? '🎯 已标记为练习文件夹' : '已切换为普通文件夹');
+    showToast(checked ? '已标记为练习文件夹' : '已切换为普通文件夹');
     await loadAllItems();
     await loadRootsAndCurrentFolder();
   } catch (e) {
@@ -820,7 +817,7 @@ async function toggleSubfolderPractice(rootId, relPath, isPractice) {
       method: 'POST',
       json: { rootId: rootId, relPath: relPath, isPracticeFolder: isPractice }
     });
-    showToast(isPractice ? '🎯 子目录已设为练习目录' : '已取消练习目录标记');
+    showToast(isPractice ? '子目录已设为练习目录' : '已取消练习目录标记');
     await browseFolder(state.currentRootId, state.currentRelPath);
     await loadAllItems();
   } catch (e) { alert(e.message); }
@@ -944,23 +941,34 @@ function onMetaSubfilterChange() {
 function getFilteredMetaItems() {
   const q = (document.getElementById('meta-search').value || '').trim().toLowerCase();
   return state.items.filter(it => {
-    if (state.metaFilter === 'video' && !it.isVideo) return false;
-    if (state.metaFilter === 'unknown_album' && (it.album && it.album.trim() !== '' && it.album !== '未知专辑')) return false;
+    if (state.metaFilter === 'video') {
+      if (!it.isVideo || it.isInPracticeFolder) return false;
+    }
+    if (state.metaFilter === 'unknown_album') {
+      if (it.isVideo || it.isInPracticeFolder) return false;
+      if (it.album && it.album.trim() !== '' && it.album !== '未知专辑') return false;
+    }
     if (state.metaFilter === 'folder' && state.metaSubKey) {
       if ((it.rootId + '::' + (it.parentRelPath || '')) !== state.metaSubKey) return false;
     }
-    if (state.metaFilter === 'album' && state.metaSubKey) {
-      const matchedAlbum = state.albums.find(a => a.albumKey === state.metaSubKey);
-      if (matchedAlbum) {
-        if (matchedAlbum.isUnknownAlbum) {
-          if (it.album && it.album.trim() !== '') return false;
-        } else if (it.displayAlbum !== matchedAlbum.title) return false;
+    if (state.metaFilter === 'album') {
+      if (it.isVideo || it.isInPracticeFolder) return false;
+      if (state.metaSubKey) {
+        const matchedAlbum = state.albums.find(a => a.albumKey === state.metaSubKey);
+        if (matchedAlbum) {
+          if (matchedAlbum.isUnknownAlbum) {
+            if (it.album && it.album.trim() !== '') return false;
+          } else if (it.displayAlbum !== matchedAlbum.title) return false;
+        }
       }
     }
-    if (state.metaFilter === 'artist' && state.metaSubKey) {
-      const artistObj = state.artists.find(a => a.artistNorm === state.metaSubKey);
-      const needle = (artistObj ? artistObj.displayName : state.metaSubKey).toLowerCase();
-      if (!(it.artist || '').toLowerCase().includes(needle) && !(it.albumArtist || '').toLowerCase().includes(needle)) return false;
+    if (state.metaFilter === 'artist') {
+      if (it.isVideo || it.isInPracticeFolder) return false;
+      if (state.metaSubKey) {
+        const artistObj = state.artists.find(a => a.artistNorm === state.metaSubKey);
+        const needle = (artistObj ? artistObj.displayName : state.metaSubKey).toLowerCase();
+        if (!(it.artist || '').toLowerCase().includes(needle) && !(it.albumArtist || '').toLowerCase().includes(needle)) return false;
+      }
     }
     if (q) {
       const hay = ((it.title || '') + ' ' + (it.artist || '') + ' ' + (it.displayAlbum || '') + ' ' + (it.fileName || '')).toLowerCase();
@@ -986,19 +994,20 @@ function renderMetadataTable() {
       : '<span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'album\',\'' + escJs(it.album) + '\')">' + esc(it.album) + '</span>';
     const overrideDot = it.hasMetadataOverride ? ' <span class="badge badge-ok" title="已含本地覆盖标签">已改</span>' : '';
     const backingDot = it.isBackingTrack ? ' <span class="badge badge-practice">伴奏</span>' : '';
+    const practiceDirDot = it.isInPracticeFolder ? ' <span class="badge badge-practice">练习目录</span>' : '';
     return '<tr>' +
       '<td><input type="checkbox" onchange="toggleSelectItem(' + it.itemId + ', this.checked)"' + checked + '></td>' +
       '<td class="tnum"><span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'trackNumber\',\'' + (it.trackNumber || '') + '\')">' + (it.trackNumber || '—') + '</span></td>' +
-      '<td><span class="editable-cell" style="font-weight:600;" ondblclick="inlineEditCell(this,' + it.itemId + ',\'title\',\'' + escJs(it.title) + '\')">' + esc(it.title) + '</span>' + overrideDot + backingDot +
+      '<td><span class="editable-cell" style="font-weight:600;" ondblclick="inlineEditCell(this,' + it.itemId + ',\'title\',\'' + escJs(it.title) + '\')">' + esc(it.title) + '</span>' + overrideDot + backingDot + practiceDirDot +
       '<div style="font-size:11px;color:var(--muted);">' + esc((it.parentRelPath ? it.parentRelPath + '/' : '') + it.fileName) + '</div></td>' +
       '<td><span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'artist\',\'' + escJs(it.artist) + '\')">' + esc(it.artist) + '</span></td>' +
       '<td>' + albumHtml + '</td>' +
       '<td class="tnum"><span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'year\',\'' + (it.year || '') + '\')">' + (it.year || '—') + '</span></td>' +
-      '<td class="tnum">' + (it.isVideo ? '🎬 ' : '🎵 ') + fmtMs(it.durationMs, false) + '</td>' +
+      '<td class="tnum">' + (it.isVideo ? '视频 ' : '音频 ') + fmtMs(it.durationMs, false) + '</td>' +
       '<td style="text-align:right;white-space:nowrap;">' +
-      '<button class="btn btn-tertiary btn-xs" onclick="autoMatchSingle(' + it.itemId + ', false)">✨ 自动联网匹配</button> ' +
-      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ')">✏️ 编辑</button> ' +
-      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">🎸</button></td></tr>';
+      '<button class="btn btn-tertiary btn-xs" onclick="autoMatchSingle(' + it.itemId + ', false)">自动联网匹配</button> ' +
+      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ')">编辑</button> ' +
+      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">预听</button></td></tr>';
   }).join('');
   updateBatchBar();
 }
@@ -1076,7 +1085,7 @@ function openEditItemModal(itemId) {
   const it = state.items.find(x => x.itemId === itemId);
   if (!it) return;
   openModal(
-    '<h3 style="margin-top:0;">✏️ 编辑曲目元数据</h3>' +
+    '<h3 style="margin-top:0;">编辑曲目元数据</h3>' +
     '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;">文件: ' + esc(it.fileName) + '</div>' +
     '<div class="form-grid">' +
     '<div class="form-field full"><label>标题 (Title)</label><input id="ed-title" class="input" value="' + esc(it.title) + '"></div>' +
@@ -1090,7 +1099,7 @@ function openEditItemModal(itemId) {
     '<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:16px;">' +
     '<input type="checkbox" id="ed-writeback"' + (it.isRootWritable ? '' : ' disabled') + '> 同时尝试写回原文件内嵌标签（默认仅写手机高速覆盖层）</label>' +
     '<div style="display:flex;justify-content:space-between;gap:8px;">' +
-    '<button class="btn btn-tertiary" onclick="autoMatchSingle(' + it.itemId + ', true)">🔍 在线搜索候选列表</button>' +
+    '<button class="btn btn-tertiary" onclick="autoMatchSingle(' + it.itemId + ', true)">在线搜索候选列表</button>' +
     '<div style="display:flex;gap:8px;">' +
     '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
     '<button class="btn btn-primary" onclick="submitSingleMetadata(' + it.itemId + ')">保存</button></div></div>'
@@ -1124,7 +1133,7 @@ function openBatchEditModal() {
   const ids = Array.from(state.selectedItemIds);
   if (!ids.length) return;
   openModal(
-    '<h3 style="margin-top:0;">✏️ 批量修改 ' + ids.length + ' 首曲目元数据</h3>' +
+    '<h3 style="margin-top:0;">批量修改 ' + ids.length + ' 首曲目元数据</h3>' +
     '<p style="font-size:12px;color:var(--muted);">仅勾选的字段会被批量覆盖，未勾选字段保持每首曲目原值不变：</p>' +
     '<div class="form-grid">' +
     '<div class="form-field full"><label><input type="checkbox" id="b-chk-artist"> 统一修改歌手 (Artist)</label><input id="b-artist" class="input" placeholder="歌手名称"></div>' +
@@ -1177,7 +1186,7 @@ async function autoMatchSingle(itemId, previewOnly) {
     });
     if (!previewOnly) {
       if (res.applied) {
-        showToast('✨ 已自动匹配: ' + (res.selectedCandidate ? (res.selectedCandidate.artist + ' - ' + res.selectedCandidate.title) : '成功'));
+        showToast('已自动匹配: ' + (res.selectedCandidate ? (res.selectedCandidate.artist + ' - ' + res.selectedCandidate.title) : '成功'));
         await loadAllItems();
       } else {
         showToast('未找到高置信度在线候选，请打开编辑手动搜索');
@@ -1191,7 +1200,7 @@ async function autoMatchSingle(itemId, previewOnly) {
     }
     state._lastCandidates = cands;
     openModal(
-      '<h3 style="margin-top:0;">✨ 选择在线匹配候选</h3>' +
+      '<h3 style="margin-top:0;">选择在线匹配候选</h3>' +
       cands.map((c, idx) =>
         '<div class="list-item" style="border:1px solid var(--border);margin-bottom:8px;" onclick="applyPickedCandidate(' + itemId + ',' + idx + ')">' +
         '<div><div style="font-weight:600;">' + esc(c.title) + ' — ' + esc(c.artist) + '</div>' +
@@ -1234,7 +1243,7 @@ async function executeBatchAutoComplete(itemIds) {
       method: 'POST',
       json: { itemIds: itemIds, mode: 'auto' }
     });
-    showToast('✨ 批量联网补全完成：成功更新 ' + (res.committedCount || 0) + ' 首曲目');
+    showToast('批量联网补全完成：成功更新 ' + (res.committedCount || 0) + ' 首曲目');
     await loadAllItems();
   } catch (e) { alert(e.message); }
 }
@@ -1251,7 +1260,7 @@ async function loadPlaylists() {
   } else {
     state.activePlaylistId = null;
     document.getElementById('playlist-detail-pane').innerHTML =
-      '<div style="padding:36px;text-align:center;color:var(--muted);">暂无播放列表，点击左上角「+ 新建」创建普通列表或 🎯 练习列表</div>';
+      '<div style="padding:36px;text-align:center;color:var(--muted);">暂无播放列表，点击左上角「+ 新建」创建普通列表或练习列表</div>';
   }
 }
 
@@ -1271,11 +1280,11 @@ function renderPlaylistsSidebar() {
   }
   el.innerHTML = list.map(p => {
     const sel = p.playlistId === state.activePlaylistId ? ' selected' : '';
-    const badge = p.isPracticePlaylist ? '<span class="badge badge-practice">🎯 练习</span>' : '';
+    const badge = p.isPracticePlaylist ? '<span class="badge badge-practice">练习</span>' : '';
     return '<div class="list-item' + sel + '" onclick="selectPlaylist(' + p.playlistId + ')">' +
       '<div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
       esc(p.name) + ' ' + badge + '</div>' +
-      '<div style="font-size:11px;opacity:0.78;" class="tnum">' + p.itemCount + ' 首 · 🔖 ' + (p.totalBookmarks || 0) + ' 段</div></div></div>';
+      '<div style="font-size:11px;opacity:0.78;" class="tnum">' + p.itemCount + ' 首 · 书签 ' + (p.totalBookmarks || 0) + ' 段</div></div></div>';
   }).join('');
 }
 
@@ -1297,19 +1306,19 @@ function renderPlaylistDetail() {
   const rowsHtml = items.length ? items.map((it, idx) => {
     const speedTag = it.savedPracticeSpeed && Math.abs(it.savedPracticeSpeed - 1.0) > 0.01
       ? '<span class="badge badge-practice tnum">' + Number(it.savedPracticeSpeed).toFixed(2) + 'x</span> ' : '';
-    const bmTag = it.bookmarkCount > 0 ? '<span class="badge badge-ok tnum">🔖 ' + it.bookmarkCount + ' 段</span>' : '';
+    const bmTag = it.bookmarkCount > 0 ? '<span class="badge badge-ok tnum">书签 ' + it.bookmarkCount + ' 段</span>' : '';
     return '<tr class="drag-row" draggable="true" data-itemid="' + it.itemId + '" ' +
       'ondragstart="onPlDragStart(event,' + idx + ')" ondragover="event.preventDefault()" ondrop="onPlDrop(event,' + idx + ')">' +
-      '<td class="tnum" style="width:44px;color:var(--muted);">☰ ' + (idx + 1) + '</td>' +
-      '<td><div style="font-weight:600;">' + (it.isVideo ? '🎬 ' : '🎵 ') + esc(it.title) + '</div>' +
+      '<td class="tnum" style="width:44px;color:var(--muted);">' + (idx + 1) + '</td>' +
+      '<td><div style="font-weight:600;">' + (it.isVideo ? '[视频] ' : '') + esc(it.title) + '</div>' +
       '<div style="font-size:11px;color:var(--muted);">' + esc(it.artist) + ' · ' + esc(it.displayAlbum) + '</div></td>' +
       '<td>' + speedTag + bmTag + '</td>' +
       '<td class="tnum">' + fmtMs(it.durationMs, false) + '</td>' +
       '<td style="text-align:right;white-space:nowrap;">' +
       '<button class="btn btn-outline btn-xs" onclick="movePlItem(' + idx + ',-1)"' + (idx === 0 ? ' disabled' : '') + '>↑</button> ' +
       '<button class="btn btn-outline btn-xs" onclick="movePlItem(' + idx + ',1)"' + (idx === items.length - 1 ? ' disabled' : '') + '>↓</button> ' +
-      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">🎸 打点</button> ' +
-      '<button class="btn btn-danger btn-xs" onclick="removePlItem(' + s.playlistId + ',' + it.itemId + ')">✕</button></td></tr>';
+      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">打点</button> ' +
+      '<button class="btn btn-danger btn-xs" onclick="removePlItem(' + s.playlistId + ',' + it.itemId + ')">移除</button></td></tr>';
   }).join('') : '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">列表暂无曲目，点击右上角「+ 添加曲目」从曲库选歌或教学视频混排</td></tr>';
 
   pane.innerHTML =
@@ -1318,11 +1327,11 @@ function renderPlaylistDetail() {
     '<div style="font-size:12px;color:var(--muted);" class="tnum">' + items.length + ' 个音视频条目（支持鼠标拖拽行排序）</div></div>' +
     '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">' +
     '<label class="badge badge-practice" style="cursor:pointer;padding:6px 12px;font-size:12px;">' +
-    '<input type="checkbox" ' + (s.isPracticePlaylist ? 'checked' : '') + ' onchange="togglePlaylistPractice(' + s.playlistId + ', this.checked)"> 🎯 练习列表（手机播放自动开启练习模式）</label>' +
+    '<input type="checkbox" ' + (s.isPracticePlaylist ? 'checked' : '') + ' onchange="togglePlaylistPractice(' + s.playlistId + ', this.checked)"> 练习列表（手机播放自动开启练习模式）</label>' +
     '<button class="btn btn-primary btn-xs" onclick="openAddTracksToActivePlaylist()">+ 添加曲目</button>' +
     '<button class="btn btn-outline btn-xs" onclick="renameActivePlaylist(' + s.playlistId + ', \'' + escJs(s.name) + '\')">重命名</button>' +
-    '<a class="btn btn-tonal btn-xs" href="/api/playlists/export?id=' + s.playlistId + '">📤 导出 .m3u8</a>' +
-    '<button class="btn btn-danger btn-xs" onclick="deleteActivePlaylist(' + s.playlistId + ')">🗑️ 删除</button>' +
+    '<a class="btn btn-tonal btn-xs" href="/api/playlists/export?id=' + s.playlistId + '">导出 .m3u8</a>' +
+    '<button class="btn btn-danger btn-xs" onclick="deleteActivePlaylist(' + s.playlistId + ')">删除</button>' +
     '</div></div>' +
     '<div class="table-wrap"><table><thead><tr><th>序</th><th>曲目 / 视频</th><th>练习标记</th><th>时长</th><th style="text-align:right;">排序 / 操作</th></tr></thead>' +
     '<tbody>' + rowsHtml + '</tbody></table></div>';
@@ -1363,7 +1372,7 @@ function openCreatePlaylistModal() {
     '<div class="form-field" style="margin-bottom:12px;"><label>列表名称</label>' +
     '<input id="new-pl-name" class="input" placeholder="例如：吉他 Solo 每日必练"></div>' +
     '<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:16px;cursor:pointer;">' +
-    '<input type="checkbox" id="new-pl-practice" checked> 🎯 设为练习列表（在手机端点击曲目自动开启练习模式）</label>' +
+    '<input type="checkbox" id="new-pl-practice" checked> 设为练习列表（在手机端点击曲目自动开启练习模式）</label>' +
     '<div style="display:flex;justify-content:flex-end;gap:8px;">' +
     '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
     '<button class="btn btn-primary" onclick="submitCreatePlaylist()">创建</button></div>'
@@ -1396,7 +1405,7 @@ async function renameActivePlaylist(id, oldName) {
 async function togglePlaylistPractice(id, isPractice) {
   try {
     await api('/api/playlists/practice-mode', { method: 'POST', json: { playlistId: id, isPracticePlaylist: isPractice } });
-    showToast(isPractice ? '🎯 已设为练习列表' : '已切换为普通播放列表');
+    showToast(isPractice ? '已设为练习列表' : '已切换为普通播放列表');
     await loadPlaylists();
   } catch (e) { alert(e.message); }
 }
@@ -1429,7 +1438,7 @@ function openAddTracksToActivePlaylist() {
     (candidates.length ? candidates.map(it =>
       '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;">' +
       '<input type="checkbox" class="pl-add-chk" value="' + it.itemId + '"> ' +
-      '<span>' + (it.isVideo ? '🎬 ' : '🎵 ') + '<strong>' + esc(it.title) + '</strong> — ' + esc(it.artist) + '</span></label>'
+      '<span>' + (it.isVideo ? '[视频] ' : '') + '<strong>' + esc(it.title) + '</strong> — ' + esc(it.artist) + '</span></label>'
     ).join('') : '<div style="padding:18px;text-align:center;color:var(--muted);">所有曲库曲目均已在列表中</div>') +
     '</div><div style="display:flex;justify-content:flex-end;gap:8px;">' +
     '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
@@ -1453,9 +1462,9 @@ function openAddSelectedToPlaylistModal() {
   if (!ids.length) return;
   if (!state.playlists.length) { alert('请先在「播放列表」页新建一个播放列表'); return; }
   openModal(
-    '<h3 style="margin-top:0;">🎯 将 ' + ids.length + ' 首曲目加入播放/练习列表</h3>' +
+    '<h3 style="margin-top:0;">将 ' + ids.length + ' 首曲目加入播放/练习列表</h3>' +
     '<select id="batch-pl-target" style="width:100%;margin-bottom:16px;">' +
-    state.playlists.map(p => '<option value="' + p.playlistId + '">' + (p.isPracticePlaylist ? '🎯 ' : '') + esc(p.name) + '</option>').join('') +
+    state.playlists.map(p => '<option value="' + p.playlistId + '">' + (p.isPracticePlaylist ? '[练习] ' : '') + esc(p.name) + '</option>').join('') +
     '</select><div style="display:flex;justify-content:flex-end;gap:8px;">' +
     '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
     '<button class="btn btn-primary" onclick="submitBatchAddToPlaylist()">加入列表</button></div>'
@@ -1502,10 +1511,10 @@ function renderStudioTrackList() {
   const el = document.getElementById('studio-track-list');
   el.innerHTML = filtered.map(it => {
     const sel = it.itemId === state.studioItemId ? ' selected' : '';
-    const bm = it.bookmarkCount > 0 ? ' <span class="badge badge-ok tnum">🔖' + it.bookmarkCount + '</span>' : '';
+    const bm = it.bookmarkCount > 0 ? ' <span class="badge badge-ok tnum">书签 ' + it.bookmarkCount + '</span>' : '';
     return '<div class="list-item' + sel + '" onclick="loadStudioItem(' + it.itemId + ')">' +
       '<div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-      (it.isVideo ? '🎬 ' : '🎵 ') + esc(it.title) + bm + '</div>' +
+      (it.isVideo ? '[视频] ' : '') + esc(it.title) + bm + '</div>' +
       '<div style="font-size:11px;opacity:0.78;">' + esc(it.artist) + ' · ' + fmtMs(it.durationMs, false) + '</div></div></div>';
   }).join('');
 }
@@ -1582,6 +1591,11 @@ function onSpeedSliderChange(val) {
     m.webkitPreservesPitch = true;
     m.playbackRate = spd;
   }
+}
+
+function stepSpeedSlider(delta) {
+  const cur = Number(document.getElementById('practice-speed-range').value) || 1.0;
+  onSpeedSliderChange(cur + delta);
 }
 
 function getDurationMs() {
@@ -1663,7 +1677,7 @@ function updateTimelineOverlay() {
   document.getElementById('btn-b-label').textContent = state.pointBMs != null ? fmtMs(state.pointBMs, true) : '--:--';
 
   const loopBtn = document.getElementById('btn-loop-toggle');
-  loopBtn.textContent = state.loopEnabled ? '🔁 循环: 开启' : '🔁 循环: 挂起';
+  loopBtn.textContent = state.loopEnabled ? '循环: 开启' : '循环: 挂起';
   loopBtn.className = state.loopEnabled ? 'btn btn-primary' : 'btn btn-tonal';
 
   const readout = document.getElementById('studio-ab-readout');
@@ -1714,7 +1728,7 @@ function renderStudioBookmarks() {
     const spd = b.savedSpeed ? (' · ' + Number(b.savedSpeed).toFixed(2) + 'x') : '';
     return '<div class="list-item" style="background:var(--surface);border:1px solid var(--border);margin-bottom:6px;">' +
       '<div onclick="activateBookmark(' + b.bookmarkId + ')" style="flex:1;">' +
-      '<span class="badge badge-practice">🔖 ' + esc(b.label) + '</span> ' +
+      '<span class="badge badge-practice">' + esc(b.label) + '</span> ' +
       '<span class="tnum" style="font-size:12px;margin-left:6px;">' + fmtMs(b.aMs, true) + ' – ' + fmtMs(b.bMs, true) + spd + '</span></div>' +
       '<button class="btn btn-danger btn-xs" onclick="deleteBookmarkById(' + b.bookmarkId + ')">删除</button></div>';
   }).join('');
@@ -1758,7 +1772,7 @@ async function saveCurrentBookmark() {
     updateTimelineOverlay();
     await loadAllItems();
     await refreshStatus();
-    showToast('🔖 已保存段落书签: ' + label);
+    showToast('已保存段落书签: ' + label);
   } catch (e) { alert(e.message); }
 }
 
@@ -1812,7 +1826,7 @@ async function savePracticeStateToPhone() {
     });
     state.studioPractice = res.state;
     await loadAllItems();
-    showToast('💾 练习参数已同步到手机数据库');
+    showToast('练习参数已同步到手机数据库');
   } catch (e) { alert(e.message); }
 }
 

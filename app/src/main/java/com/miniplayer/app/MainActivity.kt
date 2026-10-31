@@ -63,8 +63,8 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Holds `FLAG_KEEP_SCREEN_ON` whenever playing video OR while Practice Mode is active with
- * `keepScreenOnInPractice == true` (`DESIGN.md` §5.3 #3).
+ * Holds `FLAG_KEEP_SCREEN_ON` in Casual Mode while playing video, or in Practice Mode according
+ * to `keepScreenOnInPractice` (`DESIGN.md` §5.3 #3).
  */
 @Composable
 private fun KeepScreenOnEffect(
@@ -75,8 +75,11 @@ private fun KeepScreenOnEffect(
     val practiceActive by viewModel.isPracticeModeActive.collectAsState()
     val settings by viewModel.settings.collectAsState()
 
-    val shouldKeepOn = (snapshot.isPlaying && snapshot.currentItem?.isVideo == true) ||
-        (practiceActive && snapshot.currentItem != null && settings.keepScreenOnInPractice)
+    val shouldKeepOn = if (practiceActive) {
+        snapshot.currentItem != null && settings.keepScreenOnInPractice
+    } else {
+        snapshot.isPlaying && snapshot.currentItem?.isVideo == true
+    }
 
     DisposableEffect(shouldKeepOn) {
         if (shouldKeepOn) {

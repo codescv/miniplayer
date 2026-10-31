@@ -1052,25 +1052,16 @@ class LanStudioServer(
         val search = query["q"]?.trim()?.lowercase(Locale.ROOT).orEmpty()
 
         val baseItems: List<MediaItem> = when (filter) {
-            "video", "videos" -> core.library.videoItems.value.ifEmpty {
-                core.library.allMediaItems.value.filter { it.isVideo }
-            }
+            "video", "videos" -> core.library.videoItems.value
 
-            "unknown_album" -> {
-                val viaContract = core.library.getAlbumTracks(AlbumSummary.UNKNOWN_ALBUM_KEY)
-                viaContract.ifEmpty {
-                    core.library.allMediaItems.value.filter {
-                        it.album.isNullOrBlank() || it.album == AlbumSummary.UNKNOWN_ALBUM_TITLE
-                    }
-                }
-            }
+            "unknown_album" -> core.library.getAlbumTracks(AlbumSummary.UNKNOWN_ALBUM_KEY)
 
             "album", "albums" -> {
                 val albumKey = query["albumKey"].orEmpty()
                 if (albumKey.isNotEmpty()) {
                     core.library.getAlbumTracks(albumKey)
                 } else {
-                    core.library.allMediaItems.value
+                    core.library.allMediaItems.value.filter { !it.isVideo && !it.isInPracticeFolder }
                 }
             }
 
@@ -1079,7 +1070,7 @@ class LanStudioServer(
                 if (artistNorm.isNotEmpty()) {
                     core.library.getArtistDetail(artistNorm)?.tracks.orEmpty()
                 } else {
-                    core.library.allMediaItems.value
+                    core.library.allMediaItems.value.filter { !it.isVideo && !it.isInPracticeFolder }
                 }
             }
 
