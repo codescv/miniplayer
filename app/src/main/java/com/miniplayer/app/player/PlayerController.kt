@@ -288,6 +288,7 @@ class PlayerController(
                 _snapshot.value = _snapshot.value.copy(pauseAtEndOfCurrentTrack = false)
             }
             if (!suppressAutoTransitionLoad) {
+                saveCurrentTrackPosition()
                 metronome.cancel()
                 activeBoundaryMessage?.cancel()
                 activeBoundaryMessage = null
@@ -297,14 +298,18 @@ class PlayerController(
             val newIndex = exoPlayer.currentMediaItemIndex
             val queue = _snapshot.value.queue
             val nextItem = queue.getOrNull(newIndex)
+            val nextPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
             _snapshot.value = _snapshot.value.copy(
                 currentItem = nextItem,
                 currentQueueIndex = newIndex,
-                positionMs = exoPlayer.currentPosition.coerceAtLeast(0L),
+                positionMs = nextPosMs,
                 durationMs = nextItem?.durationMs ?: 0L,
             )
             if (!suppressAutoTransitionLoad) {
                 if (nextItem != null) {
+                    if (nextItem.itemId > 0L) {
+                        persistPlaybackPosition(nextItem.itemId, nextPosMs)
+                    }
                     loadWaveformFor(nextItem)
                     val targetItemId = nextItem.itemId
                     trackTransitionJob = mainScope.launch {

@@ -3,6 +3,7 @@ package com.miniplayer.app.player
 import android.media.AudioFormat
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.ui.compareNaturalStrings
+import com.miniplayer.app.ui.components.ArtworkLoader
 import com.miniplayer.app.ui.sortMediaItems
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -347,6 +348,29 @@ class PracticeLoopEngineTest {
         )
         val sortedNames = sortMediaItems(items, SortOrder.NAME_ASC).map { it.fileName }
         assertEquals(listOf("01 - Intro.mp3", "02 - Verse.mp3", "10 - Outro.mp3"), sortedNames)
+    }
+
+    @Test
+    fun artworkLoader_upgradesTrustedArchiveHttpRedirectsAndRejectsUntrustedHttp() {
+        assertEquals(
+            "https://coverartarchive.org/release/123/front-500",
+            ArtworkLoader.normalizeTrustedCoverUrl("https://coverartarchive.org/release/123/front-500"),
+        )
+        assertEquals(
+            "https://archive.org/download/mbid-123/front-500.jpg",
+            ArtworkLoader.normalizeTrustedCoverUrl("http://archive.org/download/mbid-123/front-500.jpg"),
+        )
+        assertEquals(
+            "https://ia800500.us.archive.org/19/items/mbid-123/front-500.jpg",
+            ArtworkLoader.normalizeTrustedCoverUrl("http://ia800500.us.archive.org/19/items/mbid-123/front-500.jpg"),
+        )
+        assertEquals(
+            "https://coverartarchive.org/release/123/front-250",
+            ArtworkLoader.normalizeTrustedCoverUrl("http://coverartarchive.org/release/123/front-250"),
+        )
+        // Untrusted cleartext hosts and lookalike domains must still be rejected
+        assertNull(ArtworkLoader.normalizeTrustedCoverUrl("http://evil-archive.org/front.jpg"))
+        assertNull(ArtworkLoader.normalizeTrustedCoverUrl("http://example.com/front.jpg"))
     }
 
     private class FakeLoopPlayerPort(override var durationMs: Long) : LoopPlayerPort {

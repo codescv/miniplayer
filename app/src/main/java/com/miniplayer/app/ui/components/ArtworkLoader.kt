@@ -33,11 +33,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.miniplayer.app.player.CountInMetronome
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -106,7 +112,7 @@ object ArtworkLoader {
         }
     }
 
-    private fun loadSourceBitmap(
+    private suspend fun loadSourceBitmap(
         context: Context,
         coverPathOrUri: String?,
         mediaDocumentUri: String?,
@@ -115,7 +121,8 @@ object ArtworkLoader {
     ): Bitmap? {
         if (!coverPathOrUri.isNullOrBlank()) {
             when {
-                coverPathOrUri.startsWith("https://") -> {
+                coverPathOrUri.startsWith("https://", ignoreCase = true) ||
+                    coverPathOrUri.startsWith("http://", ignoreCase = true) -> {
                     fetchHttpsBitmap(coverPathOrUri, maxDimensionPx)?.let { return it }
                 }
                 coverPathOrUri.startsWith("content://") || coverPathOrUri.startsWith("file://") -> {
@@ -185,38 +192,95 @@ object ArtworkLoader {
         }
     }
 
-    private fun fetchHttpsBitmap(urlStr: String, maxDimensionPx: Int): Bitmap? {
-        var conn: HttpURLConnection? = null
+    private const val TOTAL_HTTPS_TIMEOUT_MS = 3_000L
+    private const val MAX_ARTWORK_DOWNLOAD_BYTES = 4 * 1024 * 1024
+
+    /**
+     * Enforces HTTPS for remote cover art while upgrading trusted Cover Art Archive / Internet
+     * Archive `http://` redirects (`archive.org`, `*.archive.org`, `coverartarchive.org`,
+     * `*.coverartarchive.org`) to `https://` (`usesCleartextTraffic="false"`).
+     */
+    internal fun normalizeTrustedCoverUrl(rawUrl: String): String? {
+        val parsed = try {
+            URL(rawUrl.trim())
+        } catch (_: Throwable) {
+            return null
+        }
+        return when (parsed.protocol.lowercase()) {
+            "https" -> parsed.toString()
+            "http" -> {
+                val host = parsed.host.orEmpty().lowercase()
+                val isTrustedArchiveHost = host == "archive.org" ||
+                    host.endsWith(".archive.org") ||
+                    host == "coverartarchive.org" ||
+                    host.endsWith(".coverartarchive.org")
+                if (!isTrustedArchiveHost) {
+                    null
+                } else {
+                    val port = if (parsed.port > 0 && parsed.port != 80) parsed.port else -1
+                    URL("https", parsed.host, port, parsed.file).toString()
+                }
+            }
+            else -> null
+        }
+    }
+
+    private suspend fun fetchHttpsBitmap(urlStr: String, maxDimensionPx: Int): Bitmap? {
+        val activeConn = AtomicReference<HttpURLConnection?>(null)
+        val cancelHandle = coroutineContext[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) {
+                runCatching { activeConn.getAndSet(null)?.disconnect() }
+            }
+        }
+        val deadlineMs = CountInMetronome.monotonicNowMs() + TOTAL_HTTPS_TIMEOUT_MS
         return try {
-            var currentUrl = urlStr
+            var currentUrl = normalizeTrustedCoverUrl(urlStr) ?: return null
             var hops = 0
             while (hops <= 4) {
+                coroutineContext.ensureActive()
+                val remainingMs = (deadlineMs - CountInMetronome.monotonicNowMs()).toInt()
+                if (remainingMs <= 50) return null
                 val url = URL(currentUrl)
                 if (!url.protocol.equals("https", ignoreCase = true)) return null
-                conn = (url.openConnection() as HttpURLConnection).apply {
+                val conn = (url.openConnection() as HttpURLConnection).apply {
                     instanceFollowRedirects = false
-                    connectTimeout = 3_000
-                    readTimeout = 3_000
+                    connectTimeout = remainingMs
+                    readTimeout = remainingMs
                     setRequestProperty("User-Agent", "MiniPlayer/1.0.0 (Android)")
                 }
+                activeConn.set(conn)
                 val code = conn.responseCode
                 if (code in listOf(301, 302, 303, 307, 308)) {
                     val loc = conn.getHeaderField("Location") ?: return null
-                    val nextUrl = URL(url, loc).toString()
+                    val resolved = URL(url, loc).toString()
+                    activeConn.set(null)
                     conn.disconnect()
-                    currentUrl = nextUrl
+                    currentUrl = normalizeTrustedCoverUrl(resolved) ?: return null
                     hops++
                     continue
                 }
                 if (code != HttpURLConnection.HTTP_OK) return null
-                val bytes = conn.inputStream.use { it.readBytes() }
+                val bytes = conn.inputStream.use { input ->
+                    val out = ByteArrayOutputStream(32 * 1024)
+                    val buf = ByteArray(8 * 1024)
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        if (CountInMetronome.monotonicNowMs() > deadlineMs) return null
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        if (out.size() + n > MAX_ARTWORK_DOWNLOAD_BYTES) return null
+                        out.write(buf, 0, n)
+                    }
+                    out.toByteArray()
+                }
                 return decodeSampledBytes(bytes, maxDimensionPx)
             }
             null
         } catch (_: Throwable) {
             null
         } finally {
-            conn?.disconnect()
+            cancelHandle?.dispose()
+            runCatching { activeConn.getAndSet(null)?.disconnect() }
         }
     }
 
