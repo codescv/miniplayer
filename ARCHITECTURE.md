@@ -1,6 +1,6 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.6 (`versionCode = 10006`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.7 (`versionCode = 10007`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
 > **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · SQLite (`SQLiteOpenHelper` + Kotlin `StateFlow`)
 
@@ -276,7 +276,13 @@ CREATE TABLE app_settings (
    - 点播入口携带 `PlayContext` 枚举：`PRACTICE_PLAYLIST` | `PRACTICE_FOLDER` | `BOOKMARK_JUMP(bookmarkId)` | `CASUAL`。
    - 前三者立即置 `isPracticeModeActive = true`、展开 `PracticeDeck` 并应用 `PracticeState`（倍速 + 半音/音分 + BPM + A/B 区间）；`CASUAL` 置 `isPracticeModeActive = false`、播放参数保持 `(1.0f, 1.0f)`。
 4. **自适应启动图标圆形蒙版光学居中 (`res/drawable/ic_launcher_foreground.xml`, `v1.0.6`)**：
-   - 针对 Android `AdaptiveIconDrawable` 将 `108×108dp` 画布裁剪为内圈 `72×72dp`（`cx = 54, cy = 54, r = 36dp`，光学安全区 `r = 22dp..24dp`）的圆形桌面遮罩，`ic_launcher_foreground.xml` 将「版型 A」宽肩 351 拨片与居中圆角播放三角按 **`0.60x`（`38.4dp × 37.8dp`）** 缩放并光学居中于 `x ∈ [34.8, 73.2]`、`y ∈ [36.5, 74.3]`（左右肩半径 `19.6dp`、底尖半径 `20.3dp`，四周留出 `~15dp–16dp` 均匀边距），配合 `values` / `values-night` 颜色资源自动切换深浅色主题。
+   - 针对 Android `AdaptiveIconDrawable` 将 `108×108dp` 画布裁剪为内圈 `72×72dp`（`cx = 54, cy = 54, r = 36dp`，光学安全区 `r = 22dp..24dp`）的圆形桌面遮罩，`ic_launcher_foreground.xml` 将「版型 A」宽肩 351 拨片与居中圆角播放三角按 **`0.60x`（`38.4dp × 37.8dp`）** 缩放并光学居中于 `x ∈ [34.8, 73.2]`、`y ∈ [36.5, 74.3]`（左右肩半径 `19.6dp`、底尖半径 `20.3dp`，四周留出 `~15dp–16dp` 均匀边距）。
+5. **系统毛玻璃深色图标底板与 `evenOdd` 主题图标镂空 (`res/values/colors.xml`, `res/drawable/ic_launcher_monochrome.xml`, `res/mipmap-anydpi-v26/ic_launcher.xml`, `v1.0.7`)**：
+   - **删除 `res/values-night/colors.xml`**，`color/ic_launcher_background` 仅保留默认限定符且固定为纯白 `#FFFFFF`（与 Google Maps 相同），`ic_launcher_pick = #F97316`、`ic_launcher_play = #FFFFFF`。ColorOS 15 / OxygenOS 15「暗色图标」桌面检测到明亮/彩色的 `<background>` 时会用系统半透明磨砂毛玻璃深色底板替换之（Google Maps / Discord 行为）；若 APK 自带 `(night)` 限定的预压暗实色背景，桌面会跳过替换直接绘制实心深色圆。`aapt2 dump resources` 中 `color/ic_launcher_background` 必须只出现 `()` 一项，不得出现 `(night)`。
+   - `<monochrome>` 指向独立的 `drawable/ic_launcher_monochrome.xml`：单条 `android:fillType="evenOdd"`（编译后 `fillType = 1`）复合路径，先描 `0.60x` 拨片外轮廓，再描内部播放三角轮廓。Android 13+ (`API 33`) 主题图标引擎对整个 drawable 统一着色（`Themed Icons` / Material You），双路径叠加会被染成实心拨片，偶奇填充保证三角区域被镂空透出底板。`ic_launcher_foreground.xml` 保持双 `<path>` 双色绘制不变。
+6. **深色主题抬升表面与动态色板上抬 (`ui/theme/Theme.kt`, `v1.0.7`)**：
+   - `DefaultDarkScheme`（Android 8.0–11 或禁用动态取色时）采用 Google Material「Charcoal Dark」炭灰阶梯：`background` / `surface = #1E1F24`、`surfaceContainerLowest = #181A1F`、`surfaceContainerLow = #26282F`、`surfaceContainer = #2B2E36`、`surfaceContainerHigh = #32353E`、`surfaceContainerHighest = #3B3E48`。
+   - Android 12+ (`API 31+`) 深色动态取色路径：`MiniPlayerTheme` 以 `elevateDynamicDarkSurfaces(dynamicDarkColorScheme(context))` 代替裸 `dynamicDarkColorScheme`，通过 `ColorScheme.copy` 将 Material You 深色色板整体上抬一个色调台阶：`background` / `surface ← surfaceContainer`、`surfaceContainerLowest ← surface`、`surfaceContainerLow ← surfaceContainerHigh`、`surfaceContainer ← surfaceContainerHighest`、`surfaceContainerHigh ← surfaceBright`；`surfaceContainerHighest` 与所有 `on*` 文字色保持原值，故 WCAG AA 对比度不受影响。`rememberAnimatedColorScheme` 的播放页封面取色色板不经过此函数。
 
 ---
 

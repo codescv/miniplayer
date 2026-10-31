@@ -1,33 +1,44 @@
-# MiniPlayer v1.0.6 — Verification, Security Audit & Release Report
+# MiniPlayer v1.0.7 — Verification, Security Audit & Release Report
 
-**Version:** `1.0.6` (`versionCode = 10006`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
+**Version:** `1.0.7` (`versionCode = 10007`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch Verified (`v1.0.6`):** `wt/coder-7` (`fabd4dc`), re-verified \& release-signed on `wt/tester-7`  
-**Release APK:** `MiniPlayer-v1.0.6.apk` — `14,295,186` bytes, SHA-256 `5a30f654c1767f66880ccd854d6d32f8e6b65812002905b08dbcf569fe390e52`
+**Branch Verified (`v1.0.7`):** `wt/coder-9` (debug build + `71/71` unit tests; release signing pending)  
+**Previous Release APK (`v1.0.6`):** `MiniPlayer-v1.0.6.apk` — `14,295,186` bytes, SHA-256 `5a30f654c1767f66880ccd854d6d32f8e6b65812002905b08dbcf569fe390e52`
 
 ---
 
-## 1. Build, Lint & APK Verification (`v1.0.6`)
+## 1. Build, Lint & APK Verification (`v1.0.7`)
 
 All Android builds and pure-JVM unit/integration tests succeeded **100% offline** (`--offline`) with zero errors.
 
 | Check | Details / Result | Status |
 |---|---|---|
 | **Toolchain** | JDK `21` (`JAVA_HOME`), Android `compileSdk = 35`, `targetSdk = 35`, `minSdk = 26`, Build-Tools `35.0.0`, AGP `8.7.1`, Kotlin `2.0.21`, Jetpack Compose Material 3, AndroidX Media3 `1.5.1` | **PASS** |
-| **Offline Verification Command** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug assembleRelease` (`BUILD SUCCESSFUL`, `ANDROID_HOME=~/Android/Sdk`) | **PASS** |
-| **Android Lint (`lintDebug`)** | **0** errors, `36` warnings (`app/build/reports/lint-results-debug.html`) | **PASS** |
+| **Offline Verification Command (`v1.0.7`)** | `./gradlew --offline testDebugUnitTest assembleDebug` (`BUILD SUCCESSFUL in 38s`, `43` actionable tasks, `ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`) | **PASS** |
+| **Android Lint (`lintDebug`)** | **0** errors, `36` warnings (`app/build/reports/lint-results-debug.html`) — last run on `v1.0.6`; `v1.0.7` changes are resource/theme-only | **PASS** |
 | **Zero Broad Storage Permissions** | Strictly **0** `READ_MEDIA_AUDIO`, `READ_MEDIA_VIDEO`, `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`, or `MANAGE_EXTERNAL_STORAGE` permissions in `AndroidManifest.xml`; pure SAF (`ACTION_OPEN_DOCUMENT_TREE`) folder grants | **PASS** |
 | **Network Surface Hygiene** | `android:usesCleartextTraffic="false"`; outbound traffic limited to HTTPS keyless metadata APIs (MusicBrainz / Cover Art Archive / iTunes CDN / LRCLIB), HTTPS GitHub Releases auto-updater, and the user-started LAN/loopback Web Studio (`:8088`). Staged `coverRemoteUrl` downloads reuse `OnlineMetadataCompleter.downloadCoverBytes` | **PASS** |
 | **Terminology & Emoji Hygiene** | **0** `练琴` strings in `app/src/main/**`; **0** emojis in Compose screens and `LanStudioWebApp`. Only the plain `✓` text marks remain (`歌词✓` / `封面✓`) | **PASS** |
-| **Debug APK (`v1.0.6`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,435,210` bytes, `versionName = "1.0.6-DEBUG"`, `versionCode = 10006`) | **PASS** |
-| **Release APK (`v1.0.6`)** | `MiniPlayer-v1.0.6.apk` (byte-identical to `app/build/outputs/apk/release/app-release.apk`): **`14,295,186` bytes**, SHA-256 **`5a30f654c1767f66880ccd854d6d32f8e6b65812002905b08dbcf569fe390e52`** (recorded in `SHA256SUMS.txt`); `zipalign -f -p 4` + `apksigner sign` with `~/.android/miniplayer-release.jks` (alias `miniplayer`); `zipalign -c -p 4` OK | **PASS** |
+| **Debug APK (`v1.0.7`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,435,763` bytes, `versionName = "1.0.7-DEBUG"`, `versionCode = 10007`) | **PASS** |
+| **Release APK (`v1.0.6`, previous)** | `MiniPlayer-v1.0.6.apk` (byte-identical to `app/build/outputs/apk/release/app-release.apk`): **`14,295,186` bytes**, SHA-256 **`5a30f654c1767f66880ccd854d6d32f8e6b65812002905b08dbcf569fe390e52`** (recorded in `SHA256SUMS.txt`); `zipalign -f -p 4` + `apksigner sign` with `~/.android/miniplayer-release.jks` (alias `miniplayer`); `zipalign -c -p 4` OK | **PASS** |
 | **`apksigner verify -v --print-certs`** | `Verifies`; v2 `true`, v3 `true`; `1` signer; certificate SHA-256 `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5` (same signing identity as `v1.0.5`, so in-place upgrade works) | **PASS** |
-| **`aapt2 dump badging`** | `package: name='com.miniplayer.app' versionCode='10006' versionName='1.0.6'`, `application-label:'Play'`, `minSdkVersion:'26'`, `targetSdkVersion:'35'` | **PASS** |
-| **Adaptive Icon Resources in APK** | `aapt2 dump xmltree` of the compiled foreground in the signed APK shows the exact `0.60x` pick + play path data. Independent Bézier sampling: pick bbox `38.40dp × 37.78dp`, `x ∈ [34.80, 73.20]`, `y ∈ [36.50, 74.28]`, area centroid `(54.00, 53.13)` (optically centered on `(54, 54)`), max radius `20.48dp` from center (≥ `15.5dp` margin inside the `r = 36dp` mask); play-triangle centroid `(54.16, 52.40)`. `drawable/ic_launcher_foreground.xml` (`108×108dp` canvas, `38.4dp × 37.8dp` `0.60x` wide-shoulder 351 pick `x ∈ [34.8, 73.2]`, `y ∈ [36.5, 74.3]`, `r_shoulder = 19.6dp`, `r_tip = 20.3dp`, ~`15dp–16dp` uniform margin in `72×72dp` circular mask); `color/ic_launcher_background` `()` `#F8FAFC` / `(night)` `#0F172A`; `color/ic_launcher_pick` `#F97316` / `#FB923C`; `color/ic_launcher_play` `#FFFFFF` / `#FFFBEB` | **PASS** |
+| **`aapt2 dump badging` (`v1.0.7` debug)** | `package: name='com.miniplayer.app' versionCode='10007' versionName='1.0.7-DEBUG'`, `minSdkVersion:'26'`, `targetSdkVersion:'35'` | **PASS** |
+| **Adaptive Icon Resources in APK** | `aapt2 dump xmltree` of the compiled foreground in the signed APK shows the exact `0.60x` pick + play path data. Independent Bézier sampling: pick bbox `38.40dp × 37.78dp`, `x ∈ [34.80, 73.20]`, `y ∈ [36.50, 74.28]`, area centroid `(54.00, 53.13)` (optically centered on `(54, 54)`), max radius `20.48dp` from center (≥ `15.5dp` margin inside the `r = 36dp` mask); play-triangle centroid `(54.16, 52.40)`. `drawable/ic_launcher_foreground.xml` (`108×108dp` canvas, `38.4dp × 37.8dp` `0.60x` wide-shoulder 351 pick `x ∈ [34.8, 73.2]`, `y ∈ [36.5, 74.3]`, `r_shoulder = 19.6dp`, `r_tip = 20.3dp`, ~`15dp–16dp` uniform margin in `72×72dp` circular mask); **`v1.0.7`:** `aapt2 dump resources` shows `color/ic_launcher_background` with **only** the default `()` `#ffffffff` entry (**no `(night)` qualifier** — `values-night/colors.xml` removed), `color/ic_launcher_pick` `()` `#fff97316`, `color/ic_launcher_play` `()` `#ffffffff`; `res/mipmap-anydpi-v26/ic_launcher.xml` `<monochrome>` resolves to `drawable/ic_launcher_monochrome` (`0x7f040008`), whose compiled `<path>` carries the single pick + play-triangle compound `pathData` with `fillType = 1` (`evenOdd`) | **PASS** |
 
 ---
 
-## 2. `v1.0.6` Requirement Verification Matrix
+## 2. `v1.0.7` Requirement Verification Matrix
+
+| # | Requirement | Verified Implementation & Files | Status |
+|---:|---|---|---|
+| **1** | Remove `values-night` launcher palette and set light `<background>` to `#FFFFFF` so ColorOS 15 / OxygenOS 15 "暗色图标" launchers substitute their frosted/blurred dark glass plate (as for Google Maps / Discord) instead of drawing a flat pre-darkened circle | `git rm app/src/main/res/values-night/colors.xml`; `app/src/main/res/values/colors.xml` = `ic_launcher_background #FFFFFF`, `ic_launcher_pick #F97316`, `ic_launcher_play #FFFFFF`. Verified in compiled APK: `color/ic_launcher_background` has a single `()` `#ffffffff` config, no `(night)` | **PASS** |
+| **2** | Dedicated `evenOdd` `<monochrome>` cutout so Android 13+/15 themed-icon engines cut out the play triangle instead of tinting two overlapping paths one color | New `app/src/main/res/drawable/ic_launcher_monochrome.xml` (`108×108dp`, one `<path>` `android:fillType="evenOdd"`: `M54,36.5 … Z M48.9,45.5 … Z`); `app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml` `<monochrome android:drawable="@drawable/ic_launcher_monochrome" />`. `aapt2 dump xmltree` confirms `fillType = 1` | **PASS** |
+| **3** | Elevate in-app dark surfaces (Charcoal Dark) and shift Android 12+ dynamic dark palette one tonal step brighter | `app/src/main/java/com/miniplayer/app/ui/theme/Theme.kt`: `DefaultDarkScheme` `background` / `surface = 0xFF1E1F24`, `surfaceContainerLowest = 0xFF181A1F`, `surfaceContainerLow = 0xFF26282F`, `surfaceContainer = 0xFF2B2E36`, `surfaceContainerHigh = 0xFF32353E`, `surfaceContainerHighest = 0xFF3B3E48`; new `elevateDynamicDarkSurfaces(rawDark)` (`background` / `surface = rawDark.surfaceContainer`, `surfaceContainerLowest = rawDark.surface`, `surfaceContainerLow = rawDark.surfaceContainerHigh`, `surfaceContainer = rawDark.surfaceContainerHighest`, `surfaceContainerHigh = rawDark.surfaceBright`) applied to `dynamicDarkColorScheme(context)` when `darkTheme && SDK_INT >= S`; `compileDebugKotlin` clean | **PASS** |
+| **4** | Version bump (`v1.0.7` / `10007`) & documentation update | `app/build.gradle.kts` (`versionCode = 10007`, `versionName = "1.0.7"`); `README.md`, `DESIGN.md`, `ARCHITECTURE.md`, and `TEST_REPORT.md` updated to `v1.0.7` (`10007`) | **PASS** |
+
+---
+
+## 2b. `v1.0.6` Requirement Verification Matrix (previous)
 
 | # | Requirement | Verified Implementation & Files | Status |
 |---:|---|---|---|

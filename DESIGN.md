@@ -58,6 +58,7 @@
    - **播放页局部封面取色**：进入全屏播放页时，通过 Material Color Utilities (`QuantizerCelebi` + `Score` → `SchemeTonalSpot`) 从当前曲目封面（或视频首帧缩略图）实时提取同色系 M3 柔和色板，以 `350 ms` 缓动动画过渡至播放页背景（`surfaceContainerLow`）与控件高亮色（`primaryContainer` / `secondaryContainer` / `tertiaryContainer`）。因为走标准 M3 色调映射而非生硬取原图纯色，深浅色模式下文字对比度始终严格满足 **WCAG AA (≥ 4.5:1)**。
 2. **层级与容器 Token (Surface Container Hierarchy)**：
    - 弃用生硬分割线与重阴影，采用 M3 色调表面分层：页面底色 `surface` → 列表卡片/文件夹块 `surfaceContainerLow` → 常驻 `MiniPlayer` `surfaceContainerHigh` → 展开的**练习工作台 (Practice Deck)** `surfaceContainer`（圆角 `24 dp`） → 激活态 **`[ 🎯 练习模式 ]`** 与 A-B 循环区间采用 `tertiaryContainer` / `onTertiaryContainer`（与常规播放的 `primary` 形成清晰直觉区分：主色管播放，第三色管练习循环）。
+   - **深色模式抬升表面 (Charcoal Dark Elevated Surfaces, `v1.0.7`)**：深色主题不再使用接近纯黑的 `#111318` 底色，改为 Google Material「Charcoal Dark」炭灰阶梯：`background` / `surface = #1E1F24`、`surfaceContainerLowest = #181A1F`、`surfaceContainerLow = #26282F`、`surfaceContainer = #2B2E36`、`surfaceContainerHigh = #32353E`、`surfaceContainerHighest = #3B3E48`（`Theme.kt` `DefaultDarkScheme`）。Android 12+ 动态取色时由 `elevateDynamicDarkSurfaces()` 将 Material You 深色色板整体上抬一个色调台阶（`background` / `surface ← surfaceContainer`、`surfaceContainerLowest ← surface`、`surfaceContainerLow ← surfaceContainerHigh`、`surfaceContainer ← surfaceContainerHighest`、`surfaceContainerHigh ← surfaceBright`），确保列表卡片、底部弹层与常驻 `MiniPlayer` 在深色下仍保留可见的层级对比，而非糊成一片黑。
 3. **排版与等宽数字防抖 (Typography & Tabular Figures)**：
    - 采用系统原生 Roboto / Noto Sans CJK 字体阶梯：`Title Large`（顶部栏/曲名）、`Body Large`（列表主标题）、`Body Medium`（歌手/副标题）、`Label Large`（Chip 与核心按钮）。
    - **关键细节**：所有时间戳（`02:14.3`）、A/B 点坐标、倍速（`0.75x`）、半音值（`-1 st`）与倒计时数字一律强制开启 OpenType 等宽数字特性 **`fontFeatureSettings = "tnum"`**，彻底消除播放跳秒与微调时文本宽度抖动。
@@ -151,7 +152,9 @@ flowchart TD
 - **空状态（首次启动零权限弹窗）**：展示清爽线性图标 + *「只扫描你指定的本地文件夹，绝不混入系统杂音」* + 主按钮 **`[ + 添加本地文件夹 ]`**（拉起系统 SAF `ACTION_OPEN_DOCUMENT_TREE`）。
 - **子目录浏览、面包屑快捷加歌与目录规则继承 (`v1.0.4`)**：点击任一根文件夹进入目录内部，顶部浮现可横向滚动的**面包屑路径栏**（`Music › Backing › 结束バンド`），右侧紧邻 **`全部添加到播放列表` 快捷图标按钮**（`Icons.AutoMirrored.Outlined.PlaylistAdd`，将当前目录及子目录全部媒体按标题自然序一键送入列表选择器）与**层级目录树 (`层级`) `⇄` 平铺 (`平铺`)** 切换按钮。**不仅顶层 SAF 根目录，目录树内的任意子文件夹均可单独开启 `练习文件夹` 或 `不自动归类` 属性**，下级子孙目录按最近祖先规则自动继承并支持子级覆盖；受控文件夹扫描始终忽略 `.nomedia`。
 - **重命名文件夹即时去重 (`v1.0.5`)**：在外部文件管理器把子目录 `rock` 改名为 `Rock`（仅大小写）或 `metal` 后，`文件夹` 视图**只显示新目录**，绝不同时出现 `Rock` 与 `rock`；目录内曲目、播放列表、段落书签、标签覆盖与 `练习文件夹` / `不自动归类` 规则随目录无缝迁移，已删除目录的旧规则不会再生成「幽灵目录」。正停留在旧路径（面包屑 `rock`）时自动跳转到 `Rock`；从后台切回应用时自动执行防抖增量重扫，无需手动刷新。
-- **应用显示名 `Play` 与随系统主题自适应的拨片启动图标 (`v1.0.5` / `v1.0.6`)**：桌面与媒体库顶栏统一显示 **`Play`**；自适应图标采用「版型 A」宽肩 351 吉他拨片 + 居中圆角播放三角（无外圈），并在 `108×108dp` 前景画布中按 **`0.60x`（`38.4dp × 37.8dp`，`x ∈ [34.8, 73.2]`，`y ∈ [36.5, 74.3]`）** 针对 Android `72×72dp`（`r = 35–36dp`）圆形桌面蒙版做光学居中（左右肩 `(34.8, 50.0)` / `(73.2, 50.0)` 距圆心 `(54, 54)` 半径 `19.6dp`，底尖 `(54, 74.3)` 距圆心 `20.3dp`，四周留出均匀 `15–16dp` 呼吸边距）；浅色主题 `1D · 浅白珊瑚橙`（背景 `#F8FAFC` / 拨片 `#F97316` / 三角 `#FFFFFF`），深色主题 `1A · 暖珀深空`（背景 `#0F172A` / 拨片 `#FB923C` / 三角 `#FFFBEB`），经 `values` / `values-night` 资源自动切换。
+- **应用显示名 `Play` 与拨片启动图标 (`v1.0.5` / `v1.0.6` / `v1.0.7`)**：桌面与媒体库顶栏统一显示 **`Play`**；自适应图标采用「版型 A」宽肩 351 吉他拨片 + 居中圆角播放三角（无外圈），并在 `108×108dp` 前景画布中按 **`0.60x`（`38.4dp × 37.8dp`，`x ∈ [34.8, 73.2]`，`y ∈ [36.5, 74.3]`）** 针对 Android `72×72dp`（`r = 35–36dp`）圆形桌面蒙版做光学居中（左右肩 `(34.8, 50.0)` / `(73.2, 50.0)` 距圆心 `(54, 54)` 半径 `19.6dp`，底尖 `(54, 74.3)` 距圆心 `20.3dp`，四周留出均匀 `15–16dp` 呼吸边距）；配色统一为 `1D · 纯白珊瑚橙`（背景 `#FFFFFF` / 拨片 `#F97316` / 三角 `#FFFFFF`）。
+- **交由系统生成毛玻璃深色图标底板，与 Google Maps / Discord 完全一致 (`v1.0.7`)**：**移除 `values-night/colors.xml`**，`<background>` 固定为与 Google Maps 相同的纯白 `#FFFFFF`。ColorOS 15 / OxygenOS 15「暗色图标」桌面会检测到明亮/彩色的自适应图标 `<background>` 并替换为系统自带的半透明磨砂毛玻璃深色底板（Google Maps 与 Discord 正是如此）；此前 `values-night` 提供预先压暗的实色 `#0F172A` 时，桌面会跳过该替换而画出一个呆板的实心深色圆。拨片 `#F97316` 与三角 `#FFFFFF` 在深浅色系统主题下保持一致。
+- **Android 13+ 主题图标 `evenOdd` 镂空 (`ic_launcher_monochrome.xml`, `v1.0.7`)**：`<monochrome>` 改为指向独立的 `@drawable/ic_launcher_monochrome`，它只有一条 `android:fillType="evenOdd"` 复合路径（`0.60x` 拨片轮廓 + 内部播放三角轮廓）。Android 13+ / 15 主题图标与 Material You 引擎会把整个 drawable 染成同一种颜色，之前两条叠加路径会被染成一块实心拨片；偶奇填充使播放三角被干净地镂空。
 - **文件夹/子目录行菜单 (`⋮`)**：
   - **`设为练习文件夹` / `取消练习文件夹`**（开关：开启后展示 `[练习]` 徽章，从此文件夹及其子目录播放任何音视频均**自动进入练习模式**，并从专辑/歌手/视频排除）
   - **`设为不自动归类` / `取消不自动归类`**（开关：开启后展示 `[不自动归类]` 徽章及目录横幅，该文件夹及其继承子目录内的文件不出现在 `专辑`、`歌手`、`视频` 中，点播保持普通日常模式）
@@ -293,7 +296,7 @@ flowchart TD
 │ 本地缓存                                     │
 │   清理本地封面与波形缓存 (18.4 MB) … [清理]  │
 │ 关于与自动更新                               │
-│   版本 v1.0.6 · [检查 GitHub 更新] · 开源许可│
+│   版本 v1.0.7 · [检查 GitHub 更新] · 开源许可│
 └──────────────────────────────────────────────┘
 ```
 

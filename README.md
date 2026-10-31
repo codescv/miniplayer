@@ -39,6 +39,14 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 ---
 
+## What's New in `v1.0.7` (`versionCode = 10007`)
+
+1. **System Frosted/Blurred Dark Icon Plate on ColorOS 15 / OxygenOS 15, Same as Google Maps & Discord (`values/colors.xml`, removed `values-night/colors.xml`)**: Deleted the `values-night` launcher palette and set the light `<background>` to pure **`#FFFFFF`** (matching Google Maps). On ColorOS 15 / OxygenOS 15 "暗色图标" (Dark Icons) launchers, the system detects a bright/colored adaptive-icon `<background>` and replaces it with its own semi-translucent frosted/blurred dark glass plate — exactly what Google Maps and Discord get. When `values-night/colors.xml` supplied a pre-darkened solid `#0F172A`, the launcher skipped that replacement and drew a flat dark circle instead. The `#F97316` pick and `#FFFFFF` play triangle are now the same in both light and dark system themes.
+2. **Dedicated `evenOdd` Themed-Icon Cutout (`ic_launcher_monochrome.xml`, `mipmap-anydpi-v26/ic_launcher.xml`)**: `<monochrome>` now points to a new `@drawable/ic_launcher_monochrome` containing a single `android:fillType="evenOdd"` compound path (the `0.60x` guitar-pick contour + the inner play-triangle contour). Android 13+ / 15 themed-icon and Material You engines tint the whole drawable one color, so two overlapping paths used to merge into a solid pick; the even-odd path cuts the play triangle out cleanly.
+3. **Elevated In-App Dark Surfaces (`Theme.kt`)**: `DefaultDarkScheme` now uses Google Material "Charcoal Dark" surfaces (`background` / `surface = #1E1F24`, `surfaceContainerLowest = #181A1F`, `surfaceContainerLow = #26282F`, `surfaceContainer = #2B2E36`, `surfaceContainerHigh = #32353E`, `surfaceContainerHighest = #3B3E48`) instead of near-black `#111318`. On Android 12+ with dynamic color, `elevateDynamicDarkSurfaces()` shifts the Material You dark palette one tonal step brighter (`background` / `surface = surfaceContainer`, `surfaceContainerLowest = surface`, `surfaceContainerLow = surfaceContainerHigh`, `surfaceContainer = surfaceContainerHighest`, `surfaceContainerHigh = surfaceBright`) so cards, sheets, and the now-playing bar keep visible tonal separation in dark mode.
+
+---
+
 ## What's New in `v1.0.6` (`versionCode = 10006`)
 
 1. **Circular-Mask Optical Centering & `0.60x` Scale for Launcher Icon (`ic_launcher_foreground.xml`)**: Scaled the layout-A wide-shoulder 351 guitar pick and centered rounded play triangle down to **`0.60x`** (`38.4dp × 37.8dp` on the `108×108dp` adaptive icon canvas, `x ∈ [34.8, 73.2]`, `y ∈ [36.5, 74.3]`), placing the left/right shoulders (`(34.8, 50.0)` / `(73.2, 50.0)`) at radius `19.6dp` from `(54, 54)` and the bottom tip (`(54, 74.3)`) at radius `20.3dp` from `(54, 54)` so circular launcher masks (`72×72dp`, `r = 35dp..36dp`) retain a balanced ~`15dp–16dp` background margin all around instead of clipping near the edge.
@@ -98,7 +106,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.6.apk` | Signed Android Release APK (`versionCode = 10006`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.7.apk` | Signed Android Release APK (`versionCode = 10007`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `app-release.apk` | Identical signed Android Release APK artifact |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -127,6 +135,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, and `v1.0.6` `Play` `38.4dp × 37.8dp` circular-mask adaptive icon)
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.6` `Play` `38.4dp × 37.8dp` circular-mask adaptive icon, and `v1.0.7` system frosted dark icon plate / `evenOdd` monochrome cutout / Charcoal Dark surfaces)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 2`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`BpmDetector` specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`71/71` tests), Lint, and `v1.0.6` verification report
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`71/71` tests), Lint, and `v1.0.7` verification report

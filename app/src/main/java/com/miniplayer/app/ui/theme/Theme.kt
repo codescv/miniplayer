@@ -56,15 +56,33 @@ private val DefaultDarkScheme = darkColorScheme(
     onTertiary = Color(0xFF3E2845),
     tertiaryContainer = Color(0xFF563E5C),
     onTertiaryContainer = Color(0xFFF9D8FE),
-    surface = Color(0xFF111318),
+    // Google Material "Charcoal Dark" elevated surfaces (v1.0.7): lifts the in-app dark theme
+    // off pure near-black so cards, sheets and the now-playing bar keep visible tonal separation.
+    background = Color(0xFF1E1F24),
+    onBackground = Color(0xFFE2E2E9),
+    surface = Color(0xFF1E1F24),
     onSurface = Color(0xFFE2E2E9),
     surfaceVariant = Color(0xFF44474E),
     onSurfaceVariant = Color(0xFFC4C6D0),
-    surfaceContainerLowest = Color(0xFF0C0E13),
-    surfaceContainerLow = Color(0xFF191C20),
-    surfaceContainer = Color(0xFF1D2024),
-    surfaceContainerHigh = Color(0xFF282A2F),
-    surfaceContainerHighest = Color(0xFF33353A),
+    surfaceContainerLowest = Color(0xFF181A1F),
+    surfaceContainerLow = Color(0xFF26282F),
+    surfaceContainer = Color(0xFF2B2E36),
+    surfaceContainerHigh = Color(0xFF32353E),
+    surfaceContainerHighest = Color(0xFF3B3E48),
+)
+
+/**
+ * Shifts an Android 12+ dynamic (Material You) dark [ColorScheme] one tonal step brighter so the
+ * in-app dark surfaces match the elevated "Charcoal Dark" look of [DefaultDarkScheme] instead of
+ * the near-black `surface` the system palette generates by default (v1.0.7).
+ */
+private fun elevateDynamicDarkSurfaces(rawDark: ColorScheme): ColorScheme = rawDark.copy(
+    background = rawDark.surfaceContainer,
+    surface = rawDark.surfaceContainer,
+    surfaceContainerLowest = rawDark.surface,
+    surfaceContainerLow = rawDark.surfaceContainerHigh,
+    surfaceContainer = rawDark.surfaceContainerHighest,
+    surfaceContainerHigh = rawDark.surfaceBright,
 )
 
 val MiniPlayerTypography = Typography(
@@ -116,7 +134,11 @@ fun MiniPlayerTheme(
     val context = LocalContext.current
     val baseScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            if (darkTheme) {
+                elevateDynamicDarkSurfaces(dynamicDarkColorScheme(context))
+            } else {
+                dynamicLightColorScheme(context)
+            }
         }
         darkTheme -> DefaultDarkScheme
         else -> DefaultLightScheme
