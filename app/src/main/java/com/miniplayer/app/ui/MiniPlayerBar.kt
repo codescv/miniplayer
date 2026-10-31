@@ -83,7 +83,7 @@ fun MiniPlayerBar(
                             practiceState.activeAMs != null &&
                             practiceState.activeBMs != null
                         val statusText = buildString {
-                            append("🎯 ${String.format("%.2fx", practiceState.practiceSpeed)}")
+                            append(String.format("%.2fx", practiceState.practiceSpeed))
                             if (practiceState.pitchSemitones != 0) {
                                 val sign = if (practiceState.pitchSemitones > 0) "+" else ""
                                 append(" · $sign${practiceState.pitchSemitones}st")

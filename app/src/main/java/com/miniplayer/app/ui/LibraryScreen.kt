@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.automirrored.outlined.Sort
+import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -209,10 +210,10 @@ fun LibraryScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     val chips = listOf(
-                        LibraryView.FOLDERS to "📁 文件夹",
-                        LibraryView.ALBUMS to "💿 专辑",
-                        LibraryView.ARTISTS to "🎤 歌手",
-                        LibraryView.VIDEOS to "🎬 视频",
+                        LibraryView.FOLDERS to "文件夹",
+                        LibraryView.ALBUMS to "专辑",
+                        LibraryView.ARTISTS to "歌手",
+                        LibraryView.VIDEOS to "视频",
                     )
                     chips.forEach { (view, label) ->
                         val selected = activeView == view
@@ -237,11 +238,11 @@ fun LibraryScreen(
         },
         floatingActionButton = {
             if (activeView == LibraryView.FOLDERS && folderBrowse == null && safRoots.isNotEmpty()) {
-                ExtendedFloatingActionButton(
+                FloatingActionButton(
                     onClick = onAddFolderClick,
-                    icon = { Icon(Icons.Outlined.CreateNewFolder, contentDescription = null) },
-                    text = { Text("添加文件夹") },
-                )
+                ) {
+                    Icon(Icons.Outlined.CreateNewFolder, contentDescription = "添加文件夹")
+                }
             }
         },
     ) { innerPadding ->
@@ -453,24 +454,23 @@ private fun FoldersRootList(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                AssistChip(
+                IconButton(
                     onClick = onToggleMode,
-                    label = {
-                        Text(if (folderMode == FolderDisplayMode.TREE) "视图: 层级目录树" else "视图: 平铺展开")
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = if (folderMode == FolderDisplayMode.TREE) {
-                                Icons.Outlined.AccountTree
-                            } else {
-                                Icons.Outlined.ViewStream
-                            },
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                )
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(
+                        imageVector = if (folderMode == FolderDisplayMode.TREE) {
+                            Icons.Outlined.AccountTree
+                        } else {
+                            Icons.AutoMirrored.Outlined.ViewList
+                        },
+                        contentDescription = if (folderMode == FolderDisplayMode.TREE) {
+                            "当前层级目录树，点击切换平铺视图"
+                        } else {
+                            "当前平铺视图，点击切换层级目录树"
+                        },
+                    )
+                }
             }
         }
 
@@ -513,11 +513,11 @@ private fun FoldersRootList(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             if (root.isPracticeFolder) {
-                                PracticeBadgePill("🎯 练习")
+                                PracticeBadgePill("练习")
                             }
                             when (root.mountState) {
-                                MountState.OFFLINE_UNMOUNTED -> OfflineWarningPill("⚠️ 未挂载")
-                                MountState.PERMISSION_REVOKED -> OfflineWarningPill("⚠️ 需重新授权")
+                                MountState.OFFLINE_UNMOUNTED -> OfflineWarningPill("未挂载")
+                                MountState.PERMISSION_REVOKED -> OfflineWarningPill("需重新授权")
                                 MountState.MOUNTED -> Unit
                             }
                         }
@@ -548,16 +548,16 @@ private fun FoldersRootList(
                         ) {
                             DropdownMenuItem(
                                 text = {
-                                    Text(if (root.isPracticeFolder) "取消 🎯 练习文件夹" else "🎯 设为练习文件夹")
+                                    Text(if (root.isPracticeFolder) "取消练习文件夹" else "设为练习文件夹")
                                 },
-                                leadingIcon = { Icon(Icons.Outlined.TrackChanges, contentDescription = null) },
+                                leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
                                     onTogglePractice(root)
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("✨ 批量自动补全标签与封面") },
+                                text = { Text("批量自动补全标签与封面") },
                                 leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
@@ -573,7 +573,7 @@ private fun FoldersRootList(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("⟳ 增量重新扫描") },
+                                text = { Text("增量重新扫描") },
                                 leadingIcon = { Icon(Icons.Outlined.Refresh, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
@@ -713,11 +713,23 @@ private fun FolderBrowseView(
                             }
                         }
                     }
-                    AssistChip(
+                    IconButton(
                         onClick = onToggleMode,
-                        label = { Text(if (folderMode == FolderDisplayMode.TREE) "层级" else "平铺") },
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    )
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (folderMode == FolderDisplayMode.TREE) {
+                                Icons.Outlined.AccountTree
+                            } else {
+                                Icons.AutoMirrored.Outlined.ViewList
+                            },
+                            contentDescription = if (folderMode == FolderDisplayMode.TREE) {
+                                "当前层级目录树，点击切换平铺视图"
+                            } else {
+                                "当前平铺视图，点击切换层级目录树"
+                            },
+                        )
+                    }
                 }
 
                 if (browse.isCurrentPracticeFolder) {
@@ -731,8 +743,14 @@ private fun FolderBrowseView(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Tune,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.size(18.dp),
+                            )
                             Text(
-                                text = "🎯 当前为练习文件夹：点播任意曲目/视频将自动展开练习工作台",
+                                text = "当前为练习文件夹：点播任意曲目/视频将自动展开练习工作台",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                             )
@@ -780,10 +798,10 @@ private fun FolderBrowseView(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             if (sub.isPracticeFolder) {
-                                PracticeBadgePill("🎯 练习")
+                                PracticeBadgePill("练习")
                             }
                             if (sub.hasNomedia) {
-                                OfflineWarningPill("🚫 .nomedia")
+                                OfflineWarningPill(".nomedia")
                             }
                         }
                         Text(
@@ -805,16 +823,16 @@ private fun FolderBrowseView(
                         ) {
                             DropdownMenuItem(
                                 text = {
-                                    Text(if (sub.isPracticeFolder) "取消 🎯 练习文件夹" else "🎯 设为练习文件夹")
+                                    Text(if (sub.isPracticeFolder) "取消练习文件夹" else "设为练习文件夹")
                                 },
-                                leadingIcon = { Icon(Icons.Outlined.TrackChanges, contentDescription = null) },
+                                leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
                                     onToggleSubfolderPractice(sub)
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("✨ 批量自动补全标签与封面") },
+                                text = { Text("批量自动补全标签与封面") },
                                 leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -969,7 +987,7 @@ private fun AlbumsGridContent(
                                     .padding(8.dp),
                             ) {
                                 Text(
-                                    text = "✨ 待补全",
+                                    text = "待补全",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -1195,9 +1213,9 @@ private fun VideosListContent(
                                 )
                             }
                             if (video.bookmarkCount > 0) {
-                                PracticeBadgePill("🔖 ${video.bookmarkCount} 段书签")
+                                PracticeBadgePill("${video.bookmarkCount} 段书签")
                             } else if (video.hasPracticeRecord || video.isInPracticeFolder) {
-                                PracticeBadgePill("🎯 练习记录")
+                                PracticeBadgePill("练习记录")
                             }
                         }
                         if (progressFraction > 0.01f) {
@@ -1226,8 +1244,8 @@ private fun VideosListContent(
                             onDismissRequest = { menuOpen = false },
                         ) {
                             DropdownMenuItem(
-                                text = { Text("🎯 以练习模式打开") },
-                                leadingIcon = { Icon(Icons.Outlined.TrackChanges, contentDescription = null) },
+                                text = { Text("以练习模式打开") },
+                                leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
                                     onPracticeVideo(sortedVideos, idx)
@@ -1296,7 +1314,7 @@ private fun AlbumDetailContent(
                         }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
-                                text = { Text("✨ 批量自动联网补全") },
+                                text = { Text("批量自动联网补全") },
                                 leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -1346,7 +1364,7 @@ private fun AlbumDetailContent(
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "✨ 自动联网识别全部曲目",
+                                        text = "自动联网识别全部曲目",
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                                     )
@@ -1400,7 +1418,9 @@ private fun AlbumDetailContent(
                             onClick = onPracticePlayAll,
                             modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
                         ) {
-                            Text("🎯 练习播放")
+                            Icon(Icons.Outlined.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("练习播放")
                         }
                     }
                 }
@@ -1582,7 +1602,7 @@ fun MediaTrackRow(
                 ) {
                     Text(
                         text = buildString {
-                            if (item.isVideo) append("🎬 ")
+                            if (item.isVideo) append("视频 · ")
                             append(item.artist)
                             if (item.durationMs > 0L) {
                                 append(" · ")
@@ -1596,9 +1616,9 @@ fun MediaTrackRow(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     if (item.bookmarkCount > 0) {
-                        PracticeBadgePill("🔖 ${item.bookmarkCount}")
+                        PracticeBadgePill("${item.bookmarkCount} 段")
                     } else if (item.savedPracticeSpeed != 1.0f || item.savedSemitones != 0) {
-                        PracticeBadgePill("🎯 ${String.format("%.2fx", item.savedPracticeSpeed).trimEnd('0').trimEnd('.')}")
+                        PracticeBadgePill(String.format("%.2fx", item.savedPracticeSpeed).trimEnd('0').trimEnd('.'))
                     }
                 }
             }

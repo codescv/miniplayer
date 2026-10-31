@@ -183,12 +183,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
 
     init {
-        // Sync click sound preference with PracticeLoopEngine
-        viewModelScope.launch {
-            settings.collect { appSettings ->
-                playerController.loopEngine.setClickSoundEnabled(appSettings.countInClickSound)
-            }
-        }
+        // Count-in click sound is always enabled by default
+        playerController.loopEngine.setClickSoundEnabled(true)
         // Keep queue metadata fresh when overrides or scans update MediaItems
         viewModelScope.launch {
             allMediaItems.collect { items ->
@@ -384,7 +380,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             core.scanner.setFolderPracticeRule(rootId, relPath, folderUri, isPractice)
             refreshActiveDrillDowns()
-            emitMessage(if (isPractice) "🎯 已设为练习文件夹（点击曲目自动开启练习模式）" else "已恢复为普通文件夹")
+            emitMessage(if (isPractice) "已设为练习文件夹（点击曲目自动开启练习模式）" else "已恢复为普通文件夹")
         }
     }
 
@@ -446,7 +442,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 core.library.addItemsToPlaylist(id, initialItems)
             }
             emitMessage(
-                if (isPracticePlaylist) "已创建 🎯 练习列表「$trimmed」" else "已创建播放列表「$trimmed」",
+                if (isPracticePlaylist) "已创建练习列表「$trimmed」" else "已创建播放列表「$trimmed」",
             )
         }
     }
@@ -464,7 +460,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             core.library.setPlaylistPracticeMode(playlistId, isPractice)
             refreshActiveDrillDowns()
-            emitMessage(if (isPractice) "已开启 🎯 练习列表模式" else "已切换为普通播放列表")
+            emitMessage(if (isPractice) "已开启练习列表模式" else "已切换为普通播放列表")
         }
     }
 
@@ -770,6 +766,10 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             core.library.updateSettings(transform)
         }
+    }
+
+    fun setKeepScreenOnInPractice(enabled: Boolean) {
+        updateAppSettings { it.copy(keepScreenOnInPractice = enabled) }
     }
 
     fun refreshCacheSize() {

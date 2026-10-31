@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,7 +57,7 @@ fun NowPlayingSheet(
     }
     val practiceModeActive by viewModel.isPracticeModeActive.collectAsState()
     val practiceState by viewModel.practiceState.collectAsState()
-    val speedTrainer by viewModel.speedTrainer.collectAsState()
+    val settings by viewModel.settings.collectAsState()
     val completedLoops by viewModel.completedLoopCount.collectAsState()
     val usingFastVideoSeek by viewModel.usingFastVideoSeek.collectAsState()
     val bookmarks by viewModel.currentTrackBookmarks.collectAsState()
@@ -210,7 +211,7 @@ fun NowPlayingSheet(
                     modifier = Modifier
                         .fillMaxSize()
                         .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .padding(horizontal = 18.dp, vertical = 6.dp),
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
                 ) {
                     // Top Bar
                     NowPlayingTopBar(
@@ -221,7 +222,6 @@ fun NowPlayingSheet(
                         sleepTimerActive = snapshot.sleepTimerRemainingMs != null || snapshot.pauseAtEndOfCurrentTrack,
                         onCollapse = onDismiss,
                         onTogglePracticeMode = { playerController.togglePracticeMode() },
-                        onToggleVideoMirror = { loopEngine.toggleVideoMirror() },
                         onEnterLandscapeVideo = {
                             cancelPendingOrientationReset()
                             forcedLandscape = true
@@ -310,57 +310,83 @@ fun NowPlayingSheet(
 
                             Spacer(Modifier.height(10.dp))
 
-                            // Action Pill Row: `[ 🎯 练习模式 (· 含 N 段) ]` · `[ 词 ]` · `[ + 列表 ]` (§4.3A & §5.1)
+                            // Casual Action Row: icon-only Practice Mode · centered `"词"` · icon-only Add to Playlist
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                val practiceHintLabel = when {
-                                    bookmarks.isNotEmpty() -> "🎯 练习模式 · 含 ${bookmarks.size} 段"
-                                    practiceState.isNonDefault || item.hasPracticeRecord -> "🎯 练习模式 · 含记录"
-                                    else -> "🎯 练习模式"
-                                }
-                                val hasHistory = bookmarks.isNotEmpty() || practiceState.isNonDefault || item.hasPracticeRecord
-                                Button(
+                                val hasHistory = item.hasPracticeRecord || bookmarks.isNotEmpty() || practiceState.isNonDefault
+                                FilledTonalIconButton(
                                     onClick = { playerController.togglePracticeMode() },
-                                    colors = if (hasHistory) {
-                                        ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        )
-                                    } else {
-                                        ButtonDefaults.filledTonalButtonColors()
-                                    },
-                                    modifier = Modifier
-                                        .weight(1.3f)
-                                        .defaultMinSize(minHeight = 48.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp),
+                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                        containerColor = if (hasHistory) {
+                                            MaterialTheme.colorScheme.tertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.secondaryContainer
+                                        },
+                                        contentColor = if (hasHistory) {
+                                            MaterialTheme.colorScheme.onTertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSecondaryContainer
+                                        },
+                                    ),
+                                    modifier = Modifier.size(44.dp),
                                 ) {
-                                    Text(practiceHintLabel, maxLines = 1)
+                                    Icon(
+                                        imageVector = Icons.Outlined.Tune,
+                                        contentDescription = "练习模式",
+                                        modifier = Modifier.size(20.dp),
+                                    )
                                 }
 
                                 if (!item.isVideo) {
-                                    FilterChip(
-                                        selected = showLyricsView,
+                                    FilledTonalIconButton(
                                         onClick = { showLyricsView = !showLyricsView },
-                                        label = { Text("词") },
-                                        modifier = Modifier.defaultMinSize(minWidth = 54.dp, minHeight = 48.dp),
-                                    )
+                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                            containerColor = if (showLyricsView) {
+                                                MaterialTheme.colorScheme.primaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.secondaryContainer
+                                            },
+                                            contentColor = if (showLyricsView) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            },
+                                        ),
+                                        modifier = Modifier.size(44.dp),
+                                    ) {
+                                        Box(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                text = "词",
+                                                style = MaterialTheme.typography.labelLarge.copy(
+                                                    lineHeight = MaterialTheme.typography.labelLarge.fontSize,
+                                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                ),
+                                                fontWeight = FontWeight.SemiBold,
+                                                textAlign = TextAlign.Center,
+                                            )
+                                        }
+                                    }
                                 }
 
-                                OutlinedButton(
+                                FilledTonalIconButton(
                                     onClick = { viewModel.openAddToPlaylistPicker(listOf(item)) },
-                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp),
+                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    ),
+                                    modifier = Modifier.size(44.dp),
                                 ) {
                                     Icon(
-                                        Icons.AutoMirrored.Outlined.PlaylistAdd,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp),
+                                        imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
+                                        contentDescription = "加入播放列表",
+                                        modifier = Modifier.size(20.dp),
                                     )
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("列表")
                                 }
                             }
 
@@ -560,13 +586,50 @@ fun NowPlayingSheet(
                                 },
                             )
 
-                            // Section Bookmarks Strip (`[+ 存书签] [Intro] [Verse] [★ Solo 1]`)
+                            // Optional Saved Section Bookmarks Strip (`[Intro] [Verse] [Solo 1]`)
                             val hasValidLoop = practiceState.activeAMs != null && practiceState.activeBMs != null
-                            SectionBookmarksRow(
-                                bookmarks = bookmarks,
-                                activeBookmarkId = activeBookmarkId,
-                                hasActiveLoop = hasValidLoop,
-                                onActivateBookmark = { loopEngine.activateBookmark(it) },
+                            if (bookmarks.isNotEmpty()) {
+                                SectionBookmarksRow(
+                                    bookmarks = bookmarks,
+                                    activeBookmarkId = activeBookmarkId,
+                                    hasActiveLoop = hasValidLoop,
+                                    onActivateBookmark = { loopEngine.activateBookmark(it) },
+                                    onUpdateBookmarkRange = { bm ->
+                                        val a = practiceState.activeAMs
+                                        val b = practiceState.activeBMs
+                                        if (a != null && b != null) {
+                                            viewModel.savePracticeBookmark(
+                                                label = bm.label,
+                                                aMs = a,
+                                                bMs = b,
+                                                existingBookmarkId = bm.bookmarkId,
+                                            )
+                                        }
+                                    },
+                                    onRenameBookmark = { bm, newLabel ->
+                                        viewModel.savePracticeBookmark(
+                                            label = newLabel,
+                                            aMs = bm.aMs,
+                                            bMs = bm.bMs,
+                                            existingBookmarkId = bm.bookmarkId,
+                                        )
+                                    },
+                                    onDeleteBookmark = { bm ->
+                                        viewModel.deletePracticeBookmark(bm.bookmarkId)
+                                    },
+                                )
+                            }
+
+                            // Ergonomic 2-Row Practice Deck (`surfaceContainer`, 24dp corners)
+                            PracticeDeck(
+                                loopEngine = loopEngine,
+                                practiceState = practiceState,
+                                currentPositionMs = snapshot.positionMs,
+                                keepScreenOn = settings.keepScreenOnInPractice,
+                                isVideo = item.isVideo,
+                                onToggleKeepScreenOn = {
+                                    viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
+                                },
                                 onSaveNewBookmark = { label ->
                                     val a = practiceState.activeAMs
                                     val b = practiceState.activeBMs
@@ -574,37 +637,6 @@ fun NowPlayingSheet(
                                         viewModel.savePracticeBookmark(label, a, b)
                                     }
                                 },
-                                onUpdateBookmarkRange = { bm ->
-                                    val a = practiceState.activeAMs
-                                    val b = practiceState.activeBMs
-                                    if (a != null && b != null) {
-                                        viewModel.savePracticeBookmark(
-                                            label = bm.label,
-                                            aMs = a,
-                                            bMs = b,
-                                            existingBookmarkId = bm.bookmarkId,
-                                        )
-                                    }
-                                },
-                                onRenameBookmark = { bm, newLabel ->
-                                    viewModel.savePracticeBookmark(
-                                        label = newLabel,
-                                        aMs = bm.aMs,
-                                        bMs = bm.bMs,
-                                        existingBookmarkId = bm.bookmarkId,
-                                    )
-                                },
-                                onDeleteBookmark = { bm ->
-                                    viewModel.deletePracticeBookmark(bm.bookmarkId)
-                                },
-                            )
-
-                            // Ergonomic Practice Deck (`surfaceContainer`, 24dp corners)
-                            PracticeDeck(
-                                loopEngine = loopEngine,
-                                practiceState = practiceState,
-                                speedTrainer = speedTrainer,
-                                currentPositionMs = snapshot.positionMs,
                             )
 
                             // Practice Transport Bar: `⏮(回A)` (400ms double-tap guard) · `⟲5s` · `⏸` · `5s⟳` · `⏭`
@@ -731,7 +763,6 @@ private fun NowPlayingTopBar(
     sleepTimerActive: Boolean,
     onCollapse: () -> Unit,
     onTogglePracticeMode: () -> Unit,
-    onToggleVideoMirror: () -> Unit,
     onEnterLandscapeVideo: () -> Unit,
     onOpenSleepTimer: () -> Unit,
     onOpenQueue: () -> Unit,
@@ -761,9 +792,16 @@ private fun NowPlayingTopBar(
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Tune,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.size(16.dp),
+                        )
                         Text(
-                            text = "✓ 🎯 练习模式",
+                            text = "练习模式",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                         )
@@ -779,19 +817,6 @@ private fun NowPlayingTopBar(
         }
 
         if (item.isVideo) {
-            if (practiceModeActive) {
-                IconButton(onClick = onToggleVideoMirror, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        Icons.Outlined.Flip,
-                        contentDescription = if (practiceState.videoMirror) "关闭视频水平镜像" else "开启视频水平镜像",
-                        tint = if (practiceState.videoMirror) {
-                            MaterialTheme.colorScheme.tertiary
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                    )
-                }
-            }
             IconButton(onClick = onEnterLandscapeVideo, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Outlined.Fullscreen, contentDescription = "横屏全屏播放")
             }
@@ -823,7 +848,7 @@ private fun NowPlayingTopBar(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("加入播放列表 / 🎯 练习列表") },
+                    text = { Text("加入播放列表 / 练习列表") },
                     leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null) },
                     onClick = {
                         menuOpen = false
@@ -1067,7 +1092,7 @@ private fun SleepTimerBottomSheet(
         ) {
             Text(
                 text = buildString {
-                    append("⏾ 睡眠定时")
+                    append("睡眠定时")
                     if (remainingMs != null) {
                         append(" · 剩余 ${PracticeMath.formatTimeMs(remainingMs)}")
                     } else if (pauseAtTrackEnd) {

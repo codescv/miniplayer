@@ -171,8 +171,8 @@ fun PlaylistsScreen(
                 ) {
                     val chips = listOf(
                         PlaylistFilter.ALL to "全部",
-                        PlaylistFilter.PRACTICE_ONLY to "🎯 练习列表",
-                        PlaylistFilter.WITH_BOOKMARKS to "🔖 含段落书签",
+                        PlaylistFilter.PRACTICE_ONLY to "练习列表",
+                        PlaylistFilter.WITH_BOOKMARKS to "含段落书签",
                     )
                     chips.forEach { (chipFilter, label) ->
                         val selected = filter == chipFilter
@@ -190,11 +190,11 @@ fun PlaylistsScreen(
         },
         floatingActionButton = {
             if (filter != PlaylistFilter.WITH_BOOKMARKS) {
-                ExtendedFloatingActionButton(
+                FloatingActionButton(
                     onClick = { showCreateDialog = true },
-                    icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                    text = { Text("新建播放列表") },
-                )
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = "新建播放列表")
+                }
             }
         },
     ) { innerPadding ->
@@ -226,9 +226,9 @@ fun PlaylistsScreen(
 
             if (filteredPlaylists.isEmpty()) {
                 EmptyLibraryPlaceholder(
-                    title = if (filter == PlaylistFilter.PRACTICE_ONLY) "暂无 🎯 练习列表" else "暂无自建播放列表",
+                    title = if (filter == PlaylistFilter.PRACTICE_ONLY) "暂无练习列表" else "暂无自建播放列表",
                     subtitle = "可将音频伴奏与教学视频混排在同一练习列表中，点播自动展开练习工作台。",
-                    actionLabel = "+ 新建播放列表",
+                    actionLabel = "新建播放列表",
                     onAction = { showCreateDialog = true },
                 )
             } else {
@@ -320,7 +320,7 @@ private fun PlaylistSummaryCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (playlist.isPracticePlaylist) {
-                        PracticeBadgePill("🎯 练习")
+                        PracticeBadgePill("练习")
                     }
                 }
                 Spacer(Modifier.height(3.dp))
@@ -344,9 +344,9 @@ private fun PlaylistSummaryCard(
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
                         text = {
-                            Text(if (playlist.isPracticePlaylist) "切换为普通播放列表" else "🎯 设为练习列表")
+                            Text(if (playlist.isPracticePlaylist) "切换为普通播放列表" else "设为练习列表")
                         },
-                        leadingIcon = { Icon(Icons.Outlined.TrackChanges, contentDescription = null) },
+                        leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
                         onClick = {
                             menuOpen = false
                             onTogglePractice()
@@ -433,7 +433,7 @@ private fun BookmarkedTracksSection(
     if (filtered.isEmpty()) {
         Box(modifier = modifier.padding(32.dp), contentAlignment = Alignment.Center) {
             Text(
-                text = "暂无已保存的 A-B 段落书签。在播放页展开「🎯 练习模式」设好 A/B 点后点击「+ 存书签」即可在此处一键直达！",
+                text = "暂无已保存的 A-B 段落书签。在播放页展开「练习模式」设好 A/B 点后保存书签即可在此处一键直达。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -481,10 +481,17 @@ private fun BookmarkedTracksSection(
                         items(entry.bookmarks, key = { it.bookmarkId }) { bm ->
                             AssistChip(
                                 onClick = { onJumpToBookmark(entry.mediaItem, bm) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Outlined.BookmarkBorder,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                },
                                 label = {
                                     Text(
                                         text = buildString {
-                                            append("🔖 ${bm.label} ")
+                                            append("${bm.label} ")
                                             append(PracticeMath.formatTimeMs(bm.aMs))
                                             append("–")
                                             append(PracticeMath.formatTimeMs(bm.bMs))
@@ -594,7 +601,7 @@ private fun PlaylistDetailContent(
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // Header toggle card: `🎯 练习列表模式` (§4.2)
+                    // Header toggle card: `练习列表模式` (§4.2)
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = if (detail.summary.isPracticePlaylist) {
@@ -612,7 +619,7 @@ private fun PlaylistDetailContent(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "🎯 练习列表模式",
+                                    text = "练习列表模式",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = if (detail.summary.isPracticePlaylist) {
                                         MaterialTheme.colorScheme.onTertiaryContainer
@@ -751,16 +758,16 @@ private fun PlaylistDetailContent(
                             )
                             Text(
                                 text = buildString {
-                                    if (item.isVideo) append("🎬 视频 · ") else append("${item.artist} · ")
+                                    if (item.isVideo) append("视频 · ") else append("${item.artist} · ")
                                     if (item.savedPracticeSpeed != 1.0f) {
-                                        append("🎯 ${String.format("%.2fx", item.savedPracticeSpeed)} · ")
+                                        append("${String.format("%.2fx", item.savedPracticeSpeed)} · ")
                                     }
                                     if (item.savedSemitones != 0) {
                                         val sign = if (item.savedSemitones > 0) "+" else ""
-                                        append("🎵 $sign${item.savedSemitones} 半音 · ")
+                                        append("$sign${item.savedSemitones} 半音 · ")
                                     }
                                     if (item.bookmarkCount > 0) {
-                                        append("🔖 ${item.bookmarkCount} 段 · ")
+                                        append("${item.bookmarkCount} 段 · ")
                                     }
                                     append(PracticeMath.formatTimeMs(item.durationMs))
                                 },
@@ -880,7 +887,7 @@ private fun CreateOrRenamePlaylistDialog(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("🎯 设为练习列表", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                                Text("设为练习列表", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                                 Text(
                                     text = "播放时自动开启练习模式",
                                     style = MaterialTheme.typography.labelMedium,
@@ -973,13 +980,13 @@ private fun MultiSelectTracksToAddSheet(
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = (if (item.isVideo) "🎬 " else "") + item.title,
+                                text = item.title,
                                 style = MaterialTheme.typography.bodyLarge,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = "${item.artist} · ${PracticeMath.formatTimeMs(item.durationMs)}",
+                                text = (if (item.isVideo) "视频 · " else "") + "${item.artist} · ${PracticeMath.formatTimeMs(item.durationMs)}",
                                 style = MaterialTheme.typography.bodyMedium.tnum(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1022,7 +1029,7 @@ fun AddToPlaylistBottomSheet(
             ) {
                 Icon(Icons.Outlined.Add, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text("新建普通列表或 🎯 练习列表")
+                Text("新建播放列表 / 练习列表")
             }
 
             playlists.forEach { pl ->
@@ -1049,7 +1056,7 @@ fun AddToPlaylistBottomSheet(
                             )
                         }
                         if (pl.isPracticePlaylist) {
-                            PracticeBadgePill("🎯 练习列表")
+                            PracticeBadgePill("练习")
                         }
                     }
                 }
