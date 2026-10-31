@@ -201,7 +201,7 @@ fun MetadataEditorSheet(
                             } else {
                                 Icon(Icons.Outlined.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("✨ 自动联网匹配标签/封面")
+                                Text("自动联网匹配标签/封面")
                             }
                         }
                     }
@@ -443,7 +443,7 @@ fun BatchMetadataCompletionSheet(
                 .padding(start = 18.dp, end = 18.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("✨ 批量自动联网补全预览", style = MaterialTheme.typography.titleLarge)
+            Text("批量自动联网补全预览", style = MaterialTheme.typography.titleLarge)
 
             if (progress != null) {
                 val (done, total) = progress

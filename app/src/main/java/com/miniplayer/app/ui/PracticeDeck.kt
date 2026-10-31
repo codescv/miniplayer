@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,12 +29,15 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.player.AbLoopUiState
 import com.miniplayer.app.player.PracticeLoopEngine
@@ -275,8 +279,8 @@ fun WaveformLoopRuler(
 }
 
 /**
- * Horizontal section bookmark strip (`[+ 存书签] [Intro] [Verse] [★ Solo 1]`) with 1-tap preset
- * naming sheet and long-press edit/delete menu (`DESIGN.md` §5.2 #3).
+ * Horizontal saved section bookmark strip (`[Intro] [Verse] [Solo 1]`) with long-press
+ * update/rename/delete menu. Shown below the Waveform Loop Ruler when bookmarks exist.
  */
 @Composable
 fun SectionBookmarksRow(
@@ -284,13 +288,13 @@ fun SectionBookmarksRow(
     activeBookmarkId: Long?,
     hasActiveLoop: Boolean,
     onActivateBookmark: (PracticeBookmark) -> Unit,
-    onSaveNewBookmark: (label: String) -> Unit,
     onUpdateBookmarkRange: (PracticeBookmark) -> Unit,
     onRenameBookmark: (PracticeBookmark, String) -> Unit,
     onDeleteBookmark: (PracticeBookmark) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showPresetSaveSheet by remember { mutableStateOf(false) }
+    if (bookmarks.isEmpty()) return
+
     var editingBookmark by remember { mutableStateOf<PracticeBookmark?>(null) }
     var renameText by remember { mutableStateOf("") }
 
@@ -299,22 +303,6 @@ fun SectionBookmarksRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        item {
-            AssistChip(
-                onClick = { showPresetSaveSheet = true },
-                enabled = hasActiveLoop,
-                label = { Text("+ 存书签") },
-                leadingIcon = {
-                    Icon(
-                        Icons.Outlined.BookmarkAdd,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                },
-                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-            )
-        }
-
         items(bookmarks, key = { it.bookmarkId }) { bm ->
             val isSelected = bm.bookmarkId == activeBookmarkId
             var menuExpanded by remember { mutableStateOf(false) }
@@ -328,7 +316,7 @@ fun SectionBookmarksRow(
                         MaterialTheme.colorScheme.surfaceContainerHigh
                     },
                     modifier = Modifier
-                        .defaultMinSize(minHeight = 48.dp)
+                        .defaultMinSize(minHeight = 40.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .combinedClickable(
                             onClick = { onActivateBookmark(bm) },
@@ -336,12 +324,11 @@ fun SectionBookmarksRow(
                         ),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = buildString {
-                                if (isSelected) append("★ ")
                                 append(bm.label)
                                 append(" ")
                                 append(PracticeMath.formatTimeMs(bm.aMs))
@@ -349,6 +336,7 @@ fun SectionBookmarksRow(
                                 append(PracticeMath.formatTimeMs(bm.bMs))
                             },
                             style = MaterialTheme.typography.labelLarge.tnum(),
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                             color = if (isSelected) {
                                 MaterialTheme.colorScheme.onTertiaryContainer
                             } else {
@@ -400,70 +388,6 @@ fun SectionBookmarksRow(
         }
     }
 
-    if (showPresetSaveSheet) {
-        var customLabel by remember { mutableStateOf("") }
-        ModalBottomSheet(onDismissRequest = { showPresetSaveSheet = false }) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("保存段落书签（单手点选预设即刻保存）", style = MaterialTheme.typography.titleMedium)
-                // 1-Tap Preset Chips (`Intro / Verse / Pre-Chorus / Chorus / Bridge / Solo 1 / Solo 2 / Outro`)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PracticeMath.PRESET_SECTION_LABELS.chunked(4).forEach { rowPresets ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            rowPresets.forEach { preset ->
-                                FilledTonalButton(
-                                    onClick = {
-                                        showPresetSaveSheet = false
-                                        onSaveNewBookmark(preset)
-                                    },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .defaultMinSize(minHeight = 48.dp),
-                                    contentPadding = PaddingValues(horizontal = 6.dp),
-                                ) {
-                                    Text(preset, maxLines = 1)
-                                }
-                            }
-                        }
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedTextField(
-                        value = customLabel,
-                        onValueChange = { customLabel = it },
-                        placeholder = { Text("或输入自定义备注（如：扫拨难点）") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Button(
-                        onClick = {
-                            val name = customLabel.trim()
-                            if (name.isNotEmpty()) {
-                                showPresetSaveSheet = false
-                                onSaveNewBookmark(name)
-                            }
-                        },
-                        enabled = customLabel.isNotBlank(),
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                    ) {
-                        Text("保存")
-                    }
-                }
-            }
-        }
-    }
-
     editingBookmark?.let { target ->
         AlertDialog(
             onDismissRequest = { editingBookmark = null },
@@ -493,26 +417,96 @@ fun SectionBookmarksRow(
     }
 }
 
+@Composable
+internal fun BookmarkPresetSaveSheet(
+    onSaveNewBookmark: (label: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var customLabel by remember { mutableStateOf("") }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("保存段落书签（单手点选预设即刻保存）", style = MaterialTheme.typography.titleMedium)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                PracticeMath.PRESET_SECTION_LABELS.chunked(4).forEach { rowPresets ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        rowPresets.forEach { preset ->
+                            FilledTonalButton(
+                                onClick = {
+                                    onDismiss()
+                                    onSaveNewBookmark(preset)
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .defaultMinSize(minHeight = 48.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp),
+                            ) {
+                                Text(preset, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = customLabel,
+                    onValueChange = { customLabel = it },
+                    placeholder = { Text("或输入自定义备注（如：扫拨难点）") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = {
+                        val name = customLabel.trim()
+                        if (name.isNotEmpty()) {
+                            onDismiss()
+                            onSaveNewBookmark(name)
+                        }
+                    },
+                    enabled = customLabel.isNotBlank(),
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) {
+                    Text("保存")
+                }
+            }
+        }
+    }
+}
+
 private enum class ExpandedDeckDrawer {
     NONE,
-    SPEED_SLIDER,
-    SPEED_TRAINER,
     PITCH_SHIFT,
 }
 
 /**
- * Guitar-pick-friendly `练习工作台 (Practice Deck)` (`surfaceContainer`, `24dp` corners) strictly
- * verified for `360dp` narrow portrait screens so every touch target is `>= 48dp` (`DESIGN.md` §5.2).
+ * Compact 2-Row `练习工作台 (Practice Deck)` (`surfaceContainer`, `24dp` corners):
+ * - Row 1: A-B Loop controls (`A`, `B`, `A -` / `+ A`, `B -` / `+ B`, Replay, Loop toggle, Clear) + Save Bookmark icon button.
+ * - Row 2: `[-5%] [1.00x] [+5%]` speed stepper + icon-only toggles (Pitch Shift, Count-In, Keep Screen On, and Video Mirror when playing video).
  */
 @Composable
 fun PracticeDeck(
     loopEngine: PracticeLoopEngine,
     practiceState: PracticeState,
-    speedTrainer: SpeedTrainerConfig,
     currentPositionMs: Long,
+    keepScreenOn: Boolean = true,
+    isVideo: Boolean = false,
+    onToggleKeepScreenOn: () -> Unit = {},
+    onSaveNewBookmark: (label: String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var expandedDrawer by remember { mutableStateOf(ExpandedDeckDrawer.NONE) }
+    var showPresetSaveSheet by remember { mutableStateOf(false) }
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -522,125 +516,136 @@ fun PracticeDeck(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // 1. Disambiguated 3-State A-B Loop Controls + Nudge Row (§5.2 #2)
+            // === Row 1: A-B Loop & Save Bookmark ===
             when (loopEngine.abUiState) {
                 AbLoopUiState.IDLE -> {
-                    Button(
-                        onClick = { loopEngine.markPointA(currentPositionMs) },
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                    ) {
-                        Text(
-                            text = "设 A 点 (${PracticeMath.formatTimeMs(currentPositionMs, includeTenths = true)})",
-                            style = MaterialTheme.typography.titleMedium.tnum(),
-                        )
-                    }
-                }
-                AbLoopUiState.A_SET_WAITING -> {
-                    val aMs = practiceState.activeAMs ?: 0L
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier.height(56.dp),
+                        Button(
+                            onClick = { loopEngine.markPointA(currentPositionMs) },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
                         ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 12.dp),
-                            ) {
-                                Text(
-                                    text = "A: ${PracticeMath.formatTimeMs(aMs, true)}",
-                                    style = MaterialTheme.typography.labelLarge.tnum(),
-                                )
-                            }
+                            Text(
+                                text = "A",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = {},
+                            enabled = false,
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                        ) {
+                            Text(
+                                text = "B",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        FilledTonalIconButton(
+                            onClick = {},
+                            enabled = false,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.size(44.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.BookmarkAdd,
+                                contentDescription = "保存段落书签",
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+                }
+
+                AbLoopUiState.A_SET_WAITING -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FilledTonalButton(
+                            onClick = { loopEngine.markPointA(currentPositionMs) },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                        ) {
+                            Text(
+                                text = "A",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
                         Button(
                             onClick = { loopEngine.markPointBAndLoop(currentPositionMs) },
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.tertiary,
                                 contentColor = MaterialTheme.colorScheme.onTertiary,
                             ),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
-                                .height(56.dp),
+                                .height(44.dp),
                         ) {
-                            Text("设 B 点并循环", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = "B",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
-                        FilledTonalIconButton(
+                        DeckIconToggleButton(
+                            icon = Icons.Outlined.Close,
+                            contentDescription = "清除 A 点",
+                            highlighted = false,
                             onClick = { loopEngine.clearLoop() },
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.size(width = 52.dp, height = 56.dp),
+                            modifier = Modifier.size(44.dp),
+                        )
+                        FilledTonalIconButton(
+                            onClick = {},
+                            enabled = false,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.size(44.dp),
                         ) {
-                            Icon(Icons.Outlined.Close, contentDescription = "清除 A 点")
+                            Icon(
+                                imageVector = Icons.Outlined.BookmarkAdd,
+                                contentDescription = "保存段落书签",
+                                modifier = Modifier.size(20.dp),
+                            )
                         }
                     }
                 }
-                AbLoopUiState.ACTIVE_OR_SUSPENDED -> {
-                    // Row 1 (52dp): `[↺ 回A]` · `[循环: 开 / 挂起]` · `[✕ 清除]`
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        FilledTonalButton(
-                            onClick = { loopEngine.restartFromA() },
-                            shape = RoundedCornerShape(14.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(52.dp),
-                        ) {
-                            Text("↺ 回A", maxLines = 1)
-                        }
-                        Button(
-                            onClick = { loopEngine.toggleLoopSuspended() },
-                            shape = RoundedCornerShape(14.dp),
-                            colors = if (practiceState.loopEnabled) {
-                                ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                                )
-                            } else {
-                                ButtonDefaults.filledTonalButtonColors()
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier
-                                .weight(1.25f)
-                                .height(52.dp),
-                        ) {
-                            Text(
-                                text = if (practiceState.loopEnabled) "循环: 开" else "循环: 挂起",
-                                maxLines = 1,
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = { loopEngine.clearLoop() },
-                            shape = RoundedCornerShape(14.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier
-                                .weight(0.9f)
-                                .height(52.dp),
-                        ) {
-                            Text("✕ 清除", maxLines = 1)
-                        }
-                    }
 
-                    // Row 2 (48dp): `[A -0.5 | +0.5]` & `[B -0.5 | +0.5]` (>= 74x48dp per half, long-press ±0.1s)
+                AbLoopUiState.ACTIVE_OR_SUSPENDED -> {
                     val aLabel = PracticeMath.formatTimeMs(practiceState.activeAMs ?: 0L, true)
                     val bLabel = PracticeMath.formatTimeMs(practiceState.activeBMs ?: 0L, true)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        DeckIconToggleButton(
+                            icon = Icons.Outlined.Replay,
+                            contentDescription = "回到 A 点",
+                            highlighted = false,
+                            onClick = { loopEngine.restartFromA() },
+                            modifier = Modifier.size(width = 36.dp, height = 44.dp),
+                        )
                         SplitNudgeControl(
                             prefix = "A",
                             currentFormatted = aLabel,
@@ -659,236 +664,172 @@ fun PracticeDeck(
                             onFinePlus = { loopEngine.nudgePointB(PracticeMath.FINE_NUDGE_MS) },
                             modifier = Modifier.weight(1f),
                         )
+                        DeckIconToggleButton(
+                            icon = Icons.Outlined.Repeat,
+                            contentDescription = if (practiceState.loopEnabled) "挂起循环" else "恢复循环",
+                            highlighted = practiceState.loopEnabled,
+                            onClick = { loopEngine.toggleLoopSuspended() },
+                            modifier = Modifier.size(width = 36.dp, height = 44.dp),
+                        )
+                        DeckIconToggleButton(
+                            icon = Icons.Outlined.Close,
+                            contentDescription = "清除循环",
+                            highlighted = false,
+                            onClick = { loopEngine.clearLoop() },
+                            modifier = Modifier.size(width = 36.dp, height = 44.dp),
+                        )
+                        DeckIconToggleButton(
+                            icon = Icons.Outlined.BookmarkAdd,
+                            contentDescription = "保存段落书签",
+                            highlighted = false,
+                            onClick = { showPresetSaveSheet = true },
+                            modifier = Modifier.size(width = 36.dp, height = 44.dp),
+                        )
                     }
                 }
             }
 
-            // 2. Pitch-Preserving Speed Control: Upper Stepper (64dp / center / 64dp) + Lower LazyRow Presets (>= 58x48dp)
+            // === Row 2: Speed Stepper + Icon Toggles ===
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                FilledTonalButton(
-                    onClick = { loopEngine.stepPracticeSpeed(-0.05f) },
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(width = 64.dp, height = 48.dp),
+                // Left: `[-5%]` · `[1.00x]` (tap to reset 1.0x) · `[+5%]`
+                val speedModified = abs(practiceState.practiceSpeed - 1.0f) >= 0.005f
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("-5%", style = MaterialTheme.typography.labelLarge.tnum())
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .combinedClickable(
-                            onClick = { loopEngine.setPracticeSpeed(1.0f) },
-                            onLongClick = {
-                                expandedDrawer = if (expandedDrawer == ExpandedDeckDrawer.SPEED_SLIDER) {
-                                    ExpandedDeckDrawer.NONE
-                                } else {
-                                    ExpandedDeckDrawer.SPEED_SLIDER
-                                }
-                            },
-                        )
-                        .semantics {
-                            contentDescription = "当前练习倍速 ${String.format("%.2f", practiceState.practiceSpeed)} 倍，单击恢复原速，长按展开连续滑杆"
-                        },
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        val pitchTag = if (practiceState.pitchSemitones == 0 && practiceState.pitchCents == 0) {
-                            "原调"
-                        } else {
-                            val sign = if (practiceState.pitchSemitones > 0) "+" else ""
-                            "${sign}${practiceState.pitchSemitones}st"
-                        }
-                        Text(
-                            text = String.format("● %.2fx (%s)", practiceState.practiceSpeed, pitchTag),
-                            style = MaterialTheme.typography.labelLarge.tnum(),
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-
-                FilledTonalButton(
-                    onClick = { loopEngine.stepPracticeSpeed(0.05f) },
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(width = 64.dp, height = 48.dp),
-                ) {
-                    Text("+5%", style = MaterialTheme.typography.labelLarge.tnum())
-                }
-            }
-
-            AnimatedVisibility(visible = expandedDrawer == ExpandedDeckDrawer.SPEED_SLIDER) {
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                    Slider(
-                        value = practiceState.practiceSpeed,
-                        onValueChange = { loopEngine.setPracticeSpeed(it) },
-                        valueRange = 0.25f..2.00f,
-                    )
-                }
-            }
-
-            // Preset Pills Row: each >= 58x48dp (§4.3A & §5.2 #4)
-            LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                items(PracticeMath.SPEED_PRESETS) { preset ->
-                    val selected = abs(practiceState.practiceSpeed - preset) < 0.008f
-                    FilterChip(
-                        selected = selected,
-                        onClick = { loopEngine.setPracticeSpeed(preset) },
-                        label = {
-                            val txt = String.format("%.2fx", preset)
-                                .replace(".00x", ".0x")
-                                .replace("0.50x", "0.5x")
-                                .replace("0.90x", "0.9x")
-                                .replace("1.50x", "1.5x")
-                            Text(txt, style = MaterialTheme.typography.labelLarge.tnum())
-                        },
-                        modifier = Modifier.defaultMinSize(minWidth = 58.dp, minHeight = 48.dp),
-                    )
-                }
-            }
-
-            // 3. Practice Helpers Row: `[⏱ 预备]` · `[📈 加速]` · `[🎵 升降调]` (all >= 48dp high)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                // Count-In / Pre-Roll pill (tap cycles OFF->1s->2s->4拍, long-press toggles Pre-Roll)
-                val countInActive = practiceState.countInMode != CountInMode.OFF || practiceState.preRollEnabled
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (countInActive) {
-                        MaterialTheme.colorScheme.tertiaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .combinedClickable(
-                            onClick = { loopEngine.cycleCountInMode() },
-                            onLongClick = { loopEngine.togglePreRoll() },
-                        ),
-                ) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 4.dp)) {
-                        Text(
-                            text = buildString {
-                                append("⏱ 预备:${countInLabel(practiceState.countInMode)}")
-                                if (practiceState.preRollEnabled) append("+前导")
-                            },
-                            style = MaterialTheme.typography.labelMedium.tnum(),
-                            color = if (countInActive) {
-                                MaterialTheme.colorScheme.onTertiaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            maxLines = 1,
-                        )
-                    }
-                }
-
-                // Speed Trainer pill
-                Surface(
-                    onClick = {
-                        expandedDrawer = if (expandedDrawer == ExpandedDeckDrawer.SPEED_TRAINER) {
-                            ExpandedDeckDrawer.NONE
-                        } else {
-                            ExpandedDeckDrawer.SPEED_TRAINER
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (speedTrainer.enabled) {
-                        MaterialTheme.colorScheme.tertiaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 4.dp)) {
-                        val label = if (speedTrainer.enabled) {
-                            String.format(
-                                "📈 %.2fx→%.2fx (%d/%d)",
-                                practiceState.practiceSpeed,
-                                speedTrainer.targetSpeed,
-                                speedTrainer.currentLoopInStep + 1,
-                                speedTrainer.loopsPerStep,
+                    Surface(
+                        onClick = { loopEngine.stepPracticeSpeed(-0.05f) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier
+                            .weight(0.9f)
+                            .height(44.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "-5%",
+                                style = MaterialTheme.typography.labelMedium.tnum(),
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false,
                             )
-                        } else {
-                            "📈 渐进加速"
                         }
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelMedium.tnum(),
-                            color = if (speedTrainer.enabled) {
-                                MaterialTheme.colorScheme.onTertiaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
+                    }
+
+                    Surface(
+                        onClick = { loopEngine.setPracticeSpeed(1.0f) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (speedModified) {
+                            MaterialTheme.colorScheme.tertiaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                        modifier = Modifier
+                            .weight(1.25f)
+                            .height(44.dp)
+                            .semantics {
+                                contentDescription = "当前练习倍速 ${String.format("%.2f", practiceState.practiceSpeed)} 倍，点击恢复 1.0 倍原速"
                             },
-                            maxLines = 1,
-                        )
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = String.format("%.2fx", practiceState.practiceSpeed),
+                                style = MaterialTheme.typography.labelMedium.tnum(),
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (speedModified) {
+                                    MaterialTheme.colorScheme.onTertiaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = { loopEngine.stepPracticeSpeed(0.05f) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier
+                            .weight(0.9f)
+                            .height(44.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "+5%",
+                                style = MaterialTheme.typography.labelMedium.tnum(),
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        }
                     }
                 }
 
-                // Semitone / Cents Pitch Shift pill (warm highlight whenever non-zero per §5.2 #7)
-                val pitchShifted = practiceState.pitchSemitones != 0 || practiceState.pitchCents != 0
-                Surface(
-                    onClick = {
-                        expandedDrawer = if (expandedDrawer == ExpandedDeckDrawer.PITCH_SHIFT) {
-                            ExpandedDeckDrawer.NONE
-                        } else {
-                            ExpandedDeckDrawer.PITCH_SHIFT
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (pitchShifted) {
-                        MaterialTheme.colorScheme.tertiaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp),
+                // Right: Icon-only toggles (`44.dp`)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 4.dp)) {
-                        val pitchText = if (!pitchShifted) {
-                            "🎵 原调"
-                        } else {
-                            val stSign = if (practiceState.pitchSemitones > 0) "+" else ""
-                            buildString {
-                                append("🎵 ${stSign}${practiceState.pitchSemitones}半音")
-                                if (practiceState.pitchCents != 0) {
-                                    val cSign = if (practiceState.pitchCents > 0) "+" else ""
-                                    append(" ${cSign}${practiceState.pitchCents}c")
-                                }
-                            }
-                        }
-                        Text(
-                            text = pitchText,
-                            style = MaterialTheme.typography.labelMedium.tnum(),
-                            color = if (pitchShifted) {
-                                MaterialTheme.colorScheme.onTertiaryContainer
+                    val pitchDrawerOpen = expandedDrawer == ExpandedDeckDrawer.PITCH_SHIFT
+                    val pitchShifted = practiceState.pitchSemitones != 0 || practiceState.pitchCents != 0
+                    DeckIconToggleButton(
+                        icon = Icons.Outlined.MusicNote,
+                        contentDescription = "调整音调",
+                        highlighted = pitchShifted || pitchDrawerOpen,
+                        onClick = {
+                            expandedDrawer = if (pitchDrawerOpen) {
+                                ExpandedDeckDrawer.NONE
                             } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            maxLines = 1,
+                                ExpandedDeckDrawer.PITCH_SHIFT
+                            }
+                        },
+                        modifier = Modifier.size(44.dp),
+                    )
+
+                    val countInActive = practiceState.countInMode != CountInMode.OFF
+                    val countInBadge = when (practiceState.countInMode) {
+                        CountInMode.OFF -> null
+                        CountInMode.SEC_1 -> "1s"
+                        CountInMode.SEC_2 -> "2s"
+                        CountInMode.BEAT_4 -> "4"
+                    }
+                    DeckIconToggleButton(
+                        icon = Icons.Outlined.Timer,
+                        contentDescription = "预备倒计时",
+                        highlighted = countInActive,
+                        badgeText = countInBadge,
+                        onClick = { loopEngine.cycleCountInMode() },
+                        modifier = Modifier.size(44.dp),
+                    )
+
+                    DeckIconToggleButton(
+                        icon = if (keepScreenOn) Icons.Filled.LightMode else Icons.Outlined.LightMode,
+                        contentDescription = if (keepScreenOn) "屏幕常亮：已开启" else "屏幕常亮：已关闭",
+                        highlighted = keepScreenOn,
+                        onClick = onToggleKeepScreenOn,
+                        modifier = Modifier.size(44.dp),
+                    )
+
+                    if (isVideo) {
+                        DeckIconToggleButton(
+                            icon = Icons.Outlined.Flip,
+                            contentDescription = if (practiceState.videoMirror) "视频水平镜像：已开启" else "视频水平镜像：已关闭",
+                            highlighted = practiceState.videoMirror,
+                            onClick = { loopEngine.toggleVideoMirror() },
+                            modifier = Modifier.size(44.dp),
                         )
                     }
                 }
             }
 
-            // Inline `4拍` BPM & Tap Tempo Bar (`[🥁 120 BPM [-] [+] [点按测速 Tap]]` per §5.2 #6)
+            // Inline `4拍` BPM & Tap Tempo Bar (only when Count-In is set to `4拍`)
             AnimatedVisibility(visible = practiceState.countInMode == CountInMode.BEAT_4) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
@@ -905,12 +846,12 @@ fun PracticeDeck(
                         val effectiveBpm = (practiceState.bpm * practiceState.practiceSpeed).roundToInt()
                         Column {
                             Text(
-                                text = "🥁 ${practiceState.bpm} BPM",
+                                text = "${practiceState.bpm} BPM",
                                 style = MaterialTheme.typography.labelLarge.tnum(),
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = "慢放联动拍速 ≈ $effectiveBpm BPM",
+                                text = "慢放联动 ≈ $effectiveBpm BPM",
                                 style = MaterialTheme.typography.labelMedium.tnum(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -921,37 +862,28 @@ fun PracticeDeck(
                         ) {
                             OutlinedIconButton(
                                 onClick = { loopEngine.setBpm(practiceState.bpm - 1) },
-                                modifier = Modifier.size(48.dp),
+                                modifier = Modifier.size(44.dp),
                             ) {
                                 Icon(Icons.Outlined.Remove, contentDescription = "BPM 减 1")
                             }
                             OutlinedIconButton(
                                 onClick = { loopEngine.setBpm(practiceState.bpm + 1) },
-                                modifier = Modifier.size(48.dp),
+                                modifier = Modifier.size(44.dp),
                             ) {
                                 Icon(Icons.Outlined.Add, contentDescription = "BPM 加 1")
                             }
-                            Button(
+                            FilledTonalButton(
                                 onClick = { loopEngine.tapTempo() },
-                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                             ) {
-                                Text("点按测速 Tap")
+                                Text("Tap")
                             }
                         }
                     }
                 }
             }
 
-            // Inline Speed Trainer Configuration Panel (§5.2 #5)
-            AnimatedVisibility(visible = expandedDrawer == ExpandedDeckDrawer.SPEED_TRAINER) {
-                SpeedTrainerInlinePanel(
-                    config = speedTrainer,
-                    currentSpeed = practiceState.practiceSpeed,
-                    onUpdateConfig = { loopEngine.configureSpeedTrainer(it) },
-                )
-            }
-
-            // Inline Semitone & Cents Pitch Shift Panel (§5.2 #7)
+            // Inline Semitone & Cents Pitch Shift Panel
             AnimatedVisibility(visible = expandedDrawer == ExpandedDeckDrawer.PITCH_SHIFT) {
                 PitchShiftInlinePanel(
                     semitones = practiceState.pitchSemitones,
@@ -961,10 +893,72 @@ fun PracticeDeck(
             }
         }
     }
+
+    if (showPresetSaveSheet) {
+        BookmarkPresetSaveSheet(
+            onSaveNewBookmark = onSaveNewBookmark,
+            onDismiss = { showPresetSaveSheet = false },
+        )
+    }
 }
 
 @Composable
-private fun SplitNudgeControl(
+internal fun DeckIconToggleButton(
+    icon: ImageVector,
+    contentDescription: String,
+    highlighted: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier.size(44.dp),
+    badgeText: String? = null,
+) {
+    FilledTonalIconButton(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        colors = IconButtonDefaults.filledTonalIconButtonColors(
+            containerColor = if (highlighted) {
+                MaterialTheme.colorScheme.tertiaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            },
+            contentColor = if (highlighted) {
+                MaterialTheme.colorScheme.onTertiaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        ),
+        modifier = modifier,
+    ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(20.dp),
+            )
+            if (badgeText != null) {
+                Text(
+                    text = badgeText,
+                    style = MaterialTheme.typography.labelSmall.tnum().copy(
+                        fontSize = 9.sp,
+                        lineHeight = 9.sp,
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    ),
+                    fontWeight = FontWeight.Bold,
+                    color = if (highlighted) {
+                        MaterialTheme.colorScheme.onTertiaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 3.dp, bottom = 3.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SplitNudgeControl(
     prefix: String,
     currentFormatted: String,
     onCoarseMinus: () -> Unit,
@@ -974,34 +968,32 @@ private fun SplitNudgeControl(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = modifier.height(48.dp),
+        modifier = modifier.height(44.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             RepeatingNudgeHalf(
-                label = "$prefix -0.5",
+                label = "$prefix -",
                 talkBackLabel = "将循环点 $prefix 提前 0.5 秒（长按精细微调 0.1 秒），当前 $currentFormatted",
                 onTap = onCoarseMinus,
                 onLongRepeat = onFineMinus,
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight()
-                    .defaultMinSize(minWidth = 74.dp, minHeight = 48.dp),
+                    .fillMaxHeight(),
             )
-            VerticalDivider(modifier = Modifier.height(24.dp))
+            VerticalDivider(modifier = Modifier.height(20.dp))
             RepeatingNudgeHalf(
-                label = "+0.5",
+                label = "+ $prefix",
                 talkBackLabel = "将循环点 $prefix 延后 0.5 秒（长按精细微调 0.1 秒），当前 $currentFormatted",
                 onTap = onCoarsePlus,
                 onLongRepeat = onFinePlus,
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight()
-                    .defaultMinSize(minWidth = 74.dp, minHeight = 48.dp),
+                    .fillMaxHeight(),
             )
         }
     }
@@ -1071,96 +1063,11 @@ private fun RepeatingNudgeHalf(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge.tnum(),
+            style = MaterialTheme.typography.labelMedium.tnum(),
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1,
+            softWrap = false,
         )
-    }
-}
-
-@Composable
-private fun SpeedTrainerInlinePanel(
-    config: SpeedTrainerConfig,
-    currentSpeed: Float,
-    onUpdateConfig: (SpeedTrainerConfig) -> Unit,
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = String.format(
-                        "渐进加速：%.2fx → %.2fx",
-                        if (config.enabled) currentSpeed else config.startSpeed,
-                        config.targetSpeed,
-                    ),
-                    style = MaterialTheme.typography.labelLarge.tnum(),
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Switch(
-                    checked = config.enabled,
-                    onCheckedChange = { enabled ->
-                        onUpdateConfig(
-                            config.copy(
-                                enabled = enabled,
-                                startSpeed = if (enabled) currentSpeed else config.startSpeed,
-                            ),
-                        )
-                    },
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("每遍数:", style = MaterialTheme.typography.labelMedium)
-                listOf(2, 4, 8).forEach { n ->
-                    FilterChip(
-                        selected = config.loopsPerStep == n,
-                        onClick = { onUpdateConfig(config.copy(loopsPerStep = n)) },
-                        label = { Text("${n}遍", style = MaterialTheme.typography.labelMedium.tnum()) },
-                        modifier = Modifier.defaultMinSize(minHeight = 44.dp),
-                    )
-                }
-                Spacer(Modifier.width(4.dp))
-                Text("步进:", style = MaterialTheme.typography.labelMedium)
-                listOf(0.02f to "+2%", 0.05f to "+5%", 0.10f to "+10%").forEach { (step, txt) ->
-                    FilterChip(
-                        selected = abs(config.stepSpeed - step) < 0.005f,
-                        onClick = { onUpdateConfig(config.copy(stepSpeed = step)) },
-                        label = { Text(txt, style = MaterialTheme.typography.labelMedium.tnum()) },
-                        modifier = Modifier.defaultMinSize(minHeight = 44.dp),
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("目标倍速:", style = MaterialTheme.typography.labelMedium)
-                listOf(0.85f, 1.00f, 1.10f, 1.25f).forEach { target ->
-                    FilterChip(
-                        selected = abs(config.targetSpeed - target) < 0.008f,
-                        onClick = { onUpdateConfig(config.copy(targetSpeed = target)) },
-                        label = { Text(String.format("%.2fx", target), style = MaterialTheme.typography.labelMedium.tnum()) },
-                        modifier = Modifier.defaultMinSize(minHeight = 44.dp),
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -1187,13 +1094,13 @@ private fun PitchShiftInlinePanel(
                 FilledTonalButton(
                     onClick = { onUpdatePitch(semitones - 1, cents) },
                     enabled = semitones > -6,
-                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 ) {
                     Text("-1 半音")
                 }
                 TextButton(
                     onClick = { onUpdatePitch(0, 0) },
-                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 ) {
                     val stSign = if (semitones > 0) "+" else ""
                     Text(
@@ -1205,7 +1112,7 @@ private fun PitchShiftInlinePanel(
                 FilledTonalButton(
                     onClick = { onUpdatePitch(semitones + 1, cents) },
                     enabled = semitones < 6,
-                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 ) {
                     Text("+1 半音")
                 }

@@ -65,19 +65,19 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // === Group 1: 本地媒体库与无线连接 (Rows 1–3) ===
+            // === Group 1: 本地媒体库与无线连接 ===
             SettingsSectionCard(title = "本地媒体库与无线连接") {
                 // Row 1: 管理已添加的文件夹
                 SettingsClickableRow(
                     title = "管理已添加的文件夹 (${safRoots.size} 个目录)",
-                    subtitle = "仅扫描授权目录 · 支持 💻 PC 局域网 Web 管理台无线传歌",
+                    subtitle = "仅扫描授权目录 · 支持 PC 局域网 Web 管理台无线传歌",
                     trailing = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             TextButton(
                                 onClick = { viewModel.setLanStudioVisible(true) },
                                 modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                             ) {
-                                Text("💻 Web管理台")
+                                Text("Web 管理台")
                             }
                             Icon(Icons.Outlined.ChevronRight, contentDescription = null)
                         }
@@ -108,20 +108,8 @@ fun SettingsScreen(
                 )
             }
 
-            // === Group 2: 标签与联网补全 (Rows 4–5) ===
-            SettingsSectionCard(title = "标签与联网补全") {
-                // Row 4: 保存标签时尝试同时写入原文件
-                SettingsSwitchRow(
-                    title = "保存标签时尝试同时写入原文件",
-                    subtitle = "在本地覆盖层之外，将 ID3v2 / Vorbis / MP4 标签原子级写回原音频",
-                    checked = settings.writeTagsToFileDefault,
-                    onCheckedChange = { enabled ->
-                        viewModel.updateAppSettings { it.copy(writeTagsToFileDefault = enabled) }
-                    },
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp))
-
-                // Row 5: 清理本地封面与波形缓存
+            // === Group 2: 本地缓存 ===
+            SettingsSectionCard(title = "本地缓存") {
                 SettingsClickableRow(
                     title = "清理本地封面与波形缓存",
                     subtitle = "当前占用 ${MiniPlayerViewModel.formatByteSize(cacheBytes)}（不删除音乐文件与练习书签）",
@@ -137,31 +125,7 @@ fun SettingsScreen(
                 )
             }
 
-            // === Group 3: 练习模式默认偏好 (Rows 6–7) ===
-            SettingsSectionCard(title = "练习模式默认偏好") {
-                // Row 6: 循环预备倒计时提示音 (木鱼轻击声)
-                SettingsSwitchRow(
-                    title = "循环预备倒计时提示音 (木鱼轻击声)",
-                    subtitle = "静音环境关闭后仅保留视觉拍点倒计时环",
-                    checked = settings.countInClickSound,
-                    onCheckedChange = { enabled ->
-                        viewModel.updateAppSettings { it.copy(countInClickSound = enabled) }
-                    },
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp))
-
-                // Row 7: 练习模式下保持屏幕常亮
-                SettingsSwitchRow(
-                    title = "练习模式下保持屏幕常亮",
-                    subtitle = "双手持乐器跟练或看谱时不自动暗屏锁屏",
-                    checked = settings.keepScreenOnInPractice,
-                    onCheckedChange = { enabled ->
-                        viewModel.updateAppSettings { it.copy(keepScreenOnInPractice = enabled) }
-                    },
-                )
-            }
-
-            // === Group 4: 关于与自动更新 (Row 8) ===
+            // === Group 3: 关于与自动更新 ===
             SettingsSectionCard(title = "关于与自动更新") {
                 Column(
                     modifier = Modifier
