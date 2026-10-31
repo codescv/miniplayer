@@ -28,6 +28,8 @@ import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -614,6 +616,142 @@ class DatabaseAndScannerTest {
             assertEquals(OptionalField.Set<Int?>(null), flushedSpec.trackNumber)
             assertEquals(OptionalField.Set<Int?>(null), flushedSpec.year)
             assertEquals(OptionalField.Set(null), flushedSpec.cover)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `concurrent flushDeferredFileWrites and saveMetadata serialize via fileWriteMutex without duplicate writes`() = runBlocking {
+        val backend = InMemoryMediaStoreBackend()
+        val tempDir = Files.createTempDirectory("mp_race_test").toFile()
+        try {
+            val repo = MediaRepository(
+                backend = backend,
+                cacheRootDir = File(tempDir, "cache"),
+                filesRootDir = File(tempDir, "files"),
+                ioDispatcher = Dispatchers.IO,
+            )
+            val rootId = backend.insertSafRoot(
+                treeUri = "content://saf/tree/primary%3ARace",
+                treeDocId = "primary:Race",
+                displayName = "Race",
+                isWritable = true,
+                mountState = MountState.MOUNTED,
+            )
+            backend.reconcileRootScan(
+                rootId = rootId,
+                isWritable = true,
+                scannedAtMs = 1_000L,
+                scannedFolders = listOf(ScannedFolderRow(rootId, "", "content://saf/race", false)),
+                unchangedCoverUpdates = emptyMap(),
+                movedItems = emptyList(),
+                upsertedItems = listOf(
+                    MediaItemRow(
+                        documentUri = "content://saf/race/1",
+                        rootId = rootId,
+                        parentRelPath = "",
+                        fileName = "01 - TrackOne.mp3",
+                        mimeType = "audio/mpeg",
+                        isVideo = false,
+                        sizeBytes = 5_000_000L,
+                        lastModified = 100L,
+                        durationMs = 180_000L,
+                        rawTitle = "Track One",
+                        parsedTitle = "Track One",
+                        fingerprintKey = "01 - trackone.mp3|5000000|180000",
+                    ),
+                    MediaItemRow(
+                        documentUri = "content://saf/race/2",
+                        rootId = rootId,
+                        parentRelPath = "",
+                        fileName = "02 - TrackTwo.mp3",
+                        mimeType = "audio/mpeg",
+                        isVideo = false,
+                        sizeBytes = 5_200_000L,
+                        lastModified = 100L,
+                        durationMs = 200_000L,
+                        rawTitle = "Track Two",
+                        parsedTitle = "Track Two",
+                        fingerprintKey = "02 - tracktwo.mp3|5200000|200000",
+                    ),
+                ),
+                deletedItemIds = emptySet(),
+                lyricsUpdates = emptyList(),
+                artistSplitter = { a, aa -> ArtistSplitter.split(a, aa) },
+            )
+            repo.refreshNow()
+
+            val items = repo.allMediaItems.value.sortedBy { it.fileName }
+            val item1 = items[0]
+            val item2 = items[1]
+
+            val activeWriters = AtomicInteger(0)
+            val maxConcurrentWriters = AtomicInteger(0)
+            val item1Writes = AtomicInteger(0)
+            val item2Writes = AtomicInteger(0)
+
+            val slowWriter = PhysicalTagWriter { row, _ ->
+                val cur = activeWriters.incrementAndGet()
+                maxConcurrentWriters.accumulateAndGet(cur, ::maxOf)
+                try {
+                    Thread.sleep(50L) // Force overlap across Dispatchers.IO worker threads
+                    if (row.itemId == item1.itemId) item1Writes.incrementAndGet()
+                    if (row.itemId == item2.itemId) item2Writes.incrementAndGet()
+                    (row.sizeBytes + 64L) to (row.lastModified + 1_000L)
+                } finally {
+                    activeWriters.decrementAndGet()
+                }
+            }
+
+            val engine = DefaultMetadataEngine(
+                context = null,
+                repository = repo,
+                coversDir = File(tempDir, "covers"),
+                physicalTagWriter = slowWriter,
+                ioDispatcher = Dispatchers.IO,
+            )
+
+            // Defer write on item1 while item1 is playing
+            val deferred = engine.saveMetadata(
+                itemIds = listOf(item1.itemId),
+                draft = MetadataDraft(
+                    title = "Track One Edited",
+                    dirtyFields = setOf(MetadataField.TITLE),
+                    writeBackToFile = true,
+                ),
+                currentlyPlayingItemId = item1.itemId,
+            )
+            assertEquals(MetadataSaveOutcome.SAVED_DB_DEFERRED_FILE, deferred)
+            assertEquals(0, item1Writes.get())
+
+            // Fire `onActiveItemChanged` + 6 concurrent `flushDeferredFileWrites` + concurrent `saveMetadata` on item2!
+            repo.savePlaybackPosition(item2.itemId, 1_000L)
+            val flushJobs = (1..6).map {
+                async(Dispatchers.IO) {
+                    engine.flushDeferredFileWrites(currentlyPlayingItemId = item2.itemId)
+                }
+            }
+            val editJob = async(Dispatchers.IO) {
+                engine.saveMetadata(
+                    itemIds = listOf(item2.itemId),
+                    draft = MetadataDraft(
+                        title = "Track Two Direct Write",
+                        dirtyFields = setOf(MetadataField.TITLE),
+                        writeBackToFile = true,
+                    ),
+                    currentlyPlayingItemId = null, // Direct write on item2 racing with item1 flushes
+                )
+            }
+
+            val flushCounts = flushJobs.awaitAll()
+            assertEquals(MetadataSaveOutcome.SAVED_DB_AND_FILE, editJob.await())
+            delay(80L) // Ensure backgroundScope `onActiveItemChanged` coroutine also finishes
+
+            assertEquals("Physical SAF tag writes must be strictly serialized by fileWriteMutex", 1, maxConcurrentWriters.get())
+            assertEquals("Deferred item1 must be physically written ONCE across all racing flushers", 1, item1Writes.get())
+            assertEquals("Direct item2 write must also complete once cleanly", 1, item2Writes.get())
+            assertTrue(flushCounts.sum() <= 1)
         } finally {
             tempDir.deleteRecursively()
         }

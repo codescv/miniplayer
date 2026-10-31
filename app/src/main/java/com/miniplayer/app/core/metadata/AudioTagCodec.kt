@@ -3,15 +3,18 @@ package com.miniplayer.app.core.metadata
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
 import java.io.File
+import java.io.FileDescriptor
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.InterruptedIOException
 import java.io.OutputStream
 import java.io.PushbackInputStream
 import java.io.RandomAccessFile
@@ -214,6 +217,40 @@ object AudioTagCodec {
         }
     }
 
+    /**
+     * Positional POSIX `Os.pread` source over a `ParcelFileDescriptor`'s raw `FileDescriptor`.
+     * Never wraps in `FileInputStream` / `FileChannel`, preventing Android 10+ `fdsan` (`SIGABRT`)
+     * premature FD closure before `ParcelFileDescriptor.close()`.
+     */
+    internal class PosixFdByteSource(
+        private val fd: FileDescriptor,
+        override val size: Long,
+        private val preadFn: (FileDescriptor, ByteArray, Int, Int, Long) -> Int = { d, b, off, len, pos ->
+            Os.pread(d, b, off, len, pos)
+        },
+    ) : SeekableByteSource {
+        override fun readAt(position: Long, dest: ByteArray, offset: Int, length: Int): Int {
+            if (length <= 0 || position < 0L || position >= size) return -1
+            val capped = minOf(length.toLong(), size - position).toInt()
+            var total = 0
+            while (total < capped) {
+                val n = try {
+                    preadFn(fd, dest, offset + total, capped - total, position + total)
+                } catch (e: ErrnoException) {
+                    if (e.errno == OsConstants.EINTR) continue
+                    throw IOException("POSIX pread failed at offset ${position + total}", e)
+                } catch (e: InterruptedIOException) {
+                    val transferred = e.bytesTransferred.coerceAtLeast(0)
+                    total += transferred
+                    continue
+                }
+                if (n <= 0) break
+                total += n
+            }
+            return if (total == 0) -1 else total
+        }
+    }
+
     internal class ByteArrayByteSource(
         private val data: ByteArray,
     ) : SeekableByteSource {
@@ -304,9 +341,9 @@ object AudioTagCodec {
     }
 
     /**
-     * Reads embedded tags from a SAF [uri] via seekable `ParcelFileDescriptor` (`FileChannel`)
-     * without copying audio payloads to `cacheDir`; falls back to non-staging header stream reading
-     * if the provider returns a pipe/non-seekable descriptor.
+     * Reads embedded tags from a SAF [uri] via positional `Os.pread` over `ParcelFileDescriptor`
+     * without copying audio payloads to `cacheDir` or violating Android 10+ `fdsan` FD ownership;
+     * falls back to non-staging header stream reading if the provider returns a pipe/non-regular FD.
      */
     fun readTagsFromSafUri(
         context: Context,
@@ -317,14 +354,12 @@ object AudioTagCodec {
         val resolver = context.contentResolver
         val seekableTags = runCatching {
             resolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                FileInputStream(pfd.fileDescriptor).use { fis ->
-                    val ch = fis.channel
-                    val sz = runCatching { ch.size() }.getOrDefault(-1L)
-                    if (sz > 0L) {
-                        readTags(ch, fileNameHint, mimeTypeHint)
-                    } else {
-                        null
-                    }
+                val fd = pfd.fileDescriptor
+                val st = Os.fstat(fd)
+                if (OsConstants.S_ISREG(st.st_mode) && st.st_size > 0L) {
+                    readTagsFromSource(PosixFdByteSource(fd, st.st_size), fileNameHint, mimeTypeHint)
+                } else {
+                    null
                 }
             }
         }.getOrNull()
@@ -450,15 +485,12 @@ object AudioTagCodec {
                 val fd = descriptor.fileDescriptor
                 Os.lseek(fd, 0L, OsConstants.SEEK_SET)
                 FileInputStream(stagedOut).use { stagedIn ->
-                    // Do not close FileOutputStream(fd) directly as pfd.use owns fd lifecycle; flush instead.
-                    val rawOut = FileOutputStream(fd)
                     val buf = ByteArray(STREAM_BUF_SIZE)
                     while (true) {
                         val read = stagedIn.read(buf)
                         if (read < 0) break
-                        if (read > 0) rawOut.write(buf, 0, read)
+                        if (read > 0) writeFullyToFd(fd, buf, 0, read)
                     }
-                    rawOut.flush()
                 }
                 Os.ftruncate(fd, newSize)
                 Os.fsync(fd)
@@ -469,6 +501,23 @@ object AudioTagCodec {
         } finally {
             srcCopy.delete()
             stagedOut.delete()
+        }
+    }
+
+    private fun writeFullyToFd(fd: FileDescriptor, buf: ByteArray, offset: Int, length: Int) {
+        var written = 0
+        while (written < length) {
+            val n = try {
+                Os.write(fd, buf, offset + written, length - written)
+            } catch (e: ErrnoException) {
+                if (e.errno == OsConstants.EINTR) continue
+                throw IOException("POSIX write failed after $written bytes", e)
+            } catch (e: InterruptedIOException) {
+                written += e.bytesTransferred.coerceAtLeast(0)
+                continue
+            }
+            if (n <= 0) throw IOException("POSIX write returned $n with ${length - written} bytes remaining")
+            written += n
         }
     }
 
