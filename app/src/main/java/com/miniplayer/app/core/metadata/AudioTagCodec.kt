@@ -2,6 +2,7 @@ package com.miniplayer.app.core.metadata
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.system.Os
 import android.system.OsConstants
 import java.io.ByteArrayOutputStream
@@ -12,9 +13,11 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.PushbackInputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.channels.FileChannel
 import java.util.Base64
 import java.util.Locale
 
@@ -188,36 +191,170 @@ object AudioTagCodec {
         }
     }
 
+    internal interface SeekableByteSource {
+        val size: Long
+        fun readAt(position: Long, dest: ByteArray, offset: Int = 0, length: Int = dest.size - offset): Int
+    }
+
+    internal class FileChannelByteSource(
+        private val channel: FileChannel,
+        override val size: Long = channel.size(),
+    ) : SeekableByteSource {
+        override fun readAt(position: Long, dest: ByteArray, offset: Int, length: Int): Int {
+            if (length <= 0 || position < 0L || position >= size) return -1
+            val capped = minOf(length.toLong(), size - position).toInt()
+            var total = 0
+            while (total < capped) {
+                val bb = ByteBuffer.wrap(dest, offset + total, capped - total)
+                val n = channel.read(bb, position + total)
+                if (n <= 0) break
+                total += n
+            }
+            return if (total == 0) -1 else total
+        }
+    }
+
+    internal class ByteArrayByteSource(
+        private val data: ByteArray,
+    ) : SeekableByteSource {
+        override val size: Long get() = data.size.toLong()
+        override fun readAt(position: Long, dest: ByteArray, offset: Int, length: Int): Int {
+            if (length <= 0 || position < 0L || position >= data.size.toLong()) return -1
+            val start = position.toInt()
+            val n = minOf(length, data.size - start)
+            System.arraycopy(data, start, dest, offset, n)
+            return n
+        }
+    }
+
+    private class SeekableSourceInputStream(
+        private val src: SeekableByteSource,
+        startPosition: Long = 0L,
+    ) : InputStream() {
+        var position: Long = startPosition
+            private set
+
+        override fun read(): Int {
+            val one = ByteArray(1)
+            val n = src.readAt(position, one, 0, 1)
+            if (n <= 0) return -1
+            position += 1L
+            return one[0].toInt() and 0xFF
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (len == 0) return 0
+            val n = src.readAt(position, b, off, len)
+            if (n <= 0) return -1
+            position += n.toLong()
+            return n
+        }
+
+        override fun skip(n: Long): Long {
+            if (n <= 0L) return 0L
+            val avail = (src.size - position).coerceAtLeast(0L)
+            val step = minOf(n, avail)
+            position += step
+            return step
+        }
+    }
+
+    private fun SeekableByteSource.readExactAt(position: Long, dest: ByteArray): Boolean {
+        if (dest.isEmpty()) return true
+        val n = readAt(position, dest, 0, dest.size)
+        return n == dest.size
+    }
+
+    internal fun readTagsFromSource(
+        source: SeekableByteSource,
+        fileNameHint: String? = null,
+        mimeTypeHint: String? = null,
+    ): EmbeddedAudioTags {
+        if (source.size <= 0L) return EmbeddedAudioTags()
+        val head = ByteArray(16)
+        val n = source.readAt(0L, head, 0, head.size).coerceAtLeast(0)
+        return when (detectFormat(head, n, fileNameHint, mimeTypeHint)) {
+            AudioContainerFormat.MP3 -> readMp3Tags(source)
+            AudioContainerFormat.FLAC -> readFlacTags(SeekableSourceInputStream(source, 0L))
+            AudioContainerFormat.OGG -> readOggTags(source)
+            AudioContainerFormat.MP4 -> readMp4Tags(source)
+            AudioContainerFormat.UNSUPPORTED -> EmbeddedAudioTags()
+        }
+    }
+
+    fun readTags(
+        channel: FileChannel,
+        fileNameHint: String? = null,
+        mimeTypeHint: String? = null,
+    ): EmbeddedAudioTags {
+        val sz = channel.size()
+        if (sz <= 0L) return EmbeddedAudioTags()
+        return readTagsFromSource(FileChannelByteSource(channel, sz), fileNameHint, mimeTypeHint)
+    }
+
     fun readTags(
         file: File,
         fileNameHint: String? = file.name,
         mimeTypeHint: String? = null,
     ): EmbeddedAudioTags {
         if (!file.isFile || file.length() <= 0L) return EmbeddedAudioTags()
-        val head = ByteArray(16)
-        val n = FileInputStream(file).use { readUpTo(it, head) }
-        return when (detectFormat(head, n, fileNameHint, mimeTypeHint)) {
-            AudioContainerFormat.MP3 -> readMp3Tags(file)
-            AudioContainerFormat.FLAC -> FileInputStream(file).use { readFlacTags(it) }
-            AudioContainerFormat.OGG -> FileInputStream(file).use { readOggTags(it) }
-            AudioContainerFormat.MP4 -> readMp4Tags(file)
-            AudioContainerFormat.UNSUPPORTED -> EmbeddedAudioTags()
+        return FileInputStream(file).use { fis ->
+            readTags(fis.channel, fileNameHint, mimeTypeHint)
         }
+    }
+
+    /**
+     * Reads embedded tags from a SAF [uri] via seekable `ParcelFileDescriptor` (`FileChannel`)
+     * without copying audio payloads to `cacheDir`; falls back to non-staging header stream reading
+     * if the provider returns a pipe/non-seekable descriptor.
+     */
+    fun readTagsFromSafUri(
+        context: Context,
+        uri: Uri,
+        fileNameHint: String? = null,
+        mimeTypeHint: String? = null,
+    ): EmbeddedAudioTags {
+        val resolver = context.contentResolver
+        val seekableTags = runCatching {
+            resolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                FileInputStream(pfd.fileDescriptor).use { fis ->
+                    val ch = fis.channel
+                    val sz = runCatching { ch.size() }.getOrDefault(-1L)
+                    if (sz > 0L) {
+                        readTags(ch, fileNameHint, mimeTypeHint)
+                    } else {
+                        null
+                    }
+                }
+            }
+        }.getOrNull()
+        if (seekableTags != null) return seekableTags
+
+        return runCatching {
+            resolver.openInputStream(uri)?.use { stream ->
+                readTags(stream, fileNameHint, mimeTypeHint)
+            }
+        }.getOrNull() ?: EmbeddedAudioTags()
     }
 
     fun readTags(
         inputStream: InputStream,
         fileNameHint: String? = null,
         mimeTypeHint: String? = null,
-        tempDir: File? = null,
+        @Suppress("UNUSED_PARAMETER") tempDir: File? = null,
     ): EmbeddedAudioTags {
-        // Stage stream to temporary file or memory if small for random-access MP4/ID3v1 support
-        val tmp = File.createTempFile("tag_read_", ".bin", tempDir)
-        try {
-            FileOutputStream(tmp).use { out -> inputStream.copyTo(out, STREAM_BUF_SIZE) }
-            return readTags(tmp, fileNameHint, mimeTypeHint)
-        } finally {
-            tmp.delete()
+        // Parse directly from leading header packets/atoms without staging full audio files to disk!
+        val pb = PushbackInputStream(inputStream, 16)
+        val head = ByteArray(16)
+        val n = readUpTo(pb, head)
+        if (n <= 0) return EmbeddedAudioTags()
+        pb.unread(head, 0, n)
+        return when (detectFormat(head, n, fileNameHint, mimeTypeHint)) {
+            AudioContainerFormat.MP3 -> readMp3TagsFromStream(pb)
+            AudioContainerFormat.FLAC -> readFlacTags(pb)
+            AudioContainerFormat.OGG -> readOggTags(pb)
+            AudioContainerFormat.MP4 -> readMp4TagsFromStream(pb)
+            AudioContainerFormat.UNSUPPORTED -> EmbeddedAudioTags()
         }
     }
 
@@ -226,13 +363,8 @@ object AudioTagCodec {
         fileNameHint: String? = null,
         mimeTypeHint: String? = null,
     ): EmbeddedAudioTags {
-        val tmp = File.createTempFile("tag_bytes_", ".bin")
-        try {
-            tmp.writeBytes(bytes)
-            return readTags(tmp, fileNameHint, mimeTypeHint)
-        } finally {
-            tmp.delete()
-        }
+        if (bytes.isEmpty()) return EmbeddedAudioTags()
+        return readTagsFromSource(ByteArrayByteSource(bytes), fileNameHint, mimeTypeHint)
     }
 
     /**
@@ -331,12 +463,33 @@ object AudioTagCodec {
                 Os.ftruncate(fd, newSize)
                 Os.fsync(fd)
             }
-            return newSize to System.currentTimeMillis()
+            val actualLastModified = querySafLastModified(resolver, docUri)
+                ?: System.currentTimeMillis()
+            return newSize to actualLastModified
         } finally {
             srcCopy.delete()
             stagedOut.delete()
         }
     }
+
+    private fun querySafLastModified(
+        resolver: android.content.ContentResolver,
+        docUri: Uri,
+    ): Long? = runCatching {
+        resolver.query(
+            docUri,
+            arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                cursor.getLong(0).takeIf { it > 0L }
+            } else {
+                null
+            }
+        }
+    }.getOrNull()
 
     fun verifyAudioFileIntegrity(
         originalFile: File,
@@ -404,39 +557,125 @@ object AudioTagCodec {
     // 1. MP3 (ID3v2.2 / ID3v2.3 / ID3v2.4 + ID3v1 + MPEG duration)
     // =========================================================================
 
-    private data class RawId3Frame(
+    internal data class RawId3Frame(
         val id: String,
         val payload: ByteArray,
     )
 
-    private fun locateMp3AudioBounds(file: File): Pair<Long, Long> {
-        RandomAccessFile(file, "r").use { raf ->
-            val len = raf.length()
-            var audioStart = 0L
-            if (len >= 10L) {
-                val hdr = ByteArray(10)
-                raf.readFully(hdr)
-                if (hdr[0] == 'I'.code.toByte() && hdr[1] == 'D'.code.toByte() && hdr[2] == '3'.code.toByte()) {
-                    val flags = hdr[5].toInt() and 0xFF
-                    val tagSize = decodeSynchsafeInt(hdr, 6)
-                    val footerSize = if ((flags and 0x10) != 0) 10L else 0L
-                    audioStart = (10L + tagSize + footerSize).coerceAtMost(len)
-                }
+    private fun locateMp3AudioBounds(source: SeekableByteSource): Pair<Long, Long> {
+        val len = source.size
+        var audioStart = 0L
+        if (len >= 10L) {
+            val hdr = ByteArray(10)
+            if (source.readExactAt(0L, hdr) &&
+                hdr[0] == 'I'.code.toByte() &&
+                hdr[1] == 'D'.code.toByte() &&
+                hdr[2] == '3'.code.toByte()
+            ) {
+                val flags = hdr[5].toInt() and 0xFF
+                val tagSize = decodeSynchsafeInt(hdr, 6).toLong()
+                val footerSize = if ((flags and 0x10) != 0) 10L else 0L
+                audioStart = (10L + tagSize + footerSize).coerceAtMost(len)
             }
-            var audioEnd = len
-            if (len - audioStart >= 128L) {
-                raf.seek(len - 128L)
-                val v1 = ByteArray(3)
-                raf.readFully(v1)
-                if (v1[0] == 'T'.code.toByte() && v1[1] == 'A'.code.toByte() && v1[2] == 'G'.code.toByte()) {
-                    audioEnd = len - 128L
-                }
-            }
-            return audioStart to audioEnd
         }
+        var audioEnd = len
+        if (len - audioStart >= 128L) {
+            val v1 = ByteArray(3)
+            if (source.readExactAt(len - 128L, v1) &&
+                v1[0] == 'T'.code.toByte() &&
+                v1[1] == 'A'.code.toByte() &&
+                v1[2] == 'G'.code.toByte()
+            ) {
+                audioEnd = len - 128L
+            }
+        }
+        return audioStart to audioEnd
     }
 
-    private fun readMp3Tags(file: File): EmbeddedAudioTags {
+    private fun locateMp3AudioBounds(file: File): Pair<Long, Long> =
+        FileInputStream(file).use { locateMp3AudioBounds(FileChannelByteSource(it.channel)) }
+
+    private fun readMp3Tags(file: File): EmbeddedAudioTags =
+        FileInputStream(file).use { readMp3Tags(FileChannelByteSource(it.channel)) }
+
+    private fun readMp3Tags(source: SeekableByteSource): EmbeddedAudioTags {
+        val frames = parseExistingId3v2Frames(source)
+        val parsed = extractId3FieldsFromFrames(frames)
+        var title = parsed.title
+        var artist = parsed.artist
+        var album = parsed.album
+        var trackNum = parsed.trackNumber
+        var year = parsed.year
+        var durationMs = parsed.durationMs
+
+        // ID3v1 fallback if primary fields missing (reads only trailing 128 bytes)
+        if (title == null && artist == null && album == null && source.size >= 128L) {
+            val v1 = ByteArray(128)
+            if (source.readExactAt(source.size - 128L, v1) &&
+                v1[0] == 'T'.code.toByte() &&
+                v1[1] == 'A'.code.toByte() &&
+                v1[2] == 'G'.code.toByte()
+            ) {
+                title = decodeFixedId3v1String(v1, 3, 30)
+                artist = decodeFixedId3v1String(v1, 33, 30)
+                album = decodeFixedId3v1String(v1, 63, 30)
+                year = parseYear(decodeFixedId3v1String(v1, 93, 4))
+                if (v1[125].toInt() == 0 && v1[126].toInt() != 0) {
+                    trackNum = v1[126].toInt() and 0xFF
+                }
+            }
+        }
+
+        if (durationMs == null || durationMs <= 0L) {
+            durationMs = estimateMp3DurationMs(source)
+        }
+
+        return parsed.copy(
+            title = title,
+            artist = artist,
+            album = album,
+            trackNumber = trackNum,
+            year = year,
+            durationMs = durationMs,
+        )
+    }
+
+    private fun readMp3TagsFromStream(input: InputStream): EmbeddedAudioTags {
+        val head = ByteArray(10)
+        val n = readFully(input, head)
+        if (n < 10) return EmbeddedAudioTags()
+
+        var frames: List<RawId3Frame> = emptyList()
+        val probe: ByteArray
+        if (head[0] == 'I'.code.toByte() && head[1] == 'D'.code.toByte() && head[2] == '3'.code.toByte()) {
+            val flags = head[5].toInt() and 0xFF
+            val tagSize = decodeSynchsafeInt(head, 6)
+            if (tagSize in 1..(32 * 1024 * 1024)) {
+                val tagBody = ByteArray(tagSize)
+                if (readFully(input, tagBody) == tagSize) {
+                    frames = parseId3v2HeaderAndBody(head, tagBody)
+                }
+            } else if (tagSize > 0) {
+                skipFully(input, tagSize.toLong())
+            }
+            if ((flags and 0x10) != 0) skipFully(input, 10L)
+            val p = ByteArray(8192)
+            val pn = readFully(input, p)
+            probe = if (pn == p.size) p else p.copyOf(pn.coerceAtLeast(0))
+        } else {
+            val rest = ByteArray(8182)
+            val rn = readFully(input, rest)
+            probe = ByteArray(n + rn.coerceAtLeast(0))
+            System.arraycopy(head, 0, probe, 0, n)
+            if (rn > 0) System.arraycopy(rest, 0, probe, n, rn)
+        }
+
+        val parsed = extractId3FieldsFromFrames(frames)
+        val durationMs = parsed.durationMs?.takeIf { it > 0L } ?: estimateMp3DurationFromProbe(probe, audioBytes = -1L)
+        return parsed.copy(durationMs = durationMs)
+    }
+
+    private fun extractId3FieldsFromFrames(frames: List<RawId3Frame>): EmbeddedAudioTags {
         var title: String? = null
         var artist: String? = null
         var album: String? = null
@@ -448,7 +687,6 @@ object AudioTagCodec {
         var coverMime: String? = null
         var durationMs: Long? = null
 
-        val frames = parseExistingId3v2Frames(file)
         for (frame in frames) {
             when (frame.id) {
                 "TIT2", "TT2" -> if (title == null) title = decodeId3TextPayload(frame.payload)
@@ -475,29 +713,6 @@ object AudioTagCodec {
                 }
             }
         }
-
-        // ID3v1 fallback if primary fields missing
-        if (title == null && artist == null && album == null && file.length() >= 128L) {
-            RandomAccessFile(file, "r").use { raf ->
-                raf.seek(file.length() - 128L)
-                val v1 = ByteArray(128)
-                raf.readFully(v1)
-                if (v1[0] == 'T'.code.toByte() && v1[1] == 'A'.code.toByte() && v1[2] == 'G'.code.toByte()) {
-                    title = decodeFixedId3v1String(v1, 3, 30)
-                    artist = decodeFixedId3v1String(v1, 33, 30)
-                    album = decodeFixedId3v1String(v1, 63, 30)
-                    year = parseYear(decodeFixedId3v1String(v1, 93, 4))
-                    if (v1[125].toInt() == 0 && v1[126].toInt() != 0) {
-                        trackNum = v1[126].toInt() and 0xFF
-                    }
-                }
-            }
-        }
-
-        if (durationMs == null || durationMs <= 0L) {
-            durationMs = estimateMp3DurationMs(file)
-        }
-
         return EmbeddedAudioTags(
             title = title,
             artist = artist,
@@ -512,90 +727,109 @@ object AudioTagCodec {
         )
     }
 
-    private fun parseExistingId3v2Frames(file: File): List<RawId3Frame> {
-        RandomAccessFile(file, "r").use { raf ->
-            if (raf.length() < 10L) return emptyList()
-            val hdr = ByteArray(10)
-            raf.readFully(hdr)
-            if (hdr[0] != 'I'.code.toByte() || hdr[1] != 'D'.code.toByte() || hdr[2] != '3'.code.toByte()) {
-                return emptyList()
-            }
-            val version = hdr[3].toInt() and 0xFF
-            if (version !in 2..4) return emptyList()
-            val flags = hdr[5].toInt() and 0xFF
-            val tagSize = decodeSynchsafeInt(hdr, 6)
-            if (tagSize <= 0 || 10L + tagSize > raf.length()) return emptyList()
+    private fun parseExistingId3v2Frames(file: File): List<RawId3Frame> =
+        FileInputStream(file).use { parseExistingId3v2Frames(FileChannelByteSource(it.channel)) }
 
-            var tagBody = ByteArray(tagSize)
-            raf.readFully(tagBody)
-
-            val tagUnsync = (flags and 0x80) != 0
-            if (tagUnsync && version <= 3) {
-                tagBody = removeUnsynchronisation(tagBody)
-            }
-
-            var pos = 0
-            if ((flags and 0x40) != 0 && pos + 4 <= tagBody.size) {
-                val extSkip = if (version == 4) {
-                    decodeSynchsafeInt(tagBody, pos).coerceAtLeast(4)
-                } else {
-                    4 + readInt32BE(tagBody, pos).coerceAtLeast(0)
-                }
-                pos += extSkip
-            }
-
-            val out = ArrayList<RawId3Frame>()
-            while (pos < tagBody.size) {
-                if (tagBody[pos].toInt() == 0) break // Padding reached
-                if (version == 2) {
-                    if (pos + 6 > tagBody.size) break
-                    val id = String(tagBody, pos, 3, Charsets.ISO_8859_1)
-                    if (!id.all { it in 'A'..'Z' || it in '0'..'9' }) break
-                    val fSize = ((tagBody[pos + 3].toInt() and 0xFF) shl 16) or
-                        ((tagBody[pos + 4].toInt() and 0xFF) shl 8) or
-                        (tagBody[pos + 5].toInt() and 0xFF)
-                    pos += 6
-                    if (fSize <= 0 || pos + fSize > tagBody.size) break
-                    val payload = tagBody.copyOfRange(pos, pos + fSize)
-                    pos += fSize
-                    out.add(RawId3Frame(id, payload))
-                } else {
-                    if (pos + 10 > tagBody.size) break
-                    val id = String(tagBody, pos, 4, Charsets.ISO_8859_1)
-                    if (!id.all { it in 'A'..'Z' || it in '0'..'9' }) break
-                    val fSize = if (version == 4) {
-                        decodeSynchsafeInt(tagBody, pos + 4)
-                    } else {
-                        readInt32BE(tagBody, pos + 4)
-                    }
-                    val flag2 = tagBody[pos + 9].toInt() and 0xFF
-                    pos += 10
-                    if (fSize < 0 || pos + fSize > tagBody.size) break
-                    if (fSize == 0) continue
-
-                    var payload = tagBody.copyOfRange(pos, pos + fSize)
-                    pos += fSize
-
-                    if (version == 4) {
-                        var subOffset = 0
-                        if ((flag2 and 0x40) != 0 && subOffset + 1 <= payload.size) {
-                            subOffset += 1 // Grouping identity byte
-                        }
-                        if ((flag2 and 0x01) != 0 && subOffset + 4 <= payload.size) {
-                            subOffset += 4 // Data length indicator
-                        }
-                        if (subOffset > 0) {
-                            payload = payload.copyOfRange(subOffset, payload.size)
-                        }
-                        if ((flag2 and 0x02) != 0 || tagUnsync) {
-                            payload = removeUnsynchronisation(payload)
-                        }
-                    }
-                    out.add(RawId3Frame(id, payload))
-                }
-            }
-            return out
+    private fun parseExistingId3v2Frames(source: SeekableByteSource): List<RawId3Frame> {
+        if (source.size < 10L) return emptyList()
+        val hdr = ByteArray(10)
+        if (!source.readExactAt(0L, hdr)) return emptyList()
+        if (hdr[0] != 'I'.code.toByte() || hdr[1] != 'D'.code.toByte() || hdr[2] != '3'.code.toByte()) {
+            return emptyList()
         }
+        val tagSize = decodeSynchsafeInt(hdr, 6)
+        if (tagSize <= 0 || tagSize > 32 * 1024 * 1024 || 10L + tagSize.toLong() > source.size) return emptyList()
+        val rawBody = ByteArray(tagSize)
+        if (!source.readExactAt(10L, rawBody)) return emptyList()
+        return parseId3v2HeaderAndBody(hdr, rawBody)
+    }
+
+    internal fun parseId3v2HeaderAndBody(hdr: ByteArray, rawTagBody: ByteArray): List<RawId3Frame> {
+        val version = hdr[3].toInt() and 0xFF
+        if (version !in 2..4) return emptyList()
+        val flags = hdr[5].toInt() and 0xFF
+
+        val tagUnsync = (flags and 0x80) != 0
+        val tagBody = if (tagUnsync && version <= 3) {
+            removeUnsynchronisation(rawTagBody)
+        } else {
+            rawTagBody
+        }
+
+        var pos = 0
+        if ((flags and 0x40) != 0) {
+            if (pos + 4 > tagBody.size) return emptyList()
+            val extSkipLong = if (version == 4) {
+                decodeSynchsafeInt(tagBody, pos).toLong().coerceAtLeast(4L)
+            } else {
+                4L + readUInt32BE(tagBody, pos)
+            }
+            if (extSkipLong < 4L || extSkipLong > (tagBody.size - pos).toLong()) return emptyList()
+            pos += extSkipLong.toInt()
+        }
+
+        val out = ArrayList<RawId3Frame>()
+        while (pos < tagBody.size) {
+            if (tagBody[pos].toInt() == 0) break // Padding reached
+            if (version == 2) {
+                if (pos + 6 > tagBody.size) break
+                val id = String(tagBody, pos, 3, Charsets.ISO_8859_1)
+                if (!id.all { it in 'A'..'Z' || it in '0'..'9' }) break
+                val fSize = ((tagBody[pos + 3].toInt() and 0xFF) shl 16) or
+                    ((tagBody[pos + 4].toInt() and 0xFF) shl 8) or
+                    (tagBody[pos + 5].toInt() and 0xFF)
+                pos += 6
+                if (fSize <= 0 || fSize > tagBody.size - pos) break
+                val payload = tagBody.copyOfRange(pos, pos + fSize)
+                pos += fSize
+                out.add(RawId3Frame(id, payload))
+            } else {
+                if (pos + 10 > tagBody.size) break
+                val id = String(tagBody, pos, 4, Charsets.ISO_8859_1)
+                if (!id.all { it in 'A'..'Z' || it in '0'..'9' }) break
+                val fSizeLong = if (version == 4) {
+                    decodeSynchsafeInt(tagBody, pos + 4).toLong()
+                } else {
+                    readUInt32BE(tagBody, pos + 4)
+                }
+                val flag2 = tagBody[pos + 9].toInt() and 0xFF
+                pos += 10
+                if (fSizeLong < 0L || fSizeLong > (tagBody.size - pos).toLong()) break
+                val fSize = fSizeLong.toInt()
+                if (fSize == 0) continue
+
+                var payload = tagBody.copyOfRange(pos, pos + fSize)
+                pos += fSize
+
+                if (version == 3) {
+                    // ID3v2.3: 0x80 = compression, 0x40 = encryption, 0x20 = grouping identity
+                    if ((flag2 and 0xC0) != 0) continue
+                    if ((flag2 and 0x20) != 0) {
+                        if (payload.isEmpty()) continue
+                        payload = payload.copyOfRange(1, payload.size)
+                    }
+                } else if (version == 4) {
+                    // ID3v2.4: 0x08 = compression, 0x04 = encryption, 0x40 = grouping, 0x02 = unsync, 0x01 = data len
+                    if ((flag2 and 0x0C) != 0) continue
+                    if ((flag2 and 0x02) != 0 || tagUnsync) {
+                        payload = removeUnsynchronisation(payload)
+                    }
+                    var subOffset = 0
+                    if ((flag2 and 0x40) != 0) {
+                        subOffset += 1 // Grouping identity byte
+                    }
+                    if ((flag2 and 0x01) != 0) {
+                        subOffset += 4 // Data length indicator
+                    }
+                    if (subOffset > payload.size) continue
+                    if (subOffset > 0) {
+                        payload = payload.copyOfRange(subOffset, payload.size)
+                    }
+                }
+                out.add(RawId3Frame(id, payload))
+            }
+        }
+        return out
     }
 
     private fun writeMp3File(sourceFile: File, destFile: File, spec: TagWriteSpec) {
@@ -796,61 +1030,66 @@ object AudioTagCodec {
         return out.toByteArray()
     }
 
-    private fun estimateMp3DurationMs(file: File): Long? {
-        val (audioStart, audioEnd) = locateMp3AudioBounds(file)
+    private fun estimateMp3DurationMs(source: SeekableByteSource): Long? {
+        val (audioStart, audioEnd) = locateMp3AudioBounds(source)
         val audioBytes = audioEnd - audioStart
         if (audioBytes < 4L) return null
-        RandomAccessFile(file, "r").use { raf ->
-            raf.seek(audioStart)
-            val probe = ByteArray(minOf(audioBytes, 8192L).toInt())
-            raf.readFully(probe)
-            for (i in 0..probe.size - 4) {
-                val b0 = probe[i].toInt() and 0xFF
-                val b1 = probe[i + 1].toInt() and 0xFF
-                if (b0 != 0xFF || (b1 and 0xE0) != 0xE0) continue
-                val versionBits = (b1 ushr 3) and 0x03
-                val layerBits = (b1 ushr 1) and 0x03
-                if (versionBits == 1 || layerBits != 1) continue // MPEG Layer III
-                val b2 = probe[i + 2].toInt() and 0xFF
-                val bitrateIdx = (b2 ushr 4) and 0x0F
-                val srIdx = (b2 ushr 2) and 0x03
-                if (bitrateIdx == 0 || bitrateIdx == 15 || srIdx == 3) continue
+        val probeLen = minOf(audioBytes, 8192L).toInt()
+        val probe = ByteArray(probeLen)
+        val n = source.readAt(audioStart, probe, 0, probeLen)
+        if (n < 4) return null
+        val slice = if (n == probe.size) probe else probe.copyOf(n)
+        return estimateMp3DurationFromProbe(slice, audioBytes)
+    }
 
-                val isMpeg1 = versionBits == 3
-                val sampleRate = when (srIdx) {
-                    0 -> if (isMpeg1) 44100 else if (versionBits == 2) 22050 else 11025
-                    1 -> if (isMpeg1) 48000 else if (versionBits == 2) 24000 else 12000
-                    else -> if (isMpeg1) 32000 else if (versionBits == 2) 16000 else 8000
-                }
-                val bitrateKbps = if (isMpeg1) {
-                    intArrayOf(0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320)[bitrateIdx]
-                } else {
-                    intArrayOf(0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)[bitrateIdx]
-                }
-                val samplesPerFrame = if (isMpeg1) 1152L else 576L
+    private fun estimateMp3DurationFromProbe(probe: ByteArray, audioBytes: Long): Long? {
+        if (probe.size < 4) return null
+        for (i in 0..probe.size - 4) {
+            val b0 = probe[i].toInt() and 0xFF
+            val b1 = probe[i + 1].toInt() and 0xFF
+            if (b0 != 0xFF || (b1 and 0xE0) != 0xE0) continue
+            val versionBits = (b1 ushr 3) and 0x03
+            val layerBits = (b1 ushr 1) and 0x03
+            if (versionBits == 1 || layerBits != 1) continue // MPEG Layer III
+            val b2 = probe[i + 2].toInt() and 0xFF
+            val bitrateIdx = (b2 ushr 4) and 0x0F
+            val srIdx = (b2 ushr 2) and 0x03
+            if (bitrateIdx == 0 || bitrateIdx == 15 || srIdx == 3) continue
 
-                // Check for Xing / Info VBR frame count header inside first frame
-                val channelMode = (probe[i + 3].toInt() ushr 6) and 0x03
-                val xingOffset = i + 4 + if (isMpeg1) {
-                    if (channelMode == 3) 17 else 32
-                } else {
-                    if (channelMode == 3) 9 else 17
-                }
-                if (xingOffset + 12 <= probe.size) {
-                    val tag = String(probe, xingOffset, 4, Charsets.ISO_8859_1)
-                    if (tag == "Xing" || tag == "Info") {
-                        val xingFlags = readInt32BE(probe, xingOffset + 4)
-                        if ((xingFlags and 0x01) != 0) {
-                            val totalFrames = readUInt32BE(probe, xingOffset + 8)
-                            if (totalFrames > 0L) {
-                                return (totalFrames * samplesPerFrame * 1000L) / sampleRate
-                            }
+            val isMpeg1 = versionBits == 3
+            val sampleRate = when (srIdx) {
+                0 -> if (isMpeg1) 44100 else if (versionBits == 2) 22050 else 11025
+                1 -> if (isMpeg1) 48000 else if (versionBits == 2) 24000 else 12000
+                else -> if (isMpeg1) 32000 else if (versionBits == 2) 16000 else 8000
+            }
+            val bitrateKbps = if (isMpeg1) {
+                intArrayOf(0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320)[bitrateIdx]
+            } else {
+                intArrayOf(0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)[bitrateIdx]
+            }
+            val samplesPerFrame = if (isMpeg1) 1152L else 576L
+
+            // Check for Xing / Info VBR frame count header inside first frame
+            val channelMode = (probe[i + 3].toInt() ushr 6) and 0x03
+            val xingOffset = i + 4 + if (isMpeg1) {
+                if (channelMode == 3) 17 else 32
+            } else {
+                if (channelMode == 3) 9 else 17
+            }
+            if (xingOffset + 12 <= probe.size) {
+                val tag = String(probe, xingOffset, 4, Charsets.ISO_8859_1)
+                if (tag == "Xing" || tag == "Info") {
+                    val xingFlags = readInt32BE(probe, xingOffset + 4)
+                    if ((xingFlags and 0x01) != 0) {
+                        val totalFrames = readUInt32BE(probe, xingOffset + 8)
+                        if (totalFrames > 0L) {
+                            return (totalFrames * samplesPerFrame * 1000L) / sampleRate
                         }
                     }
                 }
-                if (bitrateKbps > 0) {
-                    return (audioBytes * 8L) / bitrateKbps
-                }
+            }
+            if (bitrateKbps > 0 && audioBytes > 0L) {
+                return (audioBytes * 8L) / bitrateKbps
             }
         }
         return null
@@ -1224,6 +1463,122 @@ object AudioTagCodec {
         val segments: List<ByteArray>,
     )
 
+    private fun readOggTags(source: SeekableByteSource): EmbeddedAudioTags {
+        val headerIn = SeekableSourceInputStream(source, 0L)
+        val packetBaos = ByteArrayOutputStream()
+        var packetIndex = 0
+        var vc: VorbisCommentData? = null
+        var sampleRate = 48_000
+        var isOpus = false
+        var preSkip = 0
+        var maxGranule = -1L
+        var streamSerial: Int? = null
+
+        while (packetIndex < 2) {
+            val page = readNextOggPage(headerIn) ?: break
+            if (streamSerial == null) streamSerial = page.serialNumber
+            if (page.granulePosition > maxGranule) {
+                maxGranule = page.granulePosition
+            }
+            for (seg in page.segments) {
+                if (packetIndex < 2) {
+                    packetBaos.write(seg)
+                }
+                if (seg.size < 255) {
+                    if (packetIndex < 2) {
+                        val pkt = packetBaos.toByteArray()
+                        packetBaos.reset()
+                        if (packetIndex == 0) {
+                            if (pkt.size >= 19 && String(pkt, 0, 8, Charsets.ISO_8859_1) == "OpusHead") {
+                                isOpus = true
+                                sampleRate = 48_000
+                                preSkip = ((pkt[11].toInt() and 0xFF) shl 8) or (pkt[10].toInt() and 0xFF)
+                            } else if (pkt.size >= 16 && pkt[0].toInt() == 1 && String(pkt, 1, 6, Charsets.ISO_8859_1) == "vorbis") {
+                                sampleRate = ByteBuffer.wrap(pkt, 12, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                            }
+                        } else if (packetIndex == 1 && vc == null) {
+                            vc = parseOggCommentPacket(pkt)?.second
+                        }
+                    }
+                    packetIndex++
+                }
+            }
+        }
+
+        // Jump straight to tail 64 KiB to read the final OggS page granulePosition without scanning middle audio pages!
+        val tailGranule = extractTailOggMaxGranule(source, headerIn.position, streamSerial)
+        if (tailGranule > maxGranule) {
+            maxGranule = tailGranule
+        }
+
+        val durationMs = if (maxGranule > 0L && sampleRate > 0) {
+            val effectiveSamples = if (isOpus) (maxGranule - preSkip).coerceAtLeast(0L) else maxGranule
+            (effectiveSamples * 1000L) / sampleRate
+        } else {
+            null
+        }
+        return buildTagsFromVorbis(vc, externalCover = null, durationMs = durationMs)
+    }
+
+    private fun extractTailOggMaxGranule(
+        source: SeekableByteSource,
+        minStartOffset: Long,
+        expectedSerial: Int?,
+    ): Long {
+        if (source.size <= minStartOffset) return -1L
+        val tailWindow = 65_536L
+        val readStart = maxOf(minStartOffset, source.size - tailWindow)
+        val len = (source.size - readStart).toInt()
+        if (len < 27) return -1L
+        val buf = ByteArray(len)
+        val n = source.readAt(readStart, buf, 0, len)
+        if (n < 27) return -1L
+
+        var bestGranule = -1L
+        val bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN)
+        var i = 0
+        while (i <= n - 27) {
+            if (buf[i] == 'O'.code.toByte() &&
+                buf[i + 1] == 'g'.code.toByte() &&
+                buf[i + 2] == 'g'.code.toByte() &&
+                buf[i + 3] == 'S'.code.toByte() &&
+                buf[i + 4].toInt() == 0
+            ) {
+                val headerType = buf[i + 5].toInt() and 0xFF
+                val segCount = buf[i + 26].toInt() and 0xFF
+                if ((headerType and 0xF8) == 0 && i + 27 + segCount <= n) {
+                    var bodySize = 0
+                    for (s in 0 until segCount) {
+                        bodySize += buf[i + 27 + s].toInt() and 0xFF
+                    }
+                    val totalPageBytes = 27 + segCount + bodySize
+                    val granule = bb.getLong(i + 6)
+                    val serial = bb.getInt(i + 14)
+                    val expectedCrc = bb.getInt(i + 22)
+
+                    val serialMatches = expectedSerial == null || serial == expectedSerial
+                    val crcMatches = if (i + totalPageBytes <= n) {
+                        val copy = buf.copyOfRange(i, i + totalPageBytes)
+                        copy[22] = 0
+                        copy[23] = 0
+                        copy[24] = 0
+                        copy[25] = 0
+                        computeOggCrc32(copy) == expectedCrc
+                    } else {
+                        false
+                    }
+                    if (serialMatches && crcMatches) {
+                        if (granule > bestGranule) bestGranule = granule
+                        i += totalPageBytes
+                        continue
+                    }
+                }
+            }
+            i++
+        }
+        return bestGranule
+    }
+
     private fun readOggTags(input: InputStream): EmbeddedAudioTags {
         val packetBaos = ByteArrayOutputStream()
         var packetIndex = 0
@@ -1238,21 +1593,29 @@ object AudioTagCodec {
             if (page.granulePosition > maxGranule) {
                 maxGranule = page.granulePosition
             }
+            if (packetIndex >= 2) {
+                // Header & comment packets already decoded; never copy audio payload segments into packetBaos!
+                continue
+            }
             for (seg in page.segments) {
-                packetBaos.write(seg)
+                if (packetIndex < 2) {
+                    packetBaos.write(seg)
+                }
                 if (seg.size < 255) {
-                    val pkt = packetBaos.toByteArray()
-                    packetBaos.reset()
-                    if (packetIndex == 0) {
-                        if (pkt.size >= 19 && String(pkt, 0, 8, Charsets.ISO_8859_1) == "OpusHead") {
-                            isOpus = true
-                            sampleRate = 48_000
-                            preSkip = ((pkt[11].toInt() and 0xFF) shl 8) or (pkt[10].toInt() and 0xFF)
-                        } else if (pkt.size >= 16 && pkt[0].toInt() == 1 && String(pkt, 1, 6, Charsets.ISO_8859_1) == "vorbis") {
-                            sampleRate = ByteBuffer.wrap(pkt, 12, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                    if (packetIndex < 2) {
+                        val pkt = packetBaos.toByteArray()
+                        packetBaos.reset()
+                        if (packetIndex == 0) {
+                            if (pkt.size >= 19 && String(pkt, 0, 8, Charsets.ISO_8859_1) == "OpusHead") {
+                                isOpus = true
+                                sampleRate = 48_000
+                                preSkip = ((pkt[11].toInt() and 0xFF) shl 8) or (pkt[10].toInt() and 0xFF)
+                            } else if (pkt.size >= 16 && pkt[0].toInt() == 1 && String(pkt, 1, 6, Charsets.ISO_8859_1) == "vorbis") {
+                                sampleRate = ByteBuffer.wrap(pkt, 12, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                            }
+                        } else if (packetIndex == 1 && vc == null) {
+                            vc = parseOggCommentPacket(pkt)?.second
                         }
-                    } else if (packetIndex == 1 && vc == null) {
-                        vc = parseOggCommentPacket(pkt)?.second
                     }
                     packetIndex++
                 }
@@ -1386,11 +1749,17 @@ object AudioTagCodec {
             val isCont = allSegments[idx].second
             val isLastGroupPage = end == allSegments.size
             val segSlice = allSegments.subList(idx, end).map { it.first }
+            val anyPacketFinished = segSlice.any { it.size < 255 }
+            val pageGranule = when {
+                isLastGroupPage -> if (anyPacketFinished && endGranule < 0L) 0L else endGranule
+                anyPacketFinished -> 0L // RFC 3533 §6: header packet completed on this page -> granule 0 (not -1)
+                else -> -1L
+            }
             outPages.add(
                 OggPage(
                     version = 0,
                     headerType = if (isCont) 0x01 else 0x00,
-                    granulePosition = if (isLastGroupPage) endGranule else -1L,
+                    granulePosition = pageGranule,
                     serialNumber = serialNumber,
                     pageSequence = seq++,
                     segments = segSlice,
@@ -1475,7 +1844,7 @@ object AudioTagCodec {
         val headerSize: Int,
     )
 
-    private data class MemBox(
+    internal data class MemBox(
         val type: String,
         val payload: ByteArray,
     ) {
@@ -1490,15 +1859,17 @@ object AudioTagCodec {
         }
     }
 
-    private fun parseTopLevelMp4Boxes(raf: RandomAccessFile): List<Mp4BoxRef> {
-        val len = raf.length()
+    private fun parseTopLevelMp4Boxes(raf: RandomAccessFile): List<Mp4BoxRef> =
+        parseTopLevelMp4Boxes(FileChannelByteSource(raf.channel, raf.length()))
+
+    private fun parseTopLevelMp4Boxes(source: SeekableByteSource): List<Mp4BoxRef> {
+        val len = source.size
         var pos = 0L
         val boxes = ArrayList<Mp4BoxRef>()
         val hdr8 = ByteArray(8)
         val hdr8Ext = ByteArray(8)
         while (pos + 8L <= len) {
-            raf.seek(pos)
-            raf.readFully(hdr8)
+            if (!source.readExactAt(pos, hdr8)) break
             val size32 = readUInt32BE(hdr8, 0)
             val type = String(hdr8, 4, 4, Charsets.ISO_8859_1)
             val headerSize: Int
@@ -1510,7 +1881,9 @@ object AudioTagCodec {
                 }
                 1L -> {
                     if (pos + 16L > len) throw IOException("Truncated 64-bit MP4 box header at $pos")
-                    raf.readFully(hdr8Ext)
+                    if (!source.readExactAt(pos + 8L, hdr8Ext)) {
+                        throw IOException("Truncated 64-bit MP4 largesize at $pos")
+                    }
                     headerSize = 16
                     boxSize = ByteBuffer.wrap(hdr8Ext).order(ByteOrder.BIG_ENDIAN).long
                 }
@@ -1519,7 +1892,7 @@ object AudioTagCodec {
                     boxSize = size32
                 }
             }
-            if (boxSize < headerSize || pos + boxSize > len) {
+            if (boxSize < headerSize.toLong() || boxSize > len - pos) {
                 throw IOException("Invalid MP4 box '$type' size=$boxSize at offset=$pos (fileLen=$len)")
             }
             boxes.add(Mp4BoxRef(type, pos, boxSize, headerSize))
@@ -1528,30 +1901,31 @@ object AudioTagCodec {
         return boxes
     }
 
-    private fun parseMemBoxes(buf: ByteArray, start: Int = 0, end: Int = buf.size): List<MemBox> {
+    internal fun parseMemBoxes(buf: ByteArray, start: Int = 0, end: Int = buf.size): List<MemBox> {
         val out = ArrayList<MemBox>()
         var pos = start
-        while (pos + 8 <= end) {
+        while (pos >= 0 && pos <= end - 8) {
             val size32 = readUInt32BE(buf, pos)
             val type = String(buf, pos + 4, 4, Charsets.ISO_8859_1)
             val headerSize: Int
-            val boxSize: Int
+            val boxSizeLong: Long
             when (size32) {
                 0L -> {
                     headerSize = 8
-                    boxSize = end - pos
+                    boxSizeLong = (end - pos).toLong()
                 }
                 1L -> {
-                    if (pos + 16 > end) break
+                    if (pos > end - 16) break
                     headerSize = 16
-                    boxSize = ByteBuffer.wrap(buf, pos + 8, 8).order(ByteOrder.BIG_ENDIAN).long.toInt()
+                    boxSizeLong = ByteBuffer.wrap(buf, pos + 8, 8).order(ByteOrder.BIG_ENDIAN).long
                 }
                 else -> {
                     headerSize = 8
-                    boxSize = size32.toInt()
+                    boxSizeLong = size32
                 }
             }
-            if (boxSize < headerSize || pos + boxSize > end) break
+            if (boxSizeLong < headerSize.toLong() || boxSizeLong > (end - pos).toLong()) break
+            val boxSize = boxSizeLong.toInt()
             val payload = buf.copyOfRange(pos + headerSize, pos + boxSize)
             out.add(MemBox(type, payload))
             pos += boxSize
@@ -1571,84 +1945,121 @@ object AudioTagCodec {
         return minOf(4, metaPayload.size) // Standard ISO FullBox 4-byte version+flags
     }
 
-    private fun readMp4Tags(file: File): EmbeddedAudioTags {
-        RandomAccessFile(file, "r").use { raf ->
-            val topBoxes = runCatching { parseTopLevelMp4Boxes(raf) }.getOrDefault(emptyList())
-            val moovRef = topBoxes.firstOrNull { it.type == "moov" } ?: return EmbeddedAudioTags()
-            val moovPayloadSize = (moovRef.size - moovRef.headerSize).toInt()
-            if (moovPayloadSize <= 0 || moovPayloadSize > 64 * 1024 * 1024) return EmbeddedAudioTags()
+    private fun readMp4Tags(file: File): EmbeddedAudioTags =
+        FileInputStream(file).use { readMp4Tags(FileChannelByteSource(it.channel)) }
 
-            val moovPayload = ByteArray(moovPayloadSize)
-            raf.seek(moovRef.offset + moovRef.headerSize)
-            raf.readFully(moovPayload)
+    private fun readMp4Tags(source: SeekableByteSource): EmbeddedAudioTags {
+        val topBoxes = runCatching { parseTopLevelMp4Boxes(source) }.getOrDefault(emptyList())
+        val moovRef = topBoxes.firstOrNull { it.type == "moov" } ?: return EmbeddedAudioTags()
+        val moovPayloadSizeLong = moovRef.size - moovRef.headerSize.toLong()
+        if (moovPayloadSizeLong <= 0L || moovPayloadSizeLong > 64L * 1024L * 1024L) return EmbeddedAudioTags()
 
-            val moovChildren = parseMemBoxes(moovPayload)
-            val durationMs = moovChildren.firstOrNull { it.type == "mvhd" }?.let { parseMvhdDurationMs(it.payload) }
+        val moovPayload = ByteArray(moovPayloadSizeLong.toInt())
+        if (!source.readExactAt(moovRef.offset + moovRef.headerSize, moovPayload)) return EmbeddedAudioTags()
+        return parseMp4MoovPayload(moovPayload)
+    }
 
-            val udta = moovChildren.firstOrNull { it.type == "udta" }
-            val meta = udta?.let { parseMemBoxes(it.payload).firstOrNull { c -> c.type == "meta" } }
-            val ilst = meta?.let { m ->
-                val prefix = detectMetaPrefixBytes(m.payload)
-                parseMemBoxes(m.payload, prefix, m.payload.size).firstOrNull { c -> c.type == "ilst" }
+    private fun readMp4TagsFromStream(input: InputStream): EmbeddedAudioTags {
+        val hdr8 = ByteArray(8)
+        val hdr8Ext = ByteArray(8)
+        while (true) {
+            if (readFully(input, hdr8) < 8) return EmbeddedAudioTags()
+            val size32 = readUInt32BE(hdr8, 0)
+            val type = String(hdr8, 4, 4, Charsets.ISO_8859_1)
+            val headerSize: Int
+            val boxSize: Long
+            when (size32) {
+                0L -> return EmbeddedAudioTags()
+                1L -> {
+                    if (readFully(input, hdr8Ext) < 8) return EmbeddedAudioTags()
+                    headerSize = 16
+                    boxSize = ByteBuffer.wrap(hdr8Ext).order(ByteOrder.BIG_ENDIAN).long
+                }
+                else -> {
+                    headerSize = 8
+                    boxSize = size32
+                }
             }
+            val payloadSize = boxSize - headerSize.toLong()
+            if (payloadSize < 0L) return EmbeddedAudioTags()
+            if (type == "moov") {
+                if (payloadSize == 0L || payloadSize > 64L * 1024L * 1024L) return EmbeddedAudioTags()
+                val moovPayload = ByteArray(payloadSize.toInt())
+                if (readFully(input, moovPayload) < moovPayload.size) return EmbeddedAudioTags()
+                return parseMp4MoovPayload(moovPayload)
+            } else {
+                skipFully(input, payloadSize)
+            }
+        }
+    }
 
-            if (ilst == null) return EmbeddedAudioTags(durationMs = durationMs)
+    private fun parseMp4MoovPayload(moovPayload: ByteArray): EmbeddedAudioTags {
+        val moovChildren = parseMemBoxes(moovPayload)
+        val durationMs = moovChildren.firstOrNull { it.type == "mvhd" }?.let { parseMvhdDurationMs(it.payload) }
 
-            var title: String? = null
-            var artist: String? = null
-            var album: String? = null
-            var albumArtist: String? = null
-            var trackNum: Int? = null
-            var year: Int? = null
-            var lyrics: String? = null
-            var coverBytes: ByteArray? = null
-            var coverMime: String? = null
+        val udta = moovChildren.firstOrNull { it.type == "udta" }
+        val meta = udta?.let { parseMemBoxes(it.payload).firstOrNull { c -> c.type == "meta" } }
+        val ilst = meta?.let { m ->
+            val prefix = detectMetaPrefixBytes(m.payload)
+            parseMemBoxes(m.payload, prefix, m.payload.size).firstOrNull { c -> c.type == "ilst" }
+        }
 
-            for (item in parseMemBoxes(ilst.payload)) {
-                val dataBox = parseMemBoxes(item.payload).firstOrNull { it.type == "data" } ?: continue
-                if (dataBox.payload.size < 8) continue
-                val typeIndicator = readInt32BE(dataBox.payload, 0) and 0x00FFFFFF
-                val valBytes = dataBox.payload.copyOfRange(8, dataBox.payload.size)
+        if (ilst == null) return EmbeddedAudioTags(durationMs = durationMs)
 
-                when (item.type) {
-                    "${MP4_ATOM_COPY_SYM}nam" -> title = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
-                    "${MP4_ATOM_COPY_SYM}ART" -> artist = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
-                    "${MP4_ATOM_COPY_SYM}alb" -> album = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
-                    "aART" -> albumArtist = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
-                    "${MP4_ATOM_COPY_SYM}day" -> year = parseYear(String(valBytes, Charsets.UTF_8))
-                    "${MP4_ATOM_COPY_SYM}lyr" -> lyrics = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
-                    "trkn" -> {
-                        if (valBytes.size >= 4) {
-                            val num = ((valBytes[2].toInt() and 0xFF) shl 8) or (valBytes[3].toInt() and 0xFF)
-                            if (num > 0) trackNum = num
-                        }
+        var title: String? = null
+        var artist: String? = null
+        var album: String? = null
+        var albumArtist: String? = null
+        var trackNum: Int? = null
+        var year: Int? = null
+        var lyrics: String? = null
+        var coverBytes: ByteArray? = null
+        var coverMime: String? = null
+
+        for (item in parseMemBoxes(ilst.payload)) {
+            val dataBox = parseMemBoxes(item.payload).firstOrNull { it.type == "data" } ?: continue
+            if (dataBox.payload.size < 8) continue
+            val typeIndicator = readInt32BE(dataBox.payload, 0) and 0x00FFFFFF
+            val valBytes = dataBox.payload.copyOfRange(8, dataBox.payload.size)
+
+            when (item.type) {
+                "${MP4_ATOM_COPY_SYM}nam" -> title = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
+                "${MP4_ATOM_COPY_SYM}ART" -> artist = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
+                "${MP4_ATOM_COPY_SYM}alb" -> album = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
+                "aART" -> albumArtist = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
+                "${MP4_ATOM_COPY_SYM}day" -> year = parseYear(String(valBytes, Charsets.UTF_8))
+                "${MP4_ATOM_COPY_SYM}lyr" -> lyrics = String(valBytes, Charsets.UTF_8).trim().takeIf { it.isNotEmpty() }
+                "trkn" -> {
+                    if (valBytes.size >= 4) {
+                        val num = ((valBytes[2].toInt() and 0xFF) shl 8) or (valBytes[3].toInt() and 0xFF)
+                        if (num > 0) trackNum = num
                     }
-                    "covr" -> {
-                        if (valBytes.isNotEmpty() && coverBytes == null) {
-                            coverBytes = valBytes
-                            coverMime = when (typeIndicator) {
-                                14 -> "image/png"
-                                13 -> "image/jpeg"
-                                else -> CoverImage.detectImageMimeType(valBytes)
-                            }
+                }
+                "covr" -> {
+                    if (valBytes.isNotEmpty() && coverBytes == null) {
+                        coverBytes = valBytes
+                        coverMime = when (typeIndicator) {
+                            14 -> "image/png"
+                            13 -> "image/jpeg"
+                            else -> CoverImage.detectImageMimeType(valBytes)
                         }
                     }
                 }
             }
-
-            return EmbeddedAudioTags(
-                title = title,
-                artist = artist,
-                album = album,
-                albumArtist = albumArtist,
-                trackNumber = trackNum,
-                year = year,
-                lyrics = lyrics,
-                coverBytes = coverBytes,
-                coverMimeType = coverMime,
-                durationMs = durationMs,
-            )
         }
+
+        return EmbeddedAudioTags(
+            title = title,
+            artist = artist,
+            album = album,
+            albumArtist = albumArtist,
+            trackNumber = trackNum,
+            year = year,
+            lyrics = lyrics,
+            coverBytes = coverBytes,
+            coverMimeType = coverMime,
+            durationMs = durationMs,
+        )
     }
 
     private fun parseMvhdDurationMs(payload: ByteArray): Long? {
@@ -1684,8 +2095,11 @@ object AudioTagCodec {
                 ?: throw IOException("MP4 file has no moov atom")
             val firstMdatRef = topBoxes.firstOrNull { it.type == "mdat" }
 
-            val origMoovPayloadSize = (moovRef.size - moovRef.headerSize).toInt()
-            val origMoovPayload = ByteArray(origMoovPayloadSize)
+            val origMoovPayloadSizeLong = moovRef.size - moovRef.headerSize.toLong()
+            if (origMoovPayloadSizeLong <= 0L || origMoovPayloadSizeLong > 64L * 1024L * 1024L) {
+                throw IOException("MP4 moov atom size out of bounds: $origMoovPayloadSizeLong")
+            }
+            val origMoovPayload = ByteArray(origMoovPayloadSizeLong.toInt())
             raf.seek(moovRef.offset + moovRef.headerSize)
             raf.readFully(origMoovPayload)
 
@@ -1878,7 +2292,7 @@ object AudioTagCodec {
     private fun adjustStcoBox(stco: MemBox, delta: Long): MemBox {
         if (stco.payload.size < 8) return stco
         val count = readInt32BE(stco.payload, 4)
-        if (count <= 0 || 8 + count * 4 > stco.payload.size) return stco
+        if (count <= 0 || 8L + count.toLong() * 4L > stco.payload.size.toLong()) return stco
 
         val newOffsets = LongArray(count)
         var needs64BitUpgrade = false
@@ -1914,7 +2328,7 @@ object AudioTagCodec {
     private fun adjustCo64Box(co64: MemBox, delta: Long): MemBox {
         if (co64.payload.size < 8) return co64
         val count = readInt32BE(co64.payload, 4)
-        if (count <= 0 || 8 + count * 8 > co64.payload.size) return co64
+        if (count <= 0 || 8L + count.toLong() * 8L > co64.payload.size.toLong()) return co64
         val out = co64.payload.copyOf()
         val bb = ByteBuffer.wrap(out).order(ByteOrder.BIG_ENDIAN)
         for (i in 0 until count) {

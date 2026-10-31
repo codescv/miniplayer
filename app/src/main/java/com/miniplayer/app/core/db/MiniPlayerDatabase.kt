@@ -81,7 +81,15 @@ data class MetadataOverrideRow(
     val coverLocalPath: String? = null,
     val updatedAt: Long,
     val syncedToFile: Boolean = true,
-)
+) {
+    companion object {
+        /** Stored in TEXT columns when a field is explicitly cleared (`null` = not overridden). */
+        const val CLEARED_TEXT = ""
+
+        /** Stored in INTEGER columns (`track_num`, `year`) when explicitly cleared (`null` = not overridden). */
+        const val CLEARED_INT = -1
+    }
+}
 
 data class MediaItemArtistRow(
     val itemId: Long,
@@ -451,12 +459,16 @@ internal fun computeEffectiveArtistAndAlbumArtist(
     item: MediaItemRow,
     override: MetadataOverrideRow?,
 ): Pair<String, String?> {
-    val effArtist = override?.artist?.takeIf { it.isNotBlank() }
-        ?: item.rawArtist?.takeIf { it.isNotBlank() }
-        ?: item.parsedArtist?.takeIf { it.isNotBlank() }
-        ?: "未知歌手"
-    val effAlbumArtist = override?.albumArtist?.takeIf { it.isNotBlank() }
-        ?: item.rawAlbumArtist?.takeIf { it.isNotBlank() }
+    val effArtist = when (val ovArtist = override?.artist) {
+        null -> item.rawArtist?.takeIf { it.isNotBlank() }
+            ?: item.parsedArtist?.takeIf { it.isNotBlank() }
+            ?: "未知歌手"
+        else -> ovArtist.takeIf { it.isNotBlank() } ?: "未知歌手"
+    }
+    val effAlbumArtist = when (val ovAlbumArtist = override?.albumArtist) {
+        null -> item.rawAlbumArtist?.takeIf { it.isNotBlank() }
+        else -> ovAlbumArtist.takeIf { it.isNotBlank() }
+    }
     return effArtist to effAlbumArtist
 }
 

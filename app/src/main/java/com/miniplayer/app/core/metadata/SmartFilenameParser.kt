@@ -263,8 +263,8 @@ object SmartFilenameParser {
     private fun cleanAlbumFolderName(rawFolder: String): String {
         // Strip leading "[2022] " or "(2022) " year prefix/suffix on album folders if present
         return rawFolder
-            .replace(Regex("""^\[\d{4}\]\s*|\^\(\d{4}\)\s*"""), "")
-            .replace( QUALITY_BRACKET_NOISE, "")
+            .replace(Regex("""^(?:\[\d{4}\]|\(\d{4}\))\s*"""), "")
+            .replace(QUALITY_BRACKET_NOISE, "")
             .trim()
             .ifEmpty { rawFolder }
     }

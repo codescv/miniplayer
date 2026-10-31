@@ -216,5 +216,13 @@ class MetadataParsingAndM3uTest {
         assertTrue(resolved.isPracticePlaylist)
         assertEquals(listOf(1L, 2L, 4L, 3L), resolved.matchedItems.map { it.itemId })
         assertEquals(2, resolved.unmatchedCount)
+
+        // Verify `(2022) Album Name` parenthesized year prefix stripping in folder inference
+        val folderYearParsed = SmartFilenameParser.parse(
+            parentRelPath = "Polyphia/(2022) Remember That You Will Die [24bit]",
+            fileName = "02 - Playing God.flac",
+        )
+        assertEquals("Polyphia", folderYearParsed.artist)
+        assertEquals("Remember That You Will Die", folderYearParsed.album)
     }
 }

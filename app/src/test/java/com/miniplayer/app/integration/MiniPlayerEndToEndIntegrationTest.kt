@@ -405,6 +405,7 @@ class MiniPlayerEndToEndIntegrationTest {
                 readTimeoutMs: Int,
                 maxBytes: Int,
                 headOnly: Boolean,
+                totalTimeoutMs: Long,
             ): RawHttpResponse {
                 return when {
                     url.contains("musicbrainz.org/ws/2/recording") -> {
@@ -914,6 +915,7 @@ class MiniPlayerEndToEndIntegrationTest {
                 readTimeoutMs: Int,
                 maxBytes: Int,
                 headOnly: Boolean,
+                totalTimeoutMs: Long,
             ): RawHttpResponse = RawHttpResponse(404, url, "text/plain", ByteArray(0))
         },
         durationOverrides: Map<String, Long> = emptyMap(),

@@ -89,10 +89,10 @@ class DefaultMetadataEngine(
 
             val savedCoverPath = if (MetadataField.COVER in effectiveDirty) {
                 if (draft.coverBytes != null && draft.coverBytes.isNotEmpty()) {
-                    persistOverrideCover(itemId, draft.coverBytes, draft.coverMimeType)
+                    persistOverrideCover(itemId, draft.coverBytes, draft.coverMimeType) ?: existingOv?.coverLocalPath
                 } else {
                     deleteOverrideCoverFiles(itemId)
-                    null
+                    MetadataOverrideRow.CLEARED_TEXT
                 }
             } else {
                 existingOv?.coverLocalPath
@@ -100,12 +100,36 @@ class DefaultMetadataEngine(
 
             val merged = MetadataOverrideRow(
                 itemId = itemId,
-                title = if (MetadataField.TITLE in effectiveDirty) draft.title?.trim()?.takeIf { it.isNotEmpty() } else existingOv?.title,
-                artist = if (MetadataField.ARTIST in effectiveDirty) draft.artist?.trim()?.takeIf { it.isNotEmpty() } else existingOv?.artist,
-                album = if (MetadataField.ALBUM in effectiveDirty) draft.album?.trim()?.takeIf { it.isNotEmpty() } else existingOv?.album,
-                albumArtist = if (MetadataField.ALBUM_ARTIST in effectiveDirty) draft.albumArtist?.trim()?.takeIf { it.isNotEmpty() } else existingOv?.albumArtist,
-                trackNum = if (MetadataField.TRACK_NUMBER in effectiveDirty) draft.trackNumber?.takeIf { it > 0 } else existingOv?.trackNum,
-                year = if (MetadataField.YEAR in effectiveDirty) draft.year?.takeIf { it > 0 } else existingOv?.year,
+                title = if (MetadataField.TITLE in effectiveDirty) {
+                    draft.title?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
+                } else {
+                    existingOv?.title
+                },
+                artist = if (MetadataField.ARTIST in effectiveDirty) {
+                    draft.artist?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
+                } else {
+                    existingOv?.artist
+                },
+                album = if (MetadataField.ALBUM in effectiveDirty) {
+                    draft.album?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
+                } else {
+                    existingOv?.album
+                },
+                albumArtist = if (MetadataField.ALBUM_ARTIST in effectiveDirty) {
+                    draft.albumArtist?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
+                } else {
+                    existingOv?.albumArtist
+                },
+                trackNum = if (MetadataField.TRACK_NUMBER in effectiveDirty) {
+                    draft.trackNumber?.takeIf { it > 0 } ?: MetadataOverrideRow.CLEARED_INT
+                } else {
+                    existingOv?.trackNum
+                },
+                year = if (MetadataField.YEAR in effectiveDirty) {
+                    draft.year?.takeIf { it > 0 } ?: MetadataOverrideRow.CLEARED_INT
+                } else {
+                    existingOv?.year
+                },
                 coverLocalPath = savedCoverPath,
                 updatedAt = now,
                 syncedToFile = !draft.writeBackToFile,
@@ -193,18 +217,49 @@ class DefaultMetadataEngine(
                 )
                 continue
             }
-            val coverImg = ov.coverLocalPath?.let { File(it) }?.takeIf { it.isFile }?.let { f ->
-                val bytes = f.readBytes()
-                CoverImage(bytes, CoverImage.detectImageMimeType(bytes))
+            val coverField: OptionalField<CoverImage?> = when (val covPath = ov.coverLocalPath) {
+                null -> OptionalField.Unchanged
+                MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                else -> {
+                    val f = File(covPath)
+                    if (f.isFile) {
+                        val bytes = f.readBytes()
+                        OptionalField.Set(CoverImage(bytes, CoverImage.detectImageMimeType(bytes)))
+                    } else {
+                        OptionalField.Unchanged
+                    }
+                }
             }
             val spec = TagWriteSpec(
-                title = if (ov.title != null) OptionalField.Set(ov.title) else OptionalField.Unchanged,
-                artist = if (ov.artist != null) OptionalField.Set(ov.artist) else OptionalField.Unchanged,
-                album = if (ov.album != null) OptionalField.Set(ov.album) else OptionalField.Unchanged,
-                albumArtist = if (ov.albumArtist != null) OptionalField.Set(ov.albumArtist) else OptionalField.Unchanged,
-                trackNumber = if (ov.trackNum != null) OptionalField.Set(ov.trackNum) else OptionalField.Unchanged,
-                year = if (ov.year != null) OptionalField.Set(ov.year) else OptionalField.Unchanged,
-                cover = if (coverImg != null) OptionalField.Set(coverImg) else OptionalField.Unchanged,
+                title = when (val v = ov.title) {
+                    null -> OptionalField.Unchanged
+                    MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                    else -> OptionalField.Set(v)
+                },
+                artist = when (val v = ov.artist) {
+                    null -> OptionalField.Unchanged
+                    MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                    else -> OptionalField.Set(v)
+                },
+                album = when (val v = ov.album) {
+                    null -> OptionalField.Unchanged
+                    MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                    else -> OptionalField.Set(v)
+                },
+                albumArtist = when (val v = ov.albumArtist) {
+                    null -> OptionalField.Unchanged
+                    MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                    else -> OptionalField.Set(v)
+                },
+                trackNumber = when (val v = ov.trackNum) {
+                    null -> OptionalField.Unchanged
+                    else -> OptionalField.Set(v.takeIf { it > 0 })
+                },
+                year = when (val v = ov.year) {
+                    null -> OptionalField.Unchanged
+                    else -> OptionalField.Set(v.takeIf { it > 0 })
+                },
+                cover = coverField,
             )
             val ok = runCatching {
                 val (newSize, newMod) = writer.writeTags(itemRow, spec)

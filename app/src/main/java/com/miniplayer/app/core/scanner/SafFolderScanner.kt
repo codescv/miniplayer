@@ -336,14 +336,12 @@ class AndroidSafTreeDataSource(
         val uri = Uri.parse(entry.documentUri)
         if (!isVideo) {
             val binaryTags = runCatching {
-                appContext.contentResolver.openInputStream(uri)?.use { stream ->
-                    AudioTagCodec.readTags(
-                        inputStream = stream,
-                        fileNameHint = entry.displayName,
-                        mimeTypeHint = entry.mimeType,
-                        tempDir = appContext.cacheDir,
-                    )
-                }
+                AudioTagCodec.readTagsFromSafUri(
+                    context = appContext,
+                    uri = uri,
+                    fileNameHint = entry.displayName,
+                    mimeTypeHint = entry.mimeType,
+                )
             }.getOrNull()
 
             var durationMs = binaryTags?.durationMs ?: 0L
