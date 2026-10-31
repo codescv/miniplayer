@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 fun interface PhysicalTagWriter {
@@ -54,6 +56,7 @@ class DefaultMetadataEngine(
 ) : MetadataEngineContract {
 
     private val backgroundScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    private val fileWriteMutex = Mutex()
 
     init {
         repository.onActiveItemChanged = { nowPlayingItemId ->
@@ -80,207 +83,213 @@ class DefaultMetadataEngine(
         }
         if (effectiveDirty.isEmpty()) return@withContext MetadataSaveOutcome.SAVED_DB_ONLY
 
-        val now = System.currentTimeMillis()
-        val overridesToSave = ArrayList<MetadataOverrideRow>(distinctIds.size)
+        fileWriteMutex.withLock {
+            val now = System.currentTimeMillis()
+            val overridesToSave = ArrayList<MetadataOverrideRow>(distinctIds.size)
 
-        for (itemId in distinctIds) {
-            val itemRow = repository.backend.getMediaItemRow(itemId) ?: continue
-            val existingOv = repository.backend.getOverrideRow(itemId)
+            for (itemId in distinctIds) {
+                val itemRow = repository.backend.getMediaItemRow(itemId) ?: continue
+                val existingOv = repository.backend.getOverrideRow(itemId)
 
-            val savedCoverPath = if (MetadataField.COVER in effectiveDirty) {
-                if (draft.coverBytes != null && draft.coverBytes.isNotEmpty()) {
-                    persistOverrideCover(itemId, draft.coverBytes, draft.coverMimeType) ?: existingOv?.coverLocalPath
+                val savedCoverPath = if (MetadataField.COVER in effectiveDirty) {
+                    if (draft.coverBytes != null && draft.coverBytes.isNotEmpty()) {
+                        persistOverrideCover(itemId, draft.coverBytes, draft.coverMimeType) ?: existingOv?.coverLocalPath
+                    } else {
+                        deleteOverrideCoverFiles(itemId)
+                        MetadataOverrideRow.CLEARED_TEXT
+                    }
                 } else {
-                    deleteOverrideCoverFiles(itemId)
-                    MetadataOverrideRow.CLEARED_TEXT
+                    existingOv?.coverLocalPath
                 }
-            } else {
-                existingOv?.coverLocalPath
-            }
 
-            val merged = MetadataOverrideRow(
-                itemId = itemId,
-                title = if (MetadataField.TITLE in effectiveDirty) {
-                    draft.title?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
-                } else {
-                    existingOv?.title
-                },
-                artist = if (MetadataField.ARTIST in effectiveDirty) {
-                    draft.artist?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
-                } else {
-                    existingOv?.artist
-                },
-                album = if (MetadataField.ALBUM in effectiveDirty) {
-                    draft.album?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
-                } else {
-                    existingOv?.album
-                },
-                albumArtist = if (MetadataField.ALBUM_ARTIST in effectiveDirty) {
-                    draft.albumArtist?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
-                } else {
-                    existingOv?.albumArtist
-                },
-                trackNum = if (MetadataField.TRACK_NUMBER in effectiveDirty) {
-                    draft.trackNumber?.takeIf { it > 0 } ?: MetadataOverrideRow.CLEARED_INT
-                } else {
-                    existingOv?.trackNum
-                },
-                year = if (MetadataField.YEAR in effectiveDirty) {
-                    draft.year?.takeIf { it > 0 } ?: MetadataOverrideRow.CLEARED_INT
-                } else {
-                    existingOv?.year
-                },
-                coverLocalPath = savedCoverPath,
-                updatedAt = now,
-                syncedToFile = !draft.writeBackToFile,
-            )
-            overridesToSave.add(merged)
-        }
-
-        // Layer 1: Commit DB overrides & rebuild multi-artist index immediately
-        repository.backend.upsertMetadataOverrides(overridesToSave) { effArtist, effAlbumArtist ->
-            ArtistSplitter.split(effArtist, effAlbumArtist)
-        }
-        repository.refreshNow()
-
-        if (!draft.writeBackToFile) {
-            return@withContext MetadataSaveOutcome.SAVED_DB_ONLY
-        }
-
-        // Layer 2: Crash-Safe Temp-Staged SAF Physical Write-Back
-        val tagSpec = buildTagWriteSpec(draft, effectiveDirty)
-        var anyDeferred = false
-        var anyReadOnlyOrFailed = false
-        var anyWritten = false
-
-        for (ov in overridesToSave) {
-            val itemRow = repository.backend.getMediaItemRow(ov.itemId) ?: continue
-            val rootRow = repository.backend.getSafRootRow(itemRow.rootId)
-            val writableContainer = rootRow?.isWritable == true &&
-                AudioTagCodec.supportsWrite(itemRow.fileName, itemRow.mimeType) &&
-                physicalTagWriter != null
-
-            if (!writableContainer) {
-                anyReadOnlyOrFailed = true
-                // Mark synced_to_file = true so we don't endlessly retry unsupported/readonly containers
-                repository.backend.markOverrideSyncedAndUpdateStat(
-                    itemId = itemRow.itemId,
-                    sizeBytes = itemRow.sizeBytes,
-                    lastModified = itemRow.lastModified,
-                    fingerprintKey = itemRow.fingerprintKey,
+                val merged = MetadataOverrideRow(
+                    itemId = itemId,
+                    title = if (MetadataField.TITLE in effectiveDirty) {
+                        draft.title?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
+                    } else {
+                        existingOv?.title
+                    },
+                    artist = if (MetadataField.ARTIST in effectiveDirty) {
+                        draft.artist?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
+                    } else {
+                        existingOv?.artist
+                    },
+                    album = if (MetadataField.ALBUM in effectiveDirty) {
+                        draft.album?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
+                    } else {
+                        existingOv?.album
+                    },
+                    albumArtist = if (MetadataField.ALBUM_ARTIST in effectiveDirty) {
+                        draft.albumArtist?.trim()?.takeIf { it.isNotEmpty() } ?: MetadataOverrideRow.CLEARED_TEXT
+                    } else {
+                        existingOv?.albumArtist
+                    },
+                    trackNum = if (MetadataField.TRACK_NUMBER in effectiveDirty) {
+                        draft.trackNumber?.takeIf { it > 0 } ?: MetadataOverrideRow.CLEARED_INT
+                    } else {
+                        existingOv?.trackNum
+                    },
+                    year = if (MetadataField.YEAR in effectiveDirty) {
+                        draft.year?.takeIf { it > 0 } ?: MetadataOverrideRow.CLEARED_INT
+                    } else {
+                        existingOv?.year
+                    },
+                    coverLocalPath = savedCoverPath,
+                    updatedAt = now,
+                    syncedToFile = !draft.writeBackToFile,
                 )
-                continue
+                overridesToSave.add(merged)
             }
 
-            if (currentlyPlayingItemId != null && itemRow.itemId == currentlyPlayingItemId) {
-                // Leave syncedToFile = false; will flush silently when track changes!
-                anyDeferred = true
-                continue
+            // Layer 1: Commit DB overrides & rebuild multi-artist index immediately
+            repository.backend.upsertMetadataOverrides(overridesToSave) { effArtist, effAlbumArtist ->
+                ArtistSplitter.split(effArtist, effAlbumArtist)
+            }
+            repository.refreshNow()
+
+            if (!draft.writeBackToFile) {
+                return@withLock MetadataSaveOutcome.SAVED_DB_ONLY
             }
 
-            val writeOk = runCatching {
-                val (newSize, newMod) = physicalTagWriter!!.writeTags(itemRow, tagSpec)
-                val newFp = MediaRepository.buildFingerprintKey(itemRow.fileName, newSize, itemRow.durationMs)
-                repository.backend.markOverrideSyncedAndUpdateStat(itemRow.itemId, newSize, newMod, newFp)
-            }.isSuccess
+            // Layer 2: Crash-Safe Temp-Staged SAF Physical Write-Back
+            val tagSpec = buildTagWriteSpec(draft, effectiveDirty)
+            var anyDeferred = false
+            var anyReadOnlyOrFailed = false
+            var anyWritten = false
 
-            if (writeOk) {
-                anyWritten = true
-            } else {
-                anyReadOnlyOrFailed = true
+            for (ov in overridesToSave) {
+                val itemRow = repository.backend.getMediaItemRow(ov.itemId) ?: continue
+                val rootRow = repository.backend.getSafRootRow(itemRow.rootId)
+                val writableContainer = rootRow?.isWritable == true &&
+                    AudioTagCodec.supportsWrite(itemRow.fileName, itemRow.mimeType) &&
+                    physicalTagWriter != null
+
+                if (!writableContainer) {
+                    anyReadOnlyOrFailed = true
+                    // Mark synced_to_file = true so we don't endlessly retry unsupported/readonly containers
+                    repository.backend.markOverrideSyncedAndUpdateStat(
+                        itemId = itemRow.itemId,
+                        sizeBytes = itemRow.sizeBytes,
+                        lastModified = itemRow.lastModified,
+                        fingerprintKey = itemRow.fingerprintKey,
+                    )
+                    continue
+                }
+
+                if (currentlyPlayingItemId != null && itemRow.itemId == currentlyPlayingItemId) {
+                    // Leave syncedToFile = false; will flush silently when track changes!
+                    anyDeferred = true
+                    continue
+                }
+
+                val writeOk = runCatching {
+                    val (newSize, newMod) = physicalTagWriter!!.writeTags(itemRow, tagSpec)
+                    val newFp = MediaRepository.buildFingerprintKey(itemRow.fileName, newSize, itemRow.durationMs)
+                    repository.backend.markOverrideSyncedAndUpdateStat(itemRow.itemId, newSize, newMod, newFp)
+                }.isSuccess
+
+                if (writeOk) {
+                    anyWritten = true
+                } else {
+                    anyReadOnlyOrFailed = true
+                }
             }
-        }
 
-        repository.refreshNow()
-        when {
-            anyDeferred -> MetadataSaveOutcome.SAVED_DB_DEFERRED_FILE
-            anyReadOnlyOrFailed && !anyWritten -> MetadataSaveOutcome.SAVED_DB_READONLY_FALLBACK
-            anyWritten -> MetadataSaveOutcome.SAVED_DB_AND_FILE
-            else -> MetadataSaveOutcome.SAVED_DB_READONLY_FALLBACK
+            repository.refreshNow()
+            when {
+                anyDeferred -> MetadataSaveOutcome.SAVED_DB_DEFERRED_FILE
+                anyReadOnlyOrFailed && !anyWritten -> MetadataSaveOutcome.SAVED_DB_READONLY_FALLBACK
+                anyWritten -> MetadataSaveOutcome.SAVED_DB_AND_FILE
+                else -> MetadataSaveOutcome.SAVED_DB_READONLY_FALLBACK
+            }
         }
     }
 
     suspend fun flushDeferredFileWrites(currentlyPlayingItemId: Long? = null): Int = withContext(ioDispatcher) {
         val writer = physicalTagWriter ?: return@withContext 0
-        val pending = repository.backend.getUnsyncedOverrides(excludeItemId = currentlyPlayingItemId)
-        if (pending.isEmpty()) return@withContext 0
+        fileWriteMutex.withLock {
+            val pending = repository.backend.getUnsyncedOverrides(excludeItemId = currentlyPlayingItemId)
+            if (pending.isEmpty()) return@withLock 0
 
-        var flushed = 0
-        for ((itemRow, ov) in pending) {
-            val rootRow = repository.backend.getSafRootRow(itemRow.rootId)
-            if (rootRow?.isWritable != true || !AudioTagCodec.supportsWrite(itemRow.fileName, itemRow.mimeType)) {
-                repository.backend.markOverrideSyncedAndUpdateStat(
-                    itemRow.itemId,
-                    itemRow.sizeBytes,
-                    itemRow.lastModified,
-                    itemRow.fingerprintKey,
-                )
-                continue
-            }
-            val coverField: OptionalField<CoverImage?> = when (val covPath = ov.coverLocalPath) {
-                null -> OptionalField.Unchanged
-                MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
-                else -> {
-                    val f = File(covPath)
-                    if (f.isFile) {
-                        val bytes = f.readBytes()
-                        OptionalField.Set(CoverImage(bytes, CoverImage.detectImageMimeType(bytes)))
-                    } else {
-                        OptionalField.Unchanged
+            var flushed = 0
+            for ((itemRow, ov) in pending) {
+                val rootRow = repository.backend.getSafRootRow(itemRow.rootId)
+                if (rootRow?.isWritable != true || !AudioTagCodec.supportsWrite(itemRow.fileName, itemRow.mimeType)) {
+                    repository.backend.markOverrideSyncedAndUpdateStat(
+                        itemRow.itemId,
+                        itemRow.sizeBytes,
+                        itemRow.lastModified,
+                        itemRow.fingerprintKey,
+                    )
+                    continue
+                }
+                val coverField: OptionalField<CoverImage?> = when (val covPath = ov.coverLocalPath) {
+                    null -> OptionalField.Unchanged
+                    MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                    else -> {
+                        val f = File(covPath)
+                        if (f.isFile) {
+                            val bytes = f.readBytes()
+                            OptionalField.Set(CoverImage(bytes, CoverImage.detectImageMimeType(bytes)))
+                        } else {
+                            OptionalField.Unchanged
+                        }
                     }
                 }
+                val spec = TagWriteSpec(
+                    title = when (val v = ov.title) {
+                        null -> OptionalField.Unchanged
+                        MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                        else -> OptionalField.Set(v)
+                    },
+                    artist = when (val v = ov.artist) {
+                        null -> OptionalField.Unchanged
+                        MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                        else -> OptionalField.Set(v)
+                    },
+                    album = when (val v = ov.album) {
+                        null -> OptionalField.Unchanged
+                        MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                        else -> OptionalField.Set(v)
+                    },
+                    albumArtist = when (val v = ov.albumArtist) {
+                        null -> OptionalField.Unchanged
+                        MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
+                        else -> OptionalField.Set(v)
+                    },
+                    trackNumber = when (val v = ov.trackNum) {
+                        null -> OptionalField.Unchanged
+                        else -> OptionalField.Set(v.takeIf { it > 0 })
+                    },
+                    year = when (val v = ov.year) {
+                        null -> OptionalField.Unchanged
+                        else -> OptionalField.Set(v.takeIf { it > 0 })
+                    },
+                    cover = coverField,
+                )
+                val ok = runCatching {
+                    val (newSize, newMod) = writer.writeTags(itemRow, spec)
+                    val newFp = MediaRepository.buildFingerprintKey(itemRow.fileName, newSize, itemRow.durationMs)
+                    repository.backend.markOverrideSyncedAndUpdateStat(itemRow.itemId, newSize, newMod, newFp)
+                }.isSuccess
+                if (ok) flushed++
             }
-            val spec = TagWriteSpec(
-                title = when (val v = ov.title) {
-                    null -> OptionalField.Unchanged
-                    MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
-                    else -> OptionalField.Set(v)
-                },
-                artist = when (val v = ov.artist) {
-                    null -> OptionalField.Unchanged
-                    MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
-                    else -> OptionalField.Set(v)
-                },
-                album = when (val v = ov.album) {
-                    null -> OptionalField.Unchanged
-                    MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
-                    else -> OptionalField.Set(v)
-                },
-                albumArtist = when (val v = ov.albumArtist) {
-                    null -> OptionalField.Unchanged
-                    MetadataOverrideRow.CLEARED_TEXT -> OptionalField.Set(null)
-                    else -> OptionalField.Set(v)
-                },
-                trackNumber = when (val v = ov.trackNum) {
-                    null -> OptionalField.Unchanged
-                    else -> OptionalField.Set(v.takeIf { it > 0 })
-                },
-                year = when (val v = ov.year) {
-                    null -> OptionalField.Unchanged
-                    else -> OptionalField.Set(v.takeIf { it > 0 })
-                },
-                cover = coverField,
-            )
-            val ok = runCatching {
-                val (newSize, newMod) = writer.writeTags(itemRow, spec)
-                val newFp = MediaRepository.buildFingerprintKey(itemRow.fileName, newSize, itemRow.durationMs)
-                repository.backend.markOverrideSyncedAndUpdateStat(itemRow.itemId, newSize, newMod, newFp)
-            }.isSuccess
-            if (ok) flushed++
+            if (flushed > 0) repository.refreshNow()
+            flushed
         }
-        if (flushed > 0) repository.refreshNow()
-        flushed
     }
 
     override suspend fun resetMetadataOverride(itemIds: List<Long>) = withContext(ioDispatcher) {
         if (itemIds.isEmpty()) return@withContext
-        for (id in itemIds) {
-            deleteOverrideCoverFiles(id)
+        fileWriteMutex.withLock {
+            for (id in itemIds) {
+                deleteOverrideCoverFiles(id)
+            }
+            repository.backend.deleteMetadataOverrides(itemIds) { effArtist, effAlbumArtist ->
+                ArtistSplitter.split(effArtist, effAlbumArtist)
+            }
+            repository.refreshNow()
         }
-        repository.backend.deleteMetadataOverrides(itemIds) { effArtist, effAlbumArtist ->
-            ArtistSplitter.split(effArtist, effAlbumArtist)
-        }
-        repository.refreshNow()
     }
 
     override suspend fun searchOnlineCandidates(

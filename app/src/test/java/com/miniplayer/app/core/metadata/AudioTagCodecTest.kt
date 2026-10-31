@@ -592,5 +592,30 @@ class AudioTagCodecTest {
         }.array()
         val normalHdr = byteArrayOf('I'.code.toByte(), 'D'.code.toByte(), '3'.code.toByte(), 3, 0, 0, 0, 0, 0, 16)
         assertTrue(AudioTagCodec.parseId3v2HeaderAndBody(normalHdr, compressedFrameHdr).isEmpty())
+
+        // 4. Verify PosixFdByteSource (`fdsan`-safe SAF FD source) handles short/interrupted pread calls
+        //    without ever closing the underlying FileDescriptor!
+        RandomAccessFile(vorbisRewritten, "r").use { raf ->
+            val rawFd = raf.fd
+            assertTrue(rawFd.valid())
+            var preadCalls = 0
+            val posixSource = AudioTagCodec.PosixFdByteSource(
+                fd = rawFd,
+                size = vorbisRewritten.length(),
+                preadFn = { _, dest, off, len, pos ->
+                    preadCalls++
+                    if (preadCalls % 5 == 0) {
+                        throw java.io.InterruptedIOException("Simulated transient EINTR").apply { bytesTransferred = 0 }
+                    }
+                    // Simulate short POSIX kernel reads (max 19 bytes per syscall)
+                    val step = minOf(len, 19, (vorbisRewritten.length() - pos).toInt().coerceAtLeast(0))
+                    if (step <= 0) 0 else AudioTagCodec.ByteArrayByteSource(rewrittenBytes).readAt(pos, dest, off, step)
+                },
+            )
+            val posixParsed = AudioTagCodec.readTagsFromSource(posixSource, "vorbis_rewritten.ogg", "audio/ogg")
+            assertEquals("RFC3533 Compliant", posixParsed.title)
+            assertEquals(10_000L, posixParsed.durationMs)
+            assertTrue("PosixFdByteSource must NEVER close caller-owned FileDescriptor", rawFd.valid())
+        }
     }
 }
