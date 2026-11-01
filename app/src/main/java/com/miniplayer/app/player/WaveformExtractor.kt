@@ -296,15 +296,17 @@ class WaveformExtractor(private val context: Context) {
                 var inputDone = false
                 var outputDone = false
                 var safetyLoops = 0
-                while (!outputDone && accumulator.accumulatedSeconds < targetSeconds && safetyLoops < 40_000) {
+                while (!outputDone && safetyLoops < 40_000) {
                     safetyLoops++
-                    if (!extensionChecked && accumulator.accumulatedSeconds >= windowSeconds - 0.01) {
+                    if (accumulator.accumulatedSeconds >= targetSeconds) {
+                        if (extensionChecked) break
                         extensionChecked = true
                         // Window policy (§3.1): extend to 60 s only when the groove starts late.
                         if ((accumulator.activeGrooveStartSeconds() ?: 0.0) > LATE_GROOVE_START_SECONDS) {
                             targetSeconds = extendToSeconds ?: windowSeconds
                             continue
                         }
+                        break
                     }
                     if (!inputDone) {
                         val inIdx = codec.dequeueInputBuffer(4_000L)

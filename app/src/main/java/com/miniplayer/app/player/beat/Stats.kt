@@ -6,10 +6,12 @@ import kotlin.math.sqrt
 /** Small robust-statistics helpers shared by the BeatGrid v2 stages. */
 internal object Stats {
     fun percentilePositive(values: FloatArray, q: Double): Double {
-        val pos = values.filter { it > 1e-6f }
-        if (pos.isEmpty()) return 0.0
-        val sorted = pos.sorted()
-        return sorted[((sorted.size - 1) * q.coerceIn(0.0, 1.0)).toInt()].toDouble()
+        val pos = FloatArray(values.size)
+        var count = 0
+        for (v in values) if (v > 1e-6f) pos[count++] = v
+        if (count == 0) return 0.0
+        java.util.Arrays.sort(pos, 0, count)
+        return pos[((count - 1) * q.coerceIn(0.0, 1.0)).toInt()].toDouble()
     }
 
     fun percentile(values: DoubleArray, q: Double): Double {

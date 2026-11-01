@@ -102,10 +102,16 @@ internal class TonalStreamBuilder(val inputSampleRate: Int, maxSeconds: Double =
     private val chroma = FloatSink(65_536, (maxSeconds * chromaRate).toInt())
     private val bass = FloatSink(16_384, (maxSeconds * bassRate).toInt())
 
-    /** Same mono sample feeds both chroma and bass streams (mix path). */
+    /**
+     * Same mono sample feeds both streams (mix path): the bass stream is the ÷4 chroma stream
+     * decimated by another 4, so the 47-tap FIR runs once.
+     */
     fun push(x: Float) {
-        pushChroma(x)
-        pushBass(x)
+        if (chromaDecimator.push(x)) {
+            val c = chromaDecimator.lastOutput
+            chroma.add(c)
+            if (bassDecimator.push(c)) bass.add(bassDecimator.lastOutput)
+        }
     }
 
     fun pushChroma(x: Float) {
@@ -201,7 +207,22 @@ object TonalFrontEnd {
         val pLo = midiOf(CHROMA_MIN_HZ).toInt() - 1
         val pHi = midiOf(CHROMA_MAX_HZ).toInt() + 2
         val pitchCount = pHi - pLo + 1
-        val binPitch = DoubleArray(kHi + 1) { k -> if (k >= kLo) midiOf(k * binHz) else 0.0 }
+        // Per-bin tables (computed once): semitone index for whitening and the Gaussian weights to
+        // the two nearest semitones (σ = 0.35 semitone).
+        val binSemi = IntArray(kHi + 1)
+        val binQ0 = IntArray(kHi + 1)
+        val binW0 = DoubleArray(kHi + 1)
+        val binW1 = DoubleArray(kHi + 1)
+        for (k in kLo..kHi) {
+            val p = midiOf(k * binHz)
+            binSemi[k] = (kotlin.math.round(p).toInt() - pLo).coerceIn(0, pitchCount - 1)
+            val p0 = kotlin.math.floor(p).toInt()
+            binQ0[k] = p0 - pLo
+            val d0 = (p - p0) / 0.35
+            val d1 = (p - (p0 + 1)) / 0.35
+            binW0[k] = kotlin.math.exp(-0.5 * d0 * d0)
+            binW1[k] = kotlin.math.exp(-0.5 * d1 * d1)
+        }
 
         val chroma = Array(frames) { FloatArray(12) }
         val energy = FloatArray(frames)
@@ -212,49 +233,47 @@ object TonalFrontEnd {
         val magA = FloatArray(fft.bins)
         val magB = FloatArray(fft.bins)
         val logMag = DoubleArray(kHi + 1)
-        val whitened = DoubleArray(kHi + 1)
         val pitchEnergy = DoubleArray(pitchCount + 20)
+        val semiPeak = DoubleArray(pitchCount)
+        val semiMedian = DoubleArray(pitchCount)
         val medianScratch = DoubleArray(32)
 
         fun processFrame(f: Int, mag: FloatArray) {
-            for (k in kLo / 2..kHi) logMag[k] = ln(1.0 + LOG_GAMMA * mag[k] * ampScale)
-            // Per-bin whitening by a ±1-octave running median (subsampled to <= 25 points).
+            java.util.Arrays.fill(semiPeak, 0.0)
             for (k in kLo..kHi) {
-                val lo = (k / 2).coerceAtLeast(kLo / 2)
-                val hi = (k * 2).coerceAtMost(kHi)
-                val span = hi - lo
-                val count = minOf(25, span + 1)
-                for (i in 0 until count) {
-                    val idx = lo + if (count > 1) (i.toLong() * span / (count - 1)).toInt() else 0
-                    medianScratch[i] = logMag[idx]
-                }
+                val l = ln(1.0 + LOG_GAMMA * mag[k] * ampScale)
+                logMag[k] = l
+                val si = binSemi[k]
+                if (l > semiPeak[si]) semiPeak[si] = l
+            }
+            // Whitening reference: ±1-octave (±12 semitone) running median of the semitone-pooled
+            // log spectrum, applied per bin through its semitone.
+            for (si in 0 until pitchCount) {
+                val lo = (si - 12).coerceAtLeast(0)
+                val hi = (si + 12).coerceAtMost(pitchCount - 1)
+                val count = hi - lo + 1
+                System.arraycopy(semiPeak, lo, medianScratch, 0, count)
                 java.util.Arrays.sort(medianScratch, 0, count)
-                val med = medianScratch[count / 2]
-                whitened[k] = (logMag[k] - med).coerceAtLeast(0.0)
+                semiMedian[si] = medianScratch[count / 2]
             }
             java.util.Arrays.fill(pitchEnergy, 0.0)
             var total = 0.0
             for (k in kLo..kHi) {
-                val w = whitened[k]
+                val w = logMag[k] - semiMedian[binSemi[k]]
                 if (w <= 0.0) continue
-                val p = binPitch[k]
-                val p0 = kotlin.math.floor(p).toInt()
-                for (q in p0..p0 + 1) {
-                    val d = (p - q) / 0.35
-                    val g = kotlin.math.exp(-0.5 * d * d)
-                    val idx = q - pLo
-                    if (idx in 0 until pitchCount) pitchEnergy[idx] += w * g
-                }
+                val q0 = binQ0[k]
+                if (q0 in 0 until pitchCount) pitchEnergy[q0] += w * binW0[k]
+                if (q0 + 1 in 0 until pitchCount) pitchEnergy[q0 + 1] += w * binW1[k]
                 total += w
             }
             val c = chroma[f]
             for (idx in 0 until pitchCount) {
                 // Harmonic-sum salience: fundamental + 0.5·octave + 0.33·twelfth.
-                val s = pitchEnergy[idx] +
+                val sal = pitchEnergy[idx] +
                     0.5 * (if (idx + 12 < pitchCount) pitchEnergy[idx + 12] else 0.0) +
                     0.33 * (if (idx + 19 < pitchCount) pitchEnergy[idx + 19] else 0.0)
                 val pc = Math.floorMod(pLo + idx, 12)
-                c[pc] += s.toFloat()
+                c[pc] += sal.toFloat()
             }
             var norm = 0.0
             for (v in c) norm += v.toDouble() * v

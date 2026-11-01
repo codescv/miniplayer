@@ -280,7 +280,19 @@ class OnsetFluxAccumulator(
         val hasHighBand: Boolean,
     )
 
+    private var cachedEnvelopes: BandEnvelopes? = null
+    private var cachedEnvelopesCount = -1
+
+    /** Band envelopes, memoised until more PCM arrives (tempo scan and BeatGrid share them). */
     private fun buildBandEnvelopes(): BandEnvelopes? {
+        if (cachedEnvelopesCount == energyCount) return cachedEnvelopes
+        val env = computeBandEnvelopes()
+        cachedEnvelopes = env
+        cachedEnvelopesCount = energyCount
+        return env
+    }
+
+    private fun computeBandEnvelopes(): BandEnvelopes? {
         val n = energyCount
         if (n < 8) return null
 
