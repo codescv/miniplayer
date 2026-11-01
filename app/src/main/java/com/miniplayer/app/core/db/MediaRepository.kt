@@ -397,12 +397,11 @@ class MediaRepository(
             practiceSpeed = PracticeMath.clampSpeed(state.practiceSpeed),
             pitchSemitones = state.pitchSemitones.coerceIn(-6, 6),
             pitchCents = state.pitchCents.coerceIn(-50, 50),
-            bpm = state.bpm.coerceIn(30, 300),
             countInMode = state.countInMode.normalizeBeatOnly(),
-            firstDownbeatMs = state.firstDownbeatMs.coerceAtLeast(0L),
+            // BeatGrid v2: the anchor is unfolded and may legitimately be negative.
             stemMix = state.stemMix.sanitized(),
             videoZoom = state.videoZoom.coerceIn(1.0f, 4.0f),
-        )
+        ).withBpmPrecise(state.exactBpm)
         backend.upsertPracticeState(clamped, System.currentTimeMillis())
         refreshNow()
     }

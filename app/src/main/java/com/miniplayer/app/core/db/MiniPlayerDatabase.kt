@@ -7,15 +7,18 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.miniplayer.app.core.metadata.SplitArtist
 import com.miniplayer.app.core.model.AppSettings
+import com.miniplayer.app.core.model.BeatGridSource
 import com.miniplayer.app.core.model.CountInMode
 import com.miniplayer.app.core.model.LyricsSource
 import com.miniplayer.app.core.model.MountState
 import com.miniplayer.app.core.model.PracticeBookmark
+import com.miniplayer.app.core.model.PracticeMath
 import com.miniplayer.app.core.model.PracticeState
 import com.miniplayer.app.core.model.StemMixConfig
 import com.miniplayer.app.core.model.VideoSeekMode
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.roundToInt
 
 data class SafRootRow(
     val rootId: Long,
@@ -272,6 +275,66 @@ interface MediaStoreBackend {
  * Automatically falls back to [InMemoryMediaStoreBackend] when running under stubbed `android.jar`
  * unit test environments (`writableDatabase == null`) so both unit and integration tests execute seamlessly.
  */
+/**
+ * BeatGrid v2 (DB v5) columns of `track_practice_states` and the shared encode/decode rules used by
+ * both [SqliteMediaStoreBackend] and [InMemoryMediaStoreBackend]. Pure JVM so migrations are testable.
+ */
+internal object PracticeStateV5Schema {
+    const val MIN_BEATS_PER_BAR = 2
+    const val MAX_BEATS_PER_BAR = 8
+    private const val MAX_ABS_PHRASE_OFFSET = 4_096
+
+    /** Column name -> `ALTER TABLE` statement, in creation order. */
+    val COLUMN_DDL: Map<String, String> = linkedMapOf(
+        "bpm_precise" to "ALTER TABLE track_practice_states ADD COLUMN bpm_precise REAL",
+        "beats_per_bar" to "ALTER TABLE track_practice_states ADD COLUMN beats_per_bar INTEGER NOT NULL DEFAULT 4",
+        "phrase_offset_bars" to "ALTER TABLE track_practice_states ADD COLUMN phrase_offset_bars INTEGER NOT NULL DEFAULT 0",
+        "beat_grid_source" to "ALTER TABLE track_practice_states ADD COLUMN beat_grid_source INTEGER NOT NULL DEFAULT 0",
+    )
+
+    /** Statements needed to bring a table with [existingColumns] up to v5 (empty when already v5). */
+    fun missingColumnStatements(existingColumns: Set<String>): List<String> =
+        COLUMN_DDL.filterKeys { it !in existingColumns }.values.toList()
+
+    /** `bpm_precise` NULL / <= 0 / non-finite / out of sync with `bpm` -> `bpm.toDouble()`. */
+    fun decodeBpmPrecise(storedBpm: Int, rawBpmPrecise: Double?): Double {
+        val safeBpm = PracticeMath.clampBpm(storedBpm)
+        val raw = rawBpmPrecise ?: return safeBpm.toDouble()
+        if (!raw.isFinite() || raw <= 0.0) return safeBpm.toDouble()
+        val clamped = PracticeMath.clampBpmPrecise(raw)
+        return if (clamped.roundToInt() == safeBpm) clamped else safeBpm.toDouble()
+    }
+
+    /** Applies the v5 column values (or their v4 defaults when absent/NULL) onto [state]. */
+    fun decodeGridFields(
+        state: PracticeState,
+        rawBpmPrecise: Double?,
+        rawBeatsPerBar: Int?,
+        rawPhraseOffsetBars: Int?,
+        rawSourceDbValue: Int?,
+    ): PracticeState {
+        val safeBpm = PracticeMath.clampBpm(state.bpm)
+        return state.copy(
+            bpm = safeBpm,
+            bpmPrecise = decodeBpmPrecise(safeBpm, rawBpmPrecise),
+            beatsPerBar = (rawBeatsPerBar ?: 4).coerceIn(MIN_BEATS_PER_BAR, MAX_BEATS_PER_BAR),
+            phraseOffsetBars = (rawPhraseOffsetBars ?: 0).coerceIn(-MAX_ABS_PHRASE_OFFSET, MAX_ABS_PHRASE_OFFSET),
+            beatGridSource = BeatGridSource.fromDbValue(rawSourceDbValue ?: BeatGridSource.AUTO_LEGACY.dbValue),
+        )
+    }
+
+    /** Keeps `bpm` == `bpmPrecise.roundToInt()` and clamps grid fields before writing. */
+    fun normalizeForStorage(state: PracticeState): PracticeState {
+        val precise = state.exactBpm
+        return state.copy(
+            bpm = precise.roundToInt(),
+            bpmPrecise = precise,
+            beatsPerBar = state.beatsPerBar.coerceIn(MIN_BEATS_PER_BAR, MAX_BEATS_PER_BAR),
+            phraseOffsetBars = state.phraseOffsetBars.coerceIn(-MAX_ABS_PHRASE_OFFSET, MAX_ABS_PHRASE_OFFSET),
+        )
+    }
+}
+
 class MiniPlayerDatabase(
     context: Context,
     databaseName: String? = DATABASE_NAME,
@@ -279,7 +342,7 @@ class MiniPlayerDatabase(
 
     companion object {
         const val DATABASE_NAME = "miniplayer.db"
-        const val DATABASE_VERSION = 4
+        const val DATABASE_VERSION = 5
 
         val SCHEMA_STATEMENTS: List<String> = listOf(
             """
@@ -410,6 +473,10 @@ class MiniPlayerDatabase(
                 video_zoom REAL NOT NULL DEFAULT 1.0,
                 hud_dock_top INTEGER NOT NULL DEFAULT 0,
                 video_seek_mode TEXT NOT NULL DEFAULT 'AUTO',
+                bpm_precise REAL,
+                beats_per_bar INTEGER NOT NULL DEFAULT 4,
+                phrase_offset_bars INTEGER NOT NULL DEFAULT 0,
+                beat_grid_source INTEGER NOT NULL DEFAULT 0,
                 updated_at INTEGER NOT NULL
             )
             """.trimIndent(),
@@ -475,6 +542,11 @@ class MiniPlayerDatabase(
                 db.execSQL("UPDATE track_practice_states SET bpm = 120, first_downbeat_ms = 0")
             }
         }
+        if (oldVersion < 5) {
+            // v1.0.13 BeatGrid v2: additive columns only. Existing rows keep their bpm/first_downbeat_ms,
+            // default to beat_grid_source = AUTO_LEGACY (0) and are lazily re-detected on next load.
+            ensurePracticeStateV5Columns(db)
+        }
     }
 
     override fun onOpen(db: SQLiteDatabase) {
@@ -487,6 +559,15 @@ class MiniPlayerDatabase(
                 }
             }
             ensurePracticeStateV3Columns(db)
+            ensurePracticeStateV5Columns(db)
+        }
+    }
+
+    /** Idempotent: adds any missing BeatGrid v2 columns (safe to call on every open). */
+    private fun ensurePracticeStateV5Columns(db: SQLiteDatabase) {
+        val existingCols = listColumns(db, "track_practice_states") ?: return
+        for (sql in PracticeStateV5Schema.missingColumnStatements(existingCols)) {
+            runCatching { db.execSQL(sql) }
         }
     }
 
@@ -1243,6 +1324,8 @@ class SqliteMediaStoreBackend(
     }
 
     override fun upsertPracticeState(state: PracticeState, nowMs: Long) = inTransaction { db ->
+        @Suppress("NAME_SHADOWING")
+        val state = PracticeStateV5Schema.normalizeForStorage(state)
         val cv = ContentValues().apply {
             put("item_id", state.itemId)
             put("practice_speed", state.practiceSpeed.toDouble())
@@ -1256,12 +1339,16 @@ class SqliteMediaStoreBackend(
             if (state.activeAMs != null) put("active_a_ms", state.activeAMs) else putNull("active_a_ms")
             if (state.activeBMs != null) put("active_b_ms", state.activeBMs) else putNull("active_b_ms")
             put("bar_snap_enabled", if (state.barSnapEnabled) 1 else 0)
-            put("first_downbeat_ms", state.firstDownbeatMs.coerceAtLeast(0L))
+            put("first_downbeat_ms", state.firstDownbeatMs)
             put("stem_mix", state.stemMix.toStorageString())
             put("video_mirror", if (state.videoMirror) 1 else 0)
             put("video_zoom", state.videoZoom.toDouble())
             put("hud_dock_top", if (state.hudDockTop) 1 else 0)
             put("video_seek_mode", state.videoSeekMode.name)
+            put("bpm_precise", state.bpmPrecise)
+            put("beats_per_bar", state.beatsPerBar)
+            put("phrase_offset_bars", state.phraseOffsetBars)
+            put("beat_grid_source", state.beatGridSource.dbValue)
             put("updated_at", nowMs)
         }
         db.insertWithOnConflict("track_practice_states", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
@@ -1667,25 +1754,36 @@ class SqliteMediaStoreBackend(
         val barSnapIdx = c.getColumnIndex("bar_snap_enabled")
         val downbeatIdx = c.getColumnIndex("first_downbeat_ms")
         val stemMixIdx = c.getColumnIndex("stem_mix")
-        return PracticeState(
+        val bpmPreciseIdx = c.getColumnIndex("bpm_precise")
+        val beatsPerBarIdx = c.getColumnIndex("beats_per_bar")
+        val phraseOffsetIdx = c.getColumnIndex("phrase_offset_bars")
+        val gridSourceIdx = c.getColumnIndex("beat_grid_source")
+        val storedBpm = c.getInt(c.getColumnIndexOrThrow("bpm"))
+        return PracticeStateV5Schema.decodeGridFields(
+            state = PracticeState(
             itemId = c.getLong(c.getColumnIndexOrThrow("item_id")),
             practiceSpeed = c.getDouble(c.getColumnIndexOrThrow("practice_speed")).toFloat(),
             pitchSemitones = c.getInt(c.getColumnIndexOrThrow("pitch_semitones")),
             pitchCents = c.getInt(c.getColumnIndexOrThrow("pitch_cents")),
             preserveFormants = if (preserveIdx >= 0 && !c.isNull(preserveIdx)) c.getInt(preserveIdx) != 0 else true,
-            bpm = c.getInt(c.getColumnIndexOrThrow("bpm")),
+            bpm = storedBpm,
             countInMode = CountInMode.fromStoredValue(c.getString(c.getColumnIndexOrThrow("count_in_mode"))),
             preRollEnabled = c.getInt(c.getColumnIndexOrThrow("pre_roll_enabled")) != 0,
             loopEnabled = c.getInt(c.getColumnIndexOrThrow("loop_enabled")) != 0,
             activeAMs = c.optLong("active_a_ms"),
             activeBMs = c.optLong("active_b_ms"),
             barSnapEnabled = if (barSnapIdx >= 0 && !c.isNull(barSnapIdx)) c.getInt(barSnapIdx) != 0 else true,
-            firstDownbeatMs = if (downbeatIdx >= 0 && !c.isNull(downbeatIdx)) c.getLong(downbeatIdx).coerceAtLeast(0L) else 0L,
+            firstDownbeatMs = if (downbeatIdx >= 0 && !c.isNull(downbeatIdx)) c.getLong(downbeatIdx) else 0L,
             stemMix = if (stemMixIdx >= 0 && !c.isNull(stemMixIdx)) StemMixConfig.fromStorageString(c.getString(stemMixIdx)) else StemMixConfig(),
             videoMirror = c.getInt(c.getColumnIndexOrThrow("video_mirror")) != 0,
             videoZoom = c.getDouble(c.getColumnIndexOrThrow("video_zoom")).toFloat(),
             hudDockTop = c.getInt(c.getColumnIndexOrThrow("hud_dock_top")) != 0,
             videoSeekMode = runCatching { VideoSeekMode.valueOf(c.getString(c.getColumnIndexOrThrow("video_seek_mode"))) }.getOrDefault(VideoSeekMode.AUTO),
+            ),
+            rawBpmPrecise = if (bpmPreciseIdx >= 0 && !c.isNull(bpmPreciseIdx)) c.getDouble(bpmPreciseIdx) else null,
+            rawBeatsPerBar = if (beatsPerBarIdx >= 0 && !c.isNull(beatsPerBarIdx)) c.getInt(beatsPerBarIdx) else null,
+            rawPhraseOffsetBars = if (phraseOffsetIdx >= 0 && !c.isNull(phraseOffsetIdx)) c.getInt(phraseOffsetIdx) else null,
+            rawSourceDbValue = if (gridSourceIdx >= 0 && !c.isNull(gridSourceIdx)) c.getInt(gridSourceIdx) else null,
         )
     }
 
@@ -2140,10 +2238,16 @@ internal class InMemoryMediaStoreBackend : MediaStoreBackend {
 
     override fun getPracticeState(itemId: Long): PracticeState = synchronized(lock) {
         val s = practiceStates[itemId] ?: return@synchronized PracticeState(itemId = itemId)
-        s.copy(
-            countInMode = s.countInMode.normalizeBeatOnly(),
-            firstDownbeatMs = s.firstDownbeatMs.coerceAtLeast(0L),
-            stemMix = s.stemMix.sanitized(),
+        // Mirror the SQLite read path: bpm_precise NULL/<=0 falls back to bpm.toDouble().
+        PracticeStateV5Schema.decodeGridFields(
+            state = s.copy(
+                countInMode = s.countInMode.normalizeBeatOnly(),
+                stemMix = s.stemMix.sanitized(),
+            ),
+            rawBpmPrecise = s.bpmPrecise.takeIf { it > 0.0 },
+            rawBeatsPerBar = s.beatsPerBar,
+            rawPhraseOffsetBars = s.phraseOffsetBars,
+            rawSourceDbValue = s.beatGridSource.dbValue,
         )
     }
 
@@ -2151,9 +2255,8 @@ internal class InMemoryMediaStoreBackend : MediaStoreBackend {
         if (state.itemId in items) {
             // Round-trip through storage encoding to match SqliteMediaStoreBackend behavior identically
             val roundTrippedStem = StemMixConfig.fromStorageString(state.stemMix.toStorageString())
-            practiceStates[state.itemId] = state.copy(
+            practiceStates[state.itemId] = PracticeStateV5Schema.normalizeForStorage(state).copy(
                 countInMode = state.countInMode.normalizeBeatOnly(),
-                firstDownbeatMs = state.firstDownbeatMs.coerceAtLeast(0L),
                 stemMix = roundTrippedStem,
             )
         }

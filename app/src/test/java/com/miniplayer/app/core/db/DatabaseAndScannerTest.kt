@@ -9,6 +9,7 @@ import com.miniplayer.app.core.metadata.PhysicalTagWriter
 import com.miniplayer.app.core.metadata.TagWriteSpec
 import com.miniplayer.app.core.model.AddRootResult
 import com.miniplayer.app.core.model.AlbumSummary
+import com.miniplayer.app.core.model.BeatGridSource
 import com.miniplayer.app.core.model.CountInMode
 import com.miniplayer.app.core.model.LyricsSource
 import com.miniplayer.app.core.model.MetadataDraft
@@ -1321,5 +1322,114 @@ class DatabaseAndScannerTest {
         assertEquals(customMix, loaded.stemMix)
         assertEquals(CountInMode.BEAT_4, loaded.countInMode)
         assertTrue(repo.allMediaItems.value.single().hasPracticeRecord)
+    }
+
+    @Test
+    fun `test17 database v4 to v5 migration keeps rows as AUTO_LEGACY and round-trips BeatGrid v2 fields`() = runBlocking {
+        assertEquals(5, MiniPlayerDatabase.DATABASE_VERSION)
+        // v5 CREATE TABLE carries every new column with the agreed defaults.
+        val practiceDdl = MiniPlayerDatabase.SCHEMA_STATEMENTS.single { it.contains("CREATE TABLE IF NOT EXISTS track_practice_states") }
+        assertTrue(practiceDdl.contains("bpm_precise REAL"))
+        assertTrue(practiceDdl.contains("beats_per_bar INTEGER NOT NULL DEFAULT 4"))
+        assertTrue(practiceDdl.contains("phrase_offset_bars INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(practiceDdl.contains("beat_grid_source INTEGER NOT NULL DEFAULT 0"))
+
+        // ensurePracticeStateV5Columns is idempotent: all four on a v4 table, nothing on a v5 table.
+        val v4Cols = setOf("item_id", "bpm", "first_downbeat_ms", "stem_mix", "updated_at")
+        val upgrade = PracticeStateV5Schema.missingColumnStatements(v4Cols)
+        assertEquals(4, upgrade.size)
+        assertTrue(PracticeStateV5Schema.missingColumnStatements(v4Cols + PracticeStateV5Schema.COLUMN_DDL.keys).isEmpty())
+        assertEquals(
+            listOf("ALTER TABLE track_practice_states ADD COLUMN beat_grid_source INTEGER NOT NULL DEFAULT 0"),
+            PracticeStateV5Schema.missingColumnStatements(v4Cols + setOf("bpm_precise", "beats_per_bar", "phrase_offset_bars")),
+        )
+
+        // 1. Real sqlite3: v4 table with pre-existing rows -> ALTERs -> rows untouched, AUTO_LEGACY, NULL precise.
+        val sqliteBin = File("/usr/bin/sqlite3")
+        if (sqliteBin.canExecute()) {
+            val sql = buildString {
+                appendLine(
+                    "CREATE TABLE track_practice_states (item_id INTEGER PRIMARY KEY, bpm INTEGER NOT NULL DEFAULT 120, " +
+                        "first_downbeat_ms INTEGER NOT NULL DEFAULT 0, stem_mix TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL);",
+                )
+                appendLine("INSERT INTO track_practice_states (item_id, bpm, first_downbeat_ms, updated_at) VALUES (1, 128, 340, 10);")
+                appendLine("INSERT INTO track_practice_states (item_id, bpm, first_downbeat_ms, updated_at) VALUES (2, 96, 0, 11);")
+                for (stmt in upgrade) appendLine("$stmt;")
+                appendLine(
+                    "SELECT 'ROW', item_id, bpm, first_downbeat_ms, ifnull(bpm_precise, 'NULL'), beats_per_bar, " +
+                        "phrase_offset_bars, beat_grid_source FROM track_practice_states ORDER BY item_id;",
+                )
+            }
+            val proc = ProcessBuilder(sqliteBin.absolutePath, ":memory:").redirectErrorStream(true).start()
+            proc.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(sql) }
+            val out = proc.inputStream.bufferedReader(Charsets.UTF_8).readText().trim()
+            assertEquals("SQLite v4->v5 migration failed: $out", 0, proc.waitFor())
+            assertTrue("pre-existing row must be preserved, got: $out", out.contains("ROW|1|128|340|NULL|4|0|0"))
+            assertTrue("pre-existing row must be preserved, got: $out", out.contains("ROW|2|96|0|NULL|4|0|0"))
+        }
+
+        // 2. Read path for such a row: bpm_precise NULL / <= 0 -> bpm.toDouble(), source AUTO_LEGACY.
+        val legacy = PracticeStateV5Schema.decodeGridFields(
+            state = PracticeState(itemId = 1L, bpm = 128, firstDownbeatMs = 340L),
+            rawBpmPrecise = null,
+            rawBeatsPerBar = null,
+            rawPhraseOffsetBars = null,
+            rawSourceDbValue = 0,
+        )
+        assertEquals(128.0, legacy.bpmPrecise, 0.0)
+        assertEquals(128.0, legacy.exactBpm, 0.0)
+        assertEquals(4, legacy.beatsPerBar)
+        assertEquals(BeatGridSource.AUTO_LEGACY, legacy.beatGridSource)
+        assertEquals(340L, legacy.firstDownbeatMs)
+        assertEquals(96.0, PracticeStateV5Schema.decodeBpmPrecise(96, 0.0), 0.0)
+        assertEquals(96.0, PracticeStateV5Schema.decodeBpmPrecise(96, -1.0), 0.0)
+        assertEquals(96.0, PracticeStateV5Schema.decodeBpmPrecise(96, Double.NaN), 0.0)
+        // Out-of-sync precise value (integer bpm edited by an old client) -> integer wins.
+        assertEquals(140.0, PracticeStateV5Schema.decodeBpmPrecise(140, 120.4), 0.0)
+        assertEquals(120.4, PracticeStateV5Schema.decodeBpmPrecise(120, 120.4), 1e-9)
+
+        // 3. Repository round-trip (in-memory backend mirrors SQLite encode/decode).
+        val backend = InMemoryMediaStoreBackend()
+        val repo = MediaRepository(backend = backend, ioDispatcher = Dispatchers.Unconfined)
+        val ds = FakeSafTreeDataSource()
+        val scanner = SafFolderScanner(repository = repo, dataSource = ds, ioDispatcher = Dispatchers.Unconfined)
+        val treeUri = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3AMusic"
+        ds.childrenByDirDocId["primary:Music"] = mutableListOf(
+            SafChildEntry("primary:Music/Waltz.flac", "", "Waltz.flac", "audio/flac", 5_000_000L, 123L),
+        )
+        ds.probesByUri["primary:Music/Waltz.flac"] = ExtractedMediaProbe(durationMs = 200_000L, rawTitle = "Waltz")
+        scanner.addSafRootFromGrant(SafGrantInfo(treeUri, FakeSafTreeDataSource.AUTHORITY, "primary:Music", "Music", isWritable = true))
+        val item = repo.allMediaItems.value.single()
+
+        // Legacy-shaped state (bpmPrecise unset) reads back as bpm.toDouble() / AUTO_LEGACY.
+        repo.savePracticeState(PracticeState(itemId = item.itemId, bpm = 132))
+        val legacyLoaded = repo.getPracticeState(item.itemId)
+        assertEquals(132, legacyLoaded.bpm)
+        assertEquals(132.0, legacyLoaded.bpmPrecise, 0.0)
+        assertEquals(BeatGridSource.AUTO_LEGACY, legacyLoaded.beatGridSource)
+
+        // Test 9: 3/4 waltz with fractional tempo, negative (unfolded) anchor and phrase offset.
+        val waltz = PracticeState(itemId = item.itemId)
+            .withBpmPrecise(92.3871)
+            .copy(firstDownbeatMs = -412L, beatsPerBar = 3, phraseOffsetBars = 2, beatGridSource = BeatGridSource.AUTO_STEMS)
+        repo.savePracticeState(waltz)
+        val waltzLoaded = repo.getPracticeState(item.itemId)
+        assertEquals(92.3871, waltzLoaded.bpmPrecise, 1e-9)
+        assertEquals(92, waltzLoaded.bpm)
+        assertEquals(3, waltzLoaded.beatsPerBar)
+        assertEquals(2, waltzLoaded.phraseOffsetBars)
+        assertEquals(-412L, waltzLoaded.firstDownbeatMs)
+        assertEquals(BeatGridSource.AUTO_STEMS, waltzLoaded.beatGridSource)
+        val grid = waltzLoaded.beatGrid()
+        assertEquals(3, grid.beatsPerBar)
+        assertEquals(3 * 60_000.0 / 92.3871, grid.barDurationMs, 1e-9)
+        assertTrue(grid.isPhraseStart(2))
+        assertTrue(grid.isPhraseStart(-2))
+        assertFalse(grid.isPhraseStart(0))
+
+        for (source in BeatGridSource.entries) {
+            repo.savePracticeState(waltz.copy(beatGridSource = source))
+            assertEquals(source, repo.getPracticeState(item.itemId).beatGridSource)
+        }
     }
 }

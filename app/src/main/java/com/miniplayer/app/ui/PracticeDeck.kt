@@ -11,9 +11,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -306,20 +308,23 @@ fun WaveformLoopRuler(
 
             // 1b. Measure / bar vertical tick lines (every 4th bar taller/brighter, every 1st bar subtle)
             if (barBoundaries.isNotEmpty()) {
-                val stride = if (barBoundaries.size > 480) 4 else 1
+                // Dense grids (> 480 bars) only draw phrase-start ticks.
+                val phraseOnly = barBoundaries.size > 480
                 val majorColor = onSurfaceColor.copy(alpha = if (barSnapEnabled) 0.30f else 0.16f)
                 val minorColor = onSurfaceColor.copy(alpha = if (barSnapEnabled) 0.14f else 0.08f)
                 val majorStroke = 1.2.dp.toPx()
                 val minorStroke = 0.85.dp.toPx()
-                for (barIdx in barBoundaries.indices step stride) {
+                for (barIdx in barBoundaries.indices) {
                     val tMs = barBoundaries[barIdx]
-                    val tickX = ((tMs.toFloat() / safeDuration) * w).coerceIn(0f, w)
+                    // Bar index relative to the unfolded anchor (may be negative), from Double bar math.
                     val relBarIdx = if (beatGrid != null && beatGrid.barDurationMs > 1.0) {
                         ((tMs - beatGrid.firstDownbeatMs).toDouble() / beatGrid.barDurationMs).roundToInt()
                     } else {
                         barIdx
                     }
-                    val isPhraseBar = (relBarIdx % 4 == 0)
+                    val isPhraseBar = beatGrid?.isPhraseStart(relBarIdx) ?: (Math.floorMod(relBarIdx, 4) == 0)
+                    if (phraseOnly && !isPhraseBar) continue
+                    val tickX = ((tMs.toFloat() / safeDuration) * w).coerceIn(0f, w)
                     drawLine(
                         color = if (isPhraseBar) majorColor else minorColor,
                         start = Offset(tickX, if (isPhraseBar) 1.dp.toPx() else waveHeight * 0.14f),
@@ -707,6 +712,7 @@ fun PracticeDeck(
     onCancelStemOperation: () -> Unit = {},
     onToggleKeepScreenOn: () -> Unit = {},
     onSaveNewBookmark: (label: String) -> Unit = {},
+    beatGridControls: BeatGridControls = BeatGridControls(),
     modifier: Modifier = Modifier,
 ) {
     var expandedDrawer by remember { mutableStateOf(ExpandedDeckDrawer.NONE) }
@@ -806,11 +812,17 @@ fun PracticeDeck(
                     isDetectingBpm = isDetectingBpm,
                     barSnapEnabled = practiceState.barSnapEnabled,
                     firstDownbeatMs = practiceState.firstDownbeatMs,
-                    onAdjustBpm = { delta -> loopEngine.setBpm(practiceState.bpm + delta) },
+                    onAdjustBpm = { delta -> loopEngine.adjustBpmBy(delta) },
                     onTapTempo = { loopEngine.tapTempo() },
                     onAutoDetectBpm = onAutoDetectBpm,
                     onToggleBarSnap = { loopEngine.toggleBarSnap() },
                     onAlignDownbeat = { loopEngine.alignDownbeatToCurrentPosition(currentPositionMs) },
+                    bpmPrecise = practiceState.exactBpm,
+                    beatsPerBar = practiceState.beatsPerBar,
+                    beatGridSource = practiceState.beatGridSource,
+                    beatGridControls = beatGridControls,
+                    onShiftDownbeatBeats = { loopEngine.shiftDownbeatByBeats(it) },
+                    onNudgeDownbeatMs = { loopEngine.nudgeDownbeatMs(it) },
                 )
             }
 
@@ -1295,7 +1307,16 @@ internal fun BpmQuickBar(
     onToggleBarSnap: () -> Unit = {},
     onAlignDownbeat: () -> Unit = {},
     modifier: Modifier = Modifier,
+    bpmPrecise: Double = bpm.toDouble(),
+    beatsPerBar: Int = 4,
+    beatGridSource: BeatGridSource = BeatGridSource.AUTO_LEGACY,
+    beatGridControls: BeatGridControls = BeatGridControls(),
+    onShiftDownbeatBeats: (Int) -> Unit = {},
+    onNudgeDownbeatMs: (Long) -> Unit = {},
 ) {
+    val confidence = beatGridControls.detectedGrid?.confidence
+    val halfBarAmbiguous = confidence?.halfBarAmbiguous == true &&
+        beatGridSource != BeatGridSource.MANUAL
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1312,10 +1333,11 @@ internal fun BpmQuickBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                val effectiveBpm = (bpm * practiceSpeed).roundToInt()
+                val effectiveBpm = (bpmPrecise * practiceSpeed).roundToInt()
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "$bpm BPM",
+                        text = "${formatBpmForDisplay(bpmPrecise)} BPM" +
+                            if (beatsPerBar != 4) " · $beatsPerBar/4" else "",
                         style = MaterialTheme.typography.labelLarge.tnum(),
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -1411,13 +1433,168 @@ internal fun BpmQuickBar(
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
-                    text = "首拍 ${PracticeMath.formatTimeMs(firstDownbeatMs, includeTenths = true)}",
+                    text = "首拍 ${PracticeMath.formatTimeMs(
+                        firstNonNegativeDownbeatMs(firstDownbeatMs, bpmPrecise, beatsPerBar),
+                        includeTenths = true,
+                    )}" + beatGridSourceLabel(beatGridSource),
                     style = MaterialTheme.typography.labelSmall.tnum(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     softWrap = false,
                 )
             }
+
+            // BeatGrid v2 one-tap Beat-1 insurance: ±1 beat, half-bar flip (±2), ±10 ms nudge.
+            DownbeatFixRow(
+                halfBarAmbiguous = halfBarAmbiguous,
+                onShiftDownbeatBeats = onShiftDownbeatBeats,
+                onNudgeDownbeatMs = onNudgeDownbeatMs,
+            )
+
+            val pendingGrid = beatGridControls.pendingStemsGrid
+            if (pendingGrid != null) {
+                PendingStemsGridChip(
+                    pendingGrid = pendingGrid,
+                    onApply = beatGridControls.onApplyPendingStemsGrid,
+                    onDismiss = beatGridControls.onDismissPendingStemsGrid,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * BeatGrid v2 inputs for the BPM drawer that live outside [PracticeState]: the latest detector grid
+ * (for its [BeatGridConfidence]) and an offered `.stems` grid (§3.9) with its accept/dismiss actions.
+ */
+@Immutable
+data class BeatGridControls(
+    val detectedGrid: BeatGrid? = null,
+    val pendingStemsGrid: BeatGrid? = null,
+    val onApplyPendingStemsGrid: () -> Unit = {},
+    val onDismissPendingStemsGrid: () -> Unit = {},
+)
+
+/** "120.4" for fractional tempos, "120" for integral ones. */
+internal fun formatBpmForDisplay(bpm: Double): String {
+    val rounded2 = (bpm * 100.0).roundToInt() / 100.0
+    return if (abs(rounded2 - rounded2.roundToInt()) < 0.005) {
+        rounded2.roundToInt().toString()
+    } else {
+        String.format(java.util.Locale.ROOT, "%.2f", rounded2).trimEnd('0').trimEnd('.')
+    }
+}
+
+/** First bar boundary at or after 0 ms for display (the stored anchor is unfolded and may be < 0). */
+internal fun firstNonNegativeDownbeatMs(anchorMs: Long, bpm: Double, beatsPerBar: Int): Long {
+    val barMs = 60_000.0 / PracticeMath.clampBpmPrecise(bpm) * beatsPerBar.coerceIn(2, 8)
+    if (barMs <= 1.0) return anchorMs.coerceAtLeast(0L)
+    val k = kotlin.math.ceil(-anchorMs / barMs - 1e-9)
+    return (anchorMs + k * barMs).roundToInt().toLong().coerceAtLeast(0L)
+}
+
+private fun beatGridSourceLabel(source: BeatGridSource): String = when (source) {
+    BeatGridSource.MANUAL -> " · 手动"
+    BeatGridSource.AUTO_STEMS -> " · 分轨"
+    BeatGridSource.EMBEDDED_TAG -> " · 标签"
+    BeatGridSource.AUTO_MIX, BeatGridSource.AUTO_LEGACY -> ""
+}
+
+@Composable
+private fun DownbeatFixRow(
+    halfBarAmbiguous: Boolean,
+    onShiftDownbeatBeats: (Int) -> Unit,
+    onNudgeDownbeatMs: (Long) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Text(
+            text = "第1拍",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false,
+        )
+        DownbeatFixButton(label = "-1拍", description = "第一拍提前1拍") { onShiftDownbeatBeats(-1) }
+        DownbeatFixButton(label = "+1拍", description = "第一拍推后1拍") { onShiftDownbeatBeats(1) }
+        DownbeatFixButton(
+            label = "±2拍",
+            description = if (halfBarAmbiguous) {
+                "第1拍与第3拍难以区分，点按换到第3拍"
+            } else {
+                "第一拍换到第3拍（半小节翻转）"
+            },
+            highlighted = halfBarAmbiguous,
+        ) { onShiftDownbeatBeats(2) }
+        Spacer(Modifier.width(6.dp))
+        DownbeatFixButton(label = "-10ms", description = "第一拍提前10毫秒") { onNudgeDownbeatMs(-10L) }
+        DownbeatFixButton(label = "+10ms", description = "第一拍推后10毫秒") { onNudgeDownbeatMs(10L) }
+    }
+}
+
+@Composable
+private fun DownbeatFixButton(
+    label: String,
+    description: String,
+    highlighted: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val modifier = Modifier
+        .height(32.dp)
+        .semantics { contentDescription = description }
+    if (highlighted) {
+        Button(
+            onClick = onClick,
+            contentPadding = PaddingValues(horizontal = 8.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.tertiary,
+                contentColor = MaterialTheme.colorScheme.onTertiary,
+            ),
+            modifier = modifier,
+        ) {
+            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            contentPadding = PaddingValues(horizontal = 8.dp),
+            modifier = modifier,
+        ) {
+            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+        }
+    }
+}
+
+@Composable
+private fun PendingStemsGridChip(
+    pendingGrid: BeatGrid,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        AssistChip(
+            onClick = onApply,
+            label = {
+                Text(
+                    text = "检测到更准的节拍网格 (${formatBpmForDisplay(pendingGrid.bpmPrecise)}) — 应用?",
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            },
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onDismiss, modifier = Modifier.height(32.dp)) {
+            Text("忽略", style = MaterialTheme.typography.labelMedium, maxLines = 1)
         }
     }
 }

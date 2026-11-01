@@ -70,6 +70,16 @@ fun NowPlayingSheet(
     val isLoadingLyrics by viewModel.isLoadingLyrics.collectAsState()
     val detectedBpm by viewModel.detectedBpm.collectAsStateWithLifecycle()
     val isDetectingBpm by viewModel.isDetectingBpm.collectAsStateWithLifecycle()
+    val detectedBeatGrid by viewModel.detectedBeatGrid.collectAsStateWithLifecycle()
+    val pendingStemsBeatGrid by viewModel.pendingStemsBeatGrid.collectAsStateWithLifecycle()
+    val beatGridControls = remember(detectedBeatGrid, pendingStemsBeatGrid) {
+        BeatGridControls(
+            detectedGrid = detectedBeatGrid,
+            pendingStemsGrid = pendingStemsBeatGrid,
+            onApplyPendingStemsGrid = viewModel::applyPendingStemsBeatGrid,
+            onDismissPendingStemsGrid = viewModel::dismissPendingStemsBeatGrid,
+        )
+    }
     val stemAnalysisState by viewModel.stemAnalysisState.collectAsStateWithLifecycle()
 
     val playerController = viewModel.playerController
@@ -169,6 +179,7 @@ fun NowPlayingSheet(
                 detectedBpm = detectedBpm,
                 isDetectingBpm = isDetectingBpm,
                 onAutoDetectBpm = viewModel::autoDetectBpm,
+                beatGridControls = beatGridControls,
                 onToggleKeepScreenOn = {
                     viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
                 },
@@ -651,6 +662,7 @@ fun NowPlayingSheet(
                                 onDownloadStemModel = viewModel::downloadStemModelAndAnalyze,
                                 onAnalyzeTrackStems = viewModel::analyzeCurrentTrackStems,
                                 onCancelStemOperation = viewModel::cancelStemOperation,
+                                beatGridControls = beatGridControls,
                                 onToggleKeepScreenOn = {
                                     viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
                                 },

@@ -4,6 +4,7 @@ import com.miniplayer.app.core.MiniPlayerCoreProvider
 import com.miniplayer.app.core.model.AlbumSummary
 import com.miniplayer.app.core.model.ArtistSummary
 import com.miniplayer.app.core.model.BatchMatchItem
+import com.miniplayer.app.core.model.BeatGridSource
 import com.miniplayer.app.core.model.CountInMode
 import com.miniplayer.app.core.model.FolderBrowseState
 import com.miniplayer.app.core.model.M3uImportResult
@@ -56,6 +57,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.abs
 
 data class LanServerConfig(
     val port: Int = LanStudioServer.DEFAULT_PORT,
@@ -2109,13 +2111,18 @@ class LanStudioServer(
         val newSpeed = json.floatOrNull("practiceSpeed")?.let(PracticeMath::clampSpeed) ?: existing.practiceSpeed
         val newSemitones = (json.intOrNull("pitchSemitones") ?: existing.pitchSemitones).coerceIn(-6, 6)
         val newCents = (json.intOrNull("pitchCents") ?: existing.pitchCents).coerceIn(-50, 50)
-        val newBpm = (json.intOrNull("bpm") ?: existing.bpm).coerceIn(30, 300)
+        val requestedBpm = json.intOrNull("bpm")?.coerceIn(30, 300)
+        val requestedBpmPrecise = json.preciseDoubleOrNull("bpmPrecise")?.takeIf { it > 0.0 }
         val newCountIn = json.str("countInMode")?.let {
             CountInMode.fromStoredValue(it.uppercase(Locale.ROOT))
         } ?: existing.countInMode.normalizeBeatOnly()
         val newPreserveFormants = json.boolOrNull("preserveFormants") ?: existing.preserveFormants
         val newBarSnap = json.boolOrNull("barSnapEnabled") ?: existing.barSnapEnabled
-        val newFirstDownbeat = (json.longOrNull("firstDownbeatMs") ?: existing.firstDownbeatMs).coerceAtLeast(0L)
+        // BeatGrid v2: the anchor is unfolded and may be negative; no clamping/folding.
+        val newFirstDownbeat = json.longOrNull("firstDownbeatMs") ?: existing.firstDownbeatMs
+        val newBeatsPerBar = (json.intOrNull("beatsPerBar") ?: existing.beatsPerBar).coerceIn(2, 8)
+        val newPhraseOffsetBars = json.intOrNull("phraseOffsetBars") ?: existing.phraseOffsetBars
+        val requestedSource = BeatGridSource.fromNameOrNull(json.str("beatGridSource"))
         val newPreRoll = json.boolOrNull("preRollEnabled") ?: existing.preRollEnabled
         val newLoopEnabled = json.boolOrNull("loopEnabled") ?: existing.loopEnabled
         val newVideoMirror = json.boolOrNull("videoMirror") ?: existing.videoMirror
@@ -2138,12 +2145,24 @@ class LanStudioServer(
             null
         }
 
-        val updated = existing.copy(
+        // `bpmPrecise` wins; a plain integer `bpm` only replaces the precise tempo when it actually
+        // changes the rounded value (the web UI always echoes `bpm`, which must not drop 120.4 -> 120).
+        val newExactBpm = when {
+            requestedBpmPrecise != null -> PracticeMath.clampBpmPrecise(requestedBpmPrecise)
+            requestedBpm != null && requestedBpm != existing.bpm -> requestedBpm.toDouble()
+            else -> existing.exactBpm
+        }
+        val gridEdited = abs(newExactBpm - existing.exactBpm) > 1e-6 ||
+            newFirstDownbeat != existing.firstDownbeatMs ||
+            newBeatsPerBar != existing.beatsPerBar ||
+            newPhraseOffsetBars != existing.phraseOffsetBars
+        val newSource = requestedSource ?: if (gridEdited) BeatGridSource.MANUAL else existing.beatGridSource
+
+        val updated = existing.withBpmPrecise(newExactBpm).copy(
             practiceSpeed = newSpeed,
             pitchSemitones = newSemitones,
             pitchCents = newCents,
             preserveFormants = newPreserveFormants,
-            bpm = newBpm,
             countInMode = newCountIn,
             preRollEnabled = newPreRoll,
             loopEnabled = newLoopEnabled && normalizedPair != null,
@@ -2153,6 +2172,9 @@ class LanStudioServer(
             firstDownbeatMs = newFirstDownbeat,
             videoMirror = newVideoMirror,
             videoZoom = newVideoZoom,
+            beatsPerBar = newBeatsPerBar,
+            phraseOffsetBars = newPhraseOffsetBars,
+            beatGridSource = newSource,
         )
         core.library.savePracticeState(updated)
 
@@ -2881,6 +2903,10 @@ class LanStudioServer(
             "pitchCents" to JsonValue.Num(s.pitchCents),
             "preserveFormants" to JsonValue.Bool(s.preserveFormants),
             "bpm" to JsonValue.Num(s.bpm),
+            "bpmPrecise" to JsonValue.Num(s.exactBpm),
+            "beatsPerBar" to JsonValue.Num(s.beatsPerBar),
+            "phraseOffsetBars" to JsonValue.Num(s.phraseOffsetBars),
+            "beatGridSource" to JsonValue.Str(s.beatGridSource.name),
             "countInMode" to JsonValue.Str(s.countInMode.normalizeBeatOnly().name),
             "preRollEnabled" to JsonValue.Bool(s.preRollEnabled),
             "loopEnabled" to JsonValue.Bool(s.loopEnabled),
@@ -3173,4 +3199,14 @@ private class MultipartPartInputStream(
         }
         return -1
     }
+}
+
+/** Fractional number field (e.g. `bpmPrecise`), accepting JSON numbers or numeric strings. */
+internal fun JsonValue.Obj.preciseDoubleOrNull(key: String): Double? {
+    val value = when (val v = entries[key]) {
+        is JsonValue.Num -> v.toDoubleOrNull()
+        is JsonValue.Str -> v.value.trim().toDoubleOrNull()
+        else -> null
+    }
+    return value?.takeIf { it.isFinite() }
 }

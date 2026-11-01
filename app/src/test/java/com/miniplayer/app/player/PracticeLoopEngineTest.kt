@@ -9,6 +9,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.*
@@ -460,9 +461,10 @@ class PracticeLoopEngineTest {
         engine.onUserManualSeek(6_450L)
         assertEquals(6_200L, fakePort.currentPositionMs)
 
-        // 5. Calibrate first downbeat to 2500ms -> folds to 500ms and re-snaps active A/B to [4500..10500]
+        // 5. Calibrate first downbeat to 2500ms -> stored UNFOLDED (v1.0.13) and re-snaps active A/B to [4500..10500]
         engine.alignDownbeatToCurrentPosition(posMs = 2_500L)
-        assertEquals(500L, engine.practiceState.value.firstDownbeatMs)
+        assertEquals(2_500L, engine.practiceState.value.firstDownbeatMs)
+        assertEquals(BeatGridSource.MANUAL, engine.practiceState.value.beatGridSource)
         assertEquals(4_500L, engine.practiceState.value.activeAMs)
         assertEquals(10_500L, engine.practiceState.value.activeBMs)
 
@@ -500,7 +502,7 @@ class PracticeLoopEngineTest {
         // Nearest bars to 2000ms and 10000ms on 300 + k*2400 grid ([300, 2700, 5100, 7500, 9900]) are 2700ms and 9900ms!
         engine.applyAutoDetectedBeatGrid(
             BeatGrid(bpm = 100, firstBeatMs = 300L, firstDownbeatMs = 300L, beatsPerBar = 4),
-            overwriteCustomBpm = false,
+            force = false,
         )
         assertEquals(100, engine.practiceState.value.bpm)
         assertEquals(300L, engine.practiceState.value.firstDownbeatMs)
@@ -555,6 +557,188 @@ class PracticeLoopEngineTest {
         assertFalse(fakePort.lastStemMix.isUnity)
         engine.setPracticeModeActive(false)
         assertTrue(fakePort.lastStemMix.isUnity)
+    }
+
+    @Test
+    fun beatGridV2_applyAutoDetectedGridIsAtomicAndNeverOverwritesManual() {
+        engine.bindTrack(
+            state = PracticeState(itemId = 120L, bpm = 128, firstDownbeatMs = 340L), // v1.0.12 row: AUTO_LEGACY
+            isVideo = false,
+            activatePracticeMode = true,
+        )
+        persistedStates.clear()
+        val mixGrid = BeatGrid(
+            bpmPrecise = 120.4,
+            firstBeatMs = -250L,
+            firstDownbeatMs = -250L,
+            beatsPerBar = 3,
+            phraseOffsetBars = 1,
+            source = BeatGridSource.AUTO_MIX,
+        )
+        assertTrue(engine.applyAutoDetectedBeatGrid(mixGrid))
+        val s1 = engine.practiceState.value
+        assertEquals(120.4, s1.bpmPrecise, 1e-9)
+        assertEquals(120, s1.bpm)
+        assertEquals(-250L, s1.firstDownbeatMs) // unfolded, never clamped / modulo-folded
+        assertEquals(3, s1.beatsPerBar)
+        assertEquals(1, s1.phraseOffsetBars)
+        assertEquals(BeatGridSource.AUTO_MIX, s1.beatGridSource)
+        assertEquals("one atomic persisted transition", 1, persistedStates.size)
+        // Re-applying the identical grid is a no-op (no persistence churn).
+        assertFalse(engine.applyAutoDetectedBeatGrid(mixGrid))
+        assertEquals(1, persistedStates.size)
+
+        // AUTO_MIX -> AUTO_STEMS upgrade path.
+        val stemsGrid = mixGrid.copy(bpmPrecise = 120.38, firstDownbeatMs = -244L, source = BeatGridSource.AUTO_STEMS)
+        assertTrue(engine.applyAutoDetectedBeatGrid(stemsGrid))
+        assertEquals(BeatGridSource.AUTO_STEMS, engine.practiceState.value.beatGridSource)
+        // ...and a later mix-only analysis never downgrades it unless forced.
+        assertFalse(engine.applyAutoDetectedBeatGrid(mixGrid))
+        assertEquals(BeatGridSource.AUTO_STEMS, engine.practiceState.value.beatGridSource)
+
+        // Manual BPM edit marks MANUAL; auto grids never overwrite it...
+        engine.setBpm(126)
+        assertEquals(BeatGridSource.MANUAL, engine.practiceState.value.beatGridSource)
+        assertEquals(126.0, engine.practiceState.value.exactBpm, 0.0)
+        assertFalse(engine.applyAutoDetectedBeatGrid(stemsGrid.copy(bpmPrecise = 131.0)))
+        assertFalse(engine.applyAutoDetectedBeatGrid(stemsGrid, force = false))
+        engine.applyAutoDetectedBpm(140)
+        assertEquals(126, engine.practiceState.value.bpm)
+        assertEquals(BeatGridSource.MANUAL, engine.practiceState.value.beatGridSource)
+        // ...except an explicit "重新检测" (force = true).
+        assertTrue(engine.applyAutoDetectedBeatGrid(stemsGrid, force = true))
+        assertEquals(BeatGridSource.AUTO_STEMS, engine.practiceState.value.beatGridSource)
+        assertEquals(120.38, engine.practiceState.value.exactBpm, 1e-9)
+    }
+
+    @Test
+    fun beatGridV2_shiftNudgeAlignAndAdjustMarkManualWithoutFolding() {
+        engine.bindTrack(
+            state = PracticeState(itemId = 121L, barSnapEnabled = true)
+                .withBpmPrecise(120.0)
+                .copy(firstDownbeatMs = 500L, beatGridSource = BeatGridSource.AUTO_MIX, activeAMs = 4_500L, activeBMs = 12_500L, loopEnabled = true),
+            isVideo = false,
+            activatePracticeMode = true,
+        )
+        // +2 beats = half-bar flip at 120 BPM (beat = 500 ms); a loop snapped to the old grid moves with it.
+        engine.shiftDownbeatByBeats(2)
+        var s = engine.practiceState.value
+        assertEquals(1_500L, s.firstDownbeatMs)
+        assertEquals(BeatGridSource.MANUAL, s.beatGridSource)
+        assertEquals(5_500L, s.activeAMs)
+        assertEquals(13_500L, s.activeBMs)
+        assertEquals(13_500L, fakePort.scheduledBoundaryMs)
+
+        engine.shiftDownbeatByBeats(-1)
+        assertEquals(1_000L, engine.practiceState.value.firstDownbeatMs)
+        engine.shiftDownbeatByBeats(-1)
+        engine.shiftDownbeatByBeats(-1)
+        engine.shiftDownbeatByBeats(-1)
+        // Anchor may go negative: no clamping, no modulo folding.
+        assertEquals(-500L, engine.practiceState.value.firstDownbeatMs)
+
+        engine.nudgeDownbeatMs(10L)
+        engine.nudgeDownbeatMs(10L)
+        engine.nudgeDownbeatMs(-10L)
+        s = engine.practiceState.value
+        assertEquals(-490L, s.firstDownbeatMs)
+        assertEquals(3_510L, s.activeAMs) // loop followed every edit since it stayed on the grid
+
+        // ±1 BPM keeps the fractional part of a detected tempo.
+        engine.applyAutoDetectedBeatGrid(BeatGrid(bpmPrecise = 120.4, firstBeatMs = 0L, firstDownbeatMs = 0L), force = true)
+        engine.adjustBpmBy(1)
+        assertEquals(121.4, engine.practiceState.value.exactBpm, 1e-9)
+        assertEquals(121, engine.practiceState.value.bpm)
+        assertEquals(BeatGridSource.MANUAL, engine.practiceState.value.beatGridSource)
+
+        // Align on a detector grid snaps to the nearest existing beat (fixes only the bar phase)...
+        engine.applyAutoDetectedBeatGrid(BeatGrid(bpmPrecise = 120.0, firstBeatMs = 100L, firstDownbeatMs = 100L), force = true)
+        engine.alignDownbeatToCurrentPosition(posMs = 61_640L) // nearest beat: 100 + 123 * 500 = 61_600
+        assertEquals(61_600L, engine.practiceState.value.firstDownbeatMs)
+        assertEquals(BeatGridSource.MANUAL, engine.practiceState.value.beatGridSource)
+        // ...and is taken verbatim (unfolded) otherwise.
+        engine.alignDownbeatToCurrentPosition(posMs = 61_640L, snapToExistingBeat = false)
+        assertEquals(61_640L, engine.practiceState.value.firstDownbeatMs)
+    }
+
+    @Test
+    fun beatGridV2_preciseTempoHasNoLongTrackDriftAndNegativePhraseIndices() {
+        // 120.40 BPM at 3:30: integer 120 BPM would drift by ~700 ms; Double math stays exact.
+        val grid = PracticeState(itemId = 1L).withBpmPrecise(120.4).copy(firstDownbeatMs = -812L).beatGrid()
+        val bar = 4 * 60_000.0 / 120.4
+        val boundaries = grid.generateBarBoundaries(210_000L)
+        assertTrue(boundaries.first() >= 0L)
+        for (t in boundaries) {
+            val k = Math.round((t + 812.0) / bar)
+            assertEquals(-812.0 + k * bar, t.toDouble(), 0.51)
+        }
+        assertTrue(grid.isPhraseStart(0))
+        assertTrue(grid.isPhraseStart(-4))
+        assertFalse(grid.isPhraseStart(-1))
+        assertEquals(498.34, CountInMetronome.computePreciseClickIntervalMs(120.4, 1.0f), 0.01)
+    }
+
+    @Test
+    fun beatGridV2_stemsRegridPolicyFollowsDesign39() {
+        val confident = BeatGridConfidence(downbeatMargin = 6f, halfBarAmbiguous = false)
+        val weak = BeatGridConfidence(downbeatMargin = 0.5f)
+        val state = PracticeState(itemId = 5L).withBpmPrecise(120.0)
+            .copy(firstDownbeatMs = 1_000L, beatGridSource = BeatGridSource.AUTO_MIX)
+        val beat = 500L
+        // Same phase (anchor moved by whole bars + < T/4) and |Δbpm| < 0.3 -> silent.
+        val samePhase = BeatGrid(bpmPrecise = 120.2, firstBeatMs = 0L, firstDownbeatMs = 1_000L + 2 * 2_000L + beat / 4 - 5, source = BeatGridSource.AUTO_STEMS)
+        assertEquals(StemsRegridDecision.REPLACE_SILENTLY, PracticeLoopEngine.decideStemsRegrid(state, confident, samePhase))
+        // Half-bar flip on a confident grid -> offer; on a weak grid -> replace + re-snap.
+        val flipped = samePhase.copy(bpmPrecise = 120.0, firstDownbeatMs = 1_000L + 2 * beat)
+        assertEquals(StemsRegridDecision.OFFER_TO_USER, PracticeLoopEngine.decideStemsRegrid(state, confident, flipped))
+        assertEquals(StemsRegridDecision.REPLACE_AND_RESNAP, PracticeLoopEngine.decideStemsRegrid(state, weak, flipped))
+        assertEquals(StemsRegridDecision.REPLACE_AND_RESNAP, PracticeLoopEngine.decideStemsRegrid(state, null, flipped))
+        val ambiguous = confident.copy(halfBarAmbiguous = true)
+        assertEquals(StemsRegridDecision.REPLACE_AND_RESNAP, PracticeLoopEngine.decideStemsRegrid(state, ambiguous, flipped))
+        // Tempo off by >= 0.3 is never silent.
+        assertEquals(StemsRegridDecision.OFFER_TO_USER, PracticeLoopEngine.decideStemsRegrid(state, confident, samePhase.copy(bpmPrecise = 120.35)))
+        // MANUAL is never touched.
+        val manual = state.copy(beatGridSource = BeatGridSource.MANUAL)
+        assertEquals(StemsRegridDecision.KEEP_MANUAL, PracticeLoopEngine.decideStemsRegrid(manual, weak, flipped))
+    }
+
+    @Test
+    fun beatGridV2_serializedPracticeStateWriterConflatesPerItemLatestWins() {
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val dispatcher = executor.asCoroutineDispatcher()
+        val scope = CoroutineScope(SupervisorJob())
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val firstStarted = java.util.concurrent.CountDownLatch(1)
+        val written = java.util.Collections.synchronizedList(mutableListOf<PracticeState>())
+        val inFlight = java.util.concurrent.atomic.AtomicInteger(0)
+        val maxInFlight = java.util.concurrent.atomic.AtomicInteger(0)
+        try {
+            val writer = com.miniplayer.app.ui.SerializedPracticeStateWriter(scope, dispatcher) { state ->
+                val now = inFlight.incrementAndGet()
+                maxInFlight.accumulateAndGet(now) { a, b -> maxOf(a, b) }
+                if (written.isEmpty()) {
+                    firstStarted.countDown()
+                    gate.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                }
+                written += state
+                inFlight.decrementAndGet()
+            }
+            writer.submit(PracticeState(itemId = 1L, bpm = 100))
+            assertTrue(firstStarted.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            // While the first write blocks, queue several updates for two items.
+            for (bpm in 101..110) writer.submit(PracticeState(itemId = 1L, bpm = bpm))
+            writer.submit(PracticeState(itemId = 2L, bpm = 90))
+            writer.submit(PracticeState(itemId = -1L, bpm = 77)) // unbound: ignored
+            gate.countDown()
+            val deadline = System.currentTimeMillis() + 5_000L
+            while (written.size < 3 && System.currentTimeMillis() < deadline) Thread.sleep(5)
+            Thread.sleep(50)
+            assertEquals(listOf(100, 110, 90), written.map { it.bpm })
+            assertEquals(1, maxInFlight.get())
+        } finally {
+            scope.cancel()
+            executor.shutdownNow()
+        }
     }
 
     private class FakeLoopPlayerPort(override var durationMs: Long) : LoopPlayerPort {

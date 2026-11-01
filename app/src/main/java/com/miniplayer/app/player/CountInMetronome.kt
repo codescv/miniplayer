@@ -9,6 +9,7 @@ import com.miniplayer.app.core.model.PracticeMath
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlin.math.sin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -61,6 +62,21 @@ class CountInMetronome(
     fun start(
         mode: CountInMode,
         bpm: Int,
+        practiceSpeed: Float,
+        playClickSound: Boolean,
+        onComplete: () -> Unit,
+    ) = start(
+        mode = mode,
+        bpm = bpm.toDouble(),
+        practiceSpeed = practiceSpeed,
+        playClickSound = playClickSound,
+        onComplete = onComplete,
+    )
+
+    /** Count-in at the precise (fractional) tempo, e.g. `PracticeState.exactBpm`. */
+    fun start(
+        mode: CountInMode,
+        bpm: Double,
         practiceSpeed: Float,
         playClickSound: Boolean,
         onComplete: () -> Unit,
@@ -165,12 +181,12 @@ class CountInMetronome(
     }
 
     private suspend fun runFourBeatCountdown(
-        bpm: Int,
+        bpm: Double,
         practiceSpeed: Float,
         playClickSound: Boolean,
     ) {
-        val intervalMs = PracticeMath.computeClickIntervalMs(bpm, practiceSpeed)
-        val totalMs = intervalMs * 4L
+        val intervalMs = computePreciseClickIntervalMs(bpm, practiceSpeed)
+        val totalMs = (intervalMs * 4.0).roundToLong()
         val startMs = monotonicNowMs()
         var lastBeatTriggered = -1
 
@@ -193,7 +209,7 @@ class CountInMetronome(
                 remainingMs = remaining,
                 totalMs = totalMs,
             )
-            val nextBeatMs = (beatIndex + 1) * intervalMs
+            val nextBeatMs = ((beatIndex + 1) * intervalMs).roundToLong()
             val msToNextBeat = (nextBeatMs - elapsed).coerceAtLeast(1L)
             delay(minOf(24L, msToNextBeat, remaining))
         }
@@ -245,6 +261,13 @@ class CountInMetronome(
     companion object {
         private const val SAMPLE_RATE_HZ = 44_100
         private const val DURATION_MS = 45L
+
+        /** Click interval at a fractional tempo (no integer-BPM rounding), floor 80 ms. */
+        internal fun computePreciseClickIntervalMs(bpm: Double, practiceSpeed: Float): Double {
+            val safeBpm = PracticeMath.clampBpmPrecise(bpm)
+            val safeSpeed = practiceSpeed.coerceIn(0.25f, 2.00f)
+            return (60_000.0 / (safeBpm * safeSpeed)).coerceAtLeast(80.0)
+        }
 
         internal fun monotonicNowMs(): Long {
             val sys = try {

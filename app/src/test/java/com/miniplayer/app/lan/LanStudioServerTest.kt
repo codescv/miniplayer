@@ -485,6 +485,35 @@ class LanStudioServerTest {
         val bundleJson = LanJson.parseObject(httpRequest("GET", "/api/practice?itemId=$itemId").bodyUtf8)
         assertEquals(1, bundleJson.arr("bookmarks")!!.items.size)
         assertEquals(138, bundleJson.obj("state")!!.int("bpm"))
+        // BeatGrid v2 fields are exposed; an integer-only bpm edit marks the grid MANUAL.
+        assertEquals(138.0, bundleJson.obj("state")!!.preciseDoubleOrNull("bpmPrecise")!!, 1e-9)
+        assertEquals(4, bundleJson.obj("state")!!.int("beatsPerBar"))
+        assertEquals(0, bundleJson.obj("state")!!.int("phraseOffsetBars"))
+        assertEquals("MANUAL", bundleJson.obj("state")!!.str("beatGridSource"))
+
+        // 3b. Fractional tempo + 3/4 + unfolded negative anchor round-trip; echoing the same integer
+        // `bpm` afterwards must not truncate 120.4 -> 120.
+        val preciseResp = httpRequest(
+            "POST",
+            "/api/practice/state",
+            jsonBody = """{"itemId":$itemId,"bpmPrecise":120.4,"beatsPerBar":3,"phraseOffsetBars":2,"firstDownbeatMs":-250}""",
+        )
+        assertEquals(200, preciseResp.status)
+        val preciseState = LanJson.parseObject(preciseResp.bodyUtf8).obj("state")!!
+        assertEquals(120.4, preciseState.preciseDoubleOrNull("bpmPrecise")!!, 1e-9)
+        assertEquals(120, preciseState.int("bpm"))
+        assertEquals(3, preciseState.int("beatsPerBar"))
+        assertEquals(2, preciseState.int("phraseOffsetBars"))
+        assertEquals(-250L, preciseState.long("firstDownbeatMs"))
+        val echoResp = httpRequest(
+            "POST",
+            "/api/practice/state",
+            jsonBody = """{"itemId":$itemId,"bpm":120,"practiceSpeed":0.7}""",
+        )
+        assertEquals(200, echoResp.status)
+        val echoed = LanJson.parseObject(httpRequest("GET", "/api/practice?itemId=$itemId").bodyUtf8).obj("state")!!
+        assertEquals(120.4, echoed.preciseDoubleOrNull("bpmPrecise")!!, 1e-9)
+        assertEquals(3, echoed.int("beatsPerBar"))
 
         // 4. Delete bookmark via DELETE /api/practice/bookmark?bookmarkId=...
         val delResp = httpRequest("DELETE", "/api/practice/bookmark?bookmarkId=$bookmarkId")

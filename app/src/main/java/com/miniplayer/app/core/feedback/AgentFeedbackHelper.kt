@@ -114,7 +114,7 @@ object AgentFeedbackHelper {
         val stripped = SemanticVersion.stripDebugSuffix(versionName)
             ?: versionName?.trim().orEmpty()
         val bare = stripped.trim().removePrefix("v").removePrefix("V").trim()
-        return if (bare.isEmpty()) "v1.0.12" else "v$bare"
+        return if (bare.isEmpty()) "v1.0.13" else "v$bare"
     }
 
     fun sanitizeSummary(summary: String?, detailsFallback: String? = null): String {
@@ -131,6 +131,16 @@ object AgentFeedbackHelper {
             return truncateWithEllipsis(firstDetailLine, FALLBACK_SUMMARY_LENGTH)
         }
         return DEFAULT_SUMMARY
+    }
+
+    /** "128" for integral tempos, "120.4" / "120.39" for fractional ones. */
+    internal fun formatPreciseBpm(bpm: Double): String {
+        val rounded = Math.round(bpm * 100.0) / 100.0
+        return if (rounded == Math.rint(rounded)) {
+            rounded.toLong().toString()
+        } else {
+            String.format(Locale.US, "%.2f", rounded).trimEnd('0').trimEnd('.')
+        }
     }
 
     fun formatSubject(
@@ -186,7 +196,11 @@ object AgentFeedbackHelper {
                 } else {
                     "未设循环"
                 }
-                appendLine("练习状态: 速度 $speedStr · 变调 $pitchStr · BPM ${ps.bpm} · $loopStr")
+                appendLine("练习状态: 速度 $speedStr · 变调 $pitchStr · BPM ${formatPreciseBpm(ps.exactBpm)} · $loopStr")
+                appendLine(
+                    "节拍网格: ${String.format(Locale.US, "%.3f", ps.exactBpm)} BPM · ${ps.beatsPerBar}/4 · " +
+                        "第一拍 ${ps.firstDownbeatMs}ms · 乐句偏移 ${ps.phraseOffsetBars} · 来源 ${ps.beatGridSource.name}",
+                )
             } else if (track != null) {
                 appendLine("播放模式: 听歌模式")
             }

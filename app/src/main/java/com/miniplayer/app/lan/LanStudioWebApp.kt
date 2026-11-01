@@ -511,7 +511,7 @@ tr:hover td { background: var(--hover); }
                 <div class="form-field">
                   <label>曲速 BPM (30 ~ 300)</label>
                   <div style="display:flex;gap:4px;">
-                    <input type="number" id="practice-bpm-input" class="input tnum" min="30" max="300" value="120" style="width:82px;">
+                    <input type="number" id="practice-bpm-input" class="input tnum" min="30" max="300" step="0.01" value="120" style="width:82px;">
                     <button class="btn btn-outline btn-xs" onclick="tapTempo()">点按测速</button>
                   </div>
                 </div>
@@ -1692,7 +1692,9 @@ async function loadStudioItem(itemId) {
 
   onSpeedSliderChange(pData.state.practiceSpeed || 1.0);
   document.getElementById('practice-pitch-input').value = pData.state.pitchSemitones || 0;
-  document.getElementById('practice-bpm-input').value = pData.state.bpm || 120;
+  const loadedBpm = Number(pData.state.bpmPrecise || pData.state.bpm || 120);
+  state.loadedBpmText = String(Math.round(loadedBpm * 100) / 100);
+  document.getElementById('practice-bpm-input').value = state.loadedBpmText;
   document.getElementById('practice-countin-select').value = pData.state.countInMode || 'OFF';
   document.getElementById('studio-mirror-chk').checked = !!pData.state.videoMirror;
   toggleVideoMirror(!!pData.state.videoMirror);
@@ -1936,20 +1938,32 @@ function tapTempo() {
 async function savePracticeStateToPhone() {
   if (state.studioItemId == null) return;
   try {
+    const payload = {
+      itemId: state.studioItemId,
+      practiceSpeed: Number(document.getElementById('practice-speed-range').value),
+      pitchSemitones: parseInt(document.getElementById('practice-pitch-input').value || '0', 10),
+      countInMode: document.getElementById('practice-countin-select').value,
+      loopEnabled: state.loopEnabled,
+      activeAMs: state.pointAMs,
+      activeBMs: state.pointBMs,
+      videoMirror: document.getElementById('studio-mirror-chk').checked
+    };
+    // Only send the tempo when the user changed it, so a detected 120.3871 BPM is never truncated.
+    const bpmText = String(document.getElementById('practice-bpm-input').value || '').trim();
+    const bpmValue = parseFloat(bpmText);
+    if (bpmText !== state.loadedBpmText && isFinite(bpmValue) && bpmValue > 0) {
+      payload.bpmPrecise = Math.max(30, Math.min(300, bpmValue));
+      payload.bpm = Math.round(payload.bpmPrecise);
+    }
     const res = await api('/api/practice/state', {
       method: 'POST',
-      json: {
-        itemId: state.studioItemId,
-        practiceSpeed: Number(document.getElementById('practice-speed-range').value),
-        pitchSemitones: parseInt(document.getElementById('practice-pitch-input').value || '0', 10),
-        bpm: parseInt(document.getElementById('practice-bpm-input').value || '120', 10),
-        countInMode: document.getElementById('practice-countin-select').value,
-        loopEnabled: state.loopEnabled,
-        activeAMs: state.pointAMs,
-        activeBMs: state.pointBMs,
-        videoMirror: document.getElementById('studio-mirror-chk').checked
-      }
+      json: payload
     });
+    if (res.state) {
+      const savedBpm = Number(res.state.bpmPrecise || res.state.bpm || 120);
+      state.loadedBpmText = String(Math.round(savedBpm * 100) / 100);
+      document.getElementById('practice-bpm-input').value = state.loadedBpmText;
+    }
     state.studioPractice = res.state;
     await loadAllItems();
     showToast('练习参数已同步到手机数据库');

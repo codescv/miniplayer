@@ -22,6 +22,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.miniplayer.app.core.model.BeatGrid
+import com.miniplayer.app.core.model.BeatGridSource
 import com.miniplayer.app.core.model.CasualRepeatMode
 import com.miniplayer.app.core.model.MediaItem
 import com.miniplayer.app.core.model.PlayContext
@@ -121,6 +122,14 @@ class PlayerController(
     val isDetectingBpm: StateFlow<Boolean> = _isDetectingBpm.asStateFlow()
     private var bpmJob: Job? = null
     private var forceApplyPendingBpmItemId: Long? = null
+
+    /**
+     * A `.stems`-derived grid that disagrees with a *confident* current grid (§3.9). The UI shows a
+     * non-blocking "检测到更准的节拍网格 — 应用?" chip; [applyPendingStemsBeatGrid] accepts it.
+     */
+    private val _pendingStemsBeatGrid = MutableStateFlow<BeatGrid?>(null)
+    val pendingStemsBeatGrid: StateFlow<BeatGrid?> = _pendingStemsBeatGrid.asStateFlow()
+    private var stemsRegridJob: Job? = null
 
     private val loopPort = object : LoopPlayerPort {
         override val currentPositionMs: Long
@@ -387,7 +396,7 @@ class PlayerController(
                             if (cachedGrid != null &&
                                 loopEngine.practiceState.value.itemId == targetItemId
                             ) {
-                                loopEngine.applyAutoDetectedBeatGrid(cachedGrid, overwriteCustomBpm = shouldForce)
+                                loopEngine.applyAutoDetectedBeatGrid(cachedGrid, force = shouldForce)
                             }
                             syncEffectiveRepeatModeOnPlayerThread()
                         }
@@ -401,6 +410,9 @@ class PlayerController(
                     _detectedBeatGrid.value = null
                     _isDetectingBpm.value = false
                     forceApplyPendingBpmItemId = null
+                    stemsRegridJob?.cancel()
+                    stemsRegridJob = null
+                    _pendingStemsBeatGrid.value = null
                     SharedExoPlayerHolder.updateSeparatedStemsContext(null, null)
                     mainScope.launch { stemSeparationEngine.onTrackBound(null) }
                     loopEngine.bindTrack(
@@ -727,17 +739,82 @@ class PlayerController(
         )
     }
 
+    /**
+     * "重新检测": ALWAYS runs a fresh analysis (`ignoreCache = true`, which also picks up a `.stems`
+     * file that appeared since the last run) and force-applies the result, even over a MANUAL grid.
+     * Never short-circuits on a previously detected grid.
+     */
     fun autoDetectBpm() {
         runOnPlayerThread {
             val item = _snapshot.value.currentItem ?: return@runOnPlayerThread
-            val existingGrid = _detectedBeatGrid.value
-            if (existingGrid != null) {
-                loopEngine.applyAutoDetectedBeatGrid(existingGrid, overwriteCustomBpm = true)
-                _hapticTicks.tryEmit(Unit)
-            } else if (bpmJob?.isActive == true) {
-                forceApplyPendingBpmItemId = item.itemId
-            } else {
-                startBpmDetectionFor(item, forceApply = true, ignoreCache = true)
+            stemsRegridJob?.cancel()
+            stemsRegridJob = null
+            startBpmDetectionFor(item, forceApply = true, ignoreCache = true)
+        }
+    }
+
+    /** Moves Beat 1 by whole beats (-1 / +1 / +2 half-bar flip); marks the grid MANUAL. */
+    fun shiftDownbeatByBeats(deltaBeats: Int) {
+        runOnPlayerThread {
+            loopEngine.shiftDownbeatByBeats(deltaBeats)
+        }
+    }
+
+    /** Fine-nudges Beat 1 by [deltaMs] (±10 ms); marks the grid MANUAL. */
+    fun nudgeDownbeatMs(deltaMs: Long) {
+        runOnPlayerThread {
+            loopEngine.nudgeDownbeatMs(deltaMs)
+        }
+    }
+
+    /** Accepts the `.stems` grid offered via [pendingStemsBeatGrid]. */
+    fun applyPendingStemsBeatGrid() {
+        runOnPlayerThread {
+            val grid = _pendingStemsBeatGrid.value ?: return@runOnPlayerThread
+            _pendingStemsBeatGrid.value = null
+            if (loopEngine.practiceState.value.itemId != _snapshot.value.currentItem?.itemId) return@runOnPlayerThread
+            loopEngine.applyAutoDetectedBeatGrid(grid, force = true)
+            _detectedBeatGrid.value = grid
+            _detectedBpm.value = grid.bpm
+            _hapticTicks.tryEmit(Unit)
+        }
+    }
+
+    fun dismissPendingStemsBeatGrid() {
+        _pendingStemsBeatGrid.value = null
+    }
+
+    /**
+     * §3.9: `.stems` just became available for [item]. Unless the grid is MANUAL, re-analyse from the
+     * stems (`ignoreCache = true`; the extractor prefers `.stems` and returns `AUTO_STEMS`) and either
+     * replace silently, replace + re-snap, or offer the new grid to the user.
+     */
+    private fun refreshBeatGridFromStems(item: MediaItem) {
+        if (loopEngine.practiceState.value.beatGridSource == BeatGridSource.MANUAL) return
+        stemsRegridJob?.cancel()
+        stemsRegridJob = mainScope.launch {
+            val grid = runCatching { waveformExtractor.loadOrDetectBeatGrid(item, ignoreCache = true) }
+                .getOrNull() ?: return@launch
+            runOnPlayerThread {
+                if (_snapshot.value.currentItem?.itemId != item.itemId) return@runOnPlayerThread
+                val state = loopEngine.practiceState.value
+                if (state.itemId != item.itemId) return@runOnPlayerThread
+                val oldConfidence = _detectedBeatGrid.value?.confidence
+                when (PracticeLoopEngine.decideStemsRegrid(state, oldConfidence, grid)) {
+                    StemsRegridDecision.KEEP_MANUAL -> Unit
+                    StemsRegridDecision.REPLACE_SILENTLY -> {
+                        loopEngine.applyAutoDetectedBeatGrid(grid, force = false, reSnapLoops = false)
+                        _detectedBeatGrid.value = grid
+                        _detectedBpm.value = grid.bpm
+                    }
+                    StemsRegridDecision.REPLACE_AND_RESNAP -> {
+                        loopEngine.applyAutoDetectedBeatGrid(grid, force = false)
+                        _detectedBeatGrid.value = grid
+                        _detectedBpm.value = grid.bpm
+                        _hapticTicks.tryEmit(Unit)
+                    }
+                    StemsRegridDecision.OFFER_TO_USER -> _pendingStemsBeatGrid.value = grid
+                }
             }
         }
     }
@@ -755,6 +832,7 @@ class PlayerController(
                 val activeId = _snapshot.value.currentItem?.itemId
                 if (separated != null && activeId == separated.itemId) {
                     SharedExoPlayerHolder.updateSeparatedStemsContext(separated) { _snapshot.value.positionMs }
+                    _snapshot.value.currentItem?.let(::refreshBeatGridFromStems)
                 }
                 _hapticTicks.tryEmit(Unit)
             }
@@ -770,6 +848,7 @@ class PlayerController(
                 val activeId = _snapshot.value.currentItem?.itemId
                 if (separated != null && activeId == separated.itemId) {
                     SharedExoPlayerHolder.updateSeparatedStemsContext(separated) { _snapshot.value.positionMs }
+                    refreshBeatGridFromStems(current)
                     _hapticTicks.tryEmit(Unit)
                 }
             }
@@ -798,6 +877,7 @@ class PlayerController(
         sleepTimerJob?.cancel()
         waveformJob?.cancel()
         bpmJob?.cancel()
+        stemsRegridJob?.cancel()
         stemJob?.cancel()
         trackTransitionJob?.cancel()
         metronome.cancel()
@@ -846,6 +926,9 @@ class PlayerController(
 
     private fun startBpmDetectionFor(item: MediaItem, forceApply: Boolean, ignoreCache: Boolean = false) {
         bpmJob?.cancel()
+        stemsRegridJob?.cancel()
+        stemsRegridJob = null
+        _pendingStemsBeatGrid.value = null
         _detectedBpm.value = null
         _detectedBeatGrid.value = null
         _isDetectingBpm.value = true
@@ -871,7 +954,7 @@ class PlayerController(
                         if (detectedGrid != null &&
                             loopEngine.practiceState.value.itemId == item.itemId
                         ) {
-                            loopEngine.applyAutoDetectedBeatGrid(detectedGrid, overwriteCustomBpm = shouldForce)
+                            loopEngine.applyAutoDetectedBeatGrid(detectedGrid, force = shouldForce)
                             if (shouldForce) {
                                 _hapticTicks.tryEmit(Unit)
                             }

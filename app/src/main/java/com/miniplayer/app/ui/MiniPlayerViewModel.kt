@@ -20,8 +20,12 @@ import com.miniplayer.app.core.model.*
 import com.miniplayer.app.player.PlayerController
 import com.miniplayer.app.player.StemAnalysisState
 import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,19 +48,70 @@ sealed class UiUpdateState {
     data class Error(val message: String) : UiUpdateState()
 }
 
+/**
+ * Serialises `persistPracticeState` writes on one coroutine. Pending states are conflated per
+ * `itemId` (latest wins) and written in submission order of their first pending update.
+ */
+internal class SerializedPracticeStateWriter(
+    scope: CoroutineScope,
+    dispatcher: CoroutineDispatcher,
+    private val save: suspend (PracticeState) -> Unit,
+) {
+    private val lock = Any()
+    private val pending = LinkedHashMap<Long, PracticeState>()
+    private val wakeups = Channel<Unit>(Channel.CONFLATED)
+
+    init {
+        scope.launch(dispatcher) {
+            for (signal in wakeups) {
+                while (true) {
+                    val batch = synchronized(lock) {
+                        if (pending.isEmpty()) {
+                            null
+                        } else {
+                            ArrayList(pending.values).also { pending.clear() }
+                        }
+                    } ?: break
+                    for (state in batch) {
+                        try {
+                            save(state)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            // Best-effort persistence; the next update for this item retries.
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun submit(state: PracticeState) {
+        if (state.itemId <= 0L) return
+        synchronized(lock) {
+            pending[state.itemId] = state
+        }
+        wakeups.trySend(Unit)
+    }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class MiniPlayerViewModel(application: Application) : AndroidViewModel(application) {
     val core: MiniPlayerCoreProvider = CoreRegistry.get(application)
+
+    private val practiceStateWriter = SerializedPracticeStateWriter(
+        scope = viewModelScope,
+        dispatcher = Dispatchers.IO,
+        save = { state -> core.library.savePracticeState(state) },
+    )
 
     val playerController = PlayerController(
         context = application,
         mainScope = viewModelScope,
         loadPracticeState = { itemId -> core.library.getPracticeState(itemId) },
-        persistPracticeState = { state ->
-            viewModelScope.launch(Dispatchers.IO) {
-                core.library.savePracticeState(state)
-            }
-        },
+        // Single serialised writer, conflated per itemId: the latest state always wins, so a slow
+        // stale write can never land after (and clobber) a newer BeatGrid/loop update.
+        persistPracticeState = { state -> practiceStateWriter.submit(state) },
         persistPlaybackPosition = { itemId, posMs ->
             viewModelScope.launch(Dispatchers.IO) {
                 core.library.savePlaybackPosition(itemId, posMs)
@@ -87,6 +142,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     val waveformBars = playerController.waveformBars
     val detectedBpm: StateFlow<Int?> = playerController.detectedBpm
     val detectedBeatGrid: StateFlow<BeatGrid?> = playerController.detectedBeatGrid
+    val pendingStemsBeatGrid: StateFlow<BeatGrid?> = playerController.pendingStemsBeatGrid
     val isDetectingBpm: StateFlow<Boolean> = playerController.isDetectingBpm
     val stemAnalysisState: StateFlow<StemAnalysisState> = playerController.stemAnalysisState
     val hapticTicks = playerController.hapticTicks
@@ -649,6 +705,22 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
 
     fun autoDetectBpm() {
         playerController.autoDetectBpm()
+    }
+
+    fun shiftDownbeatByBeats(deltaBeats: Int) {
+        playerController.shiftDownbeatByBeats(deltaBeats)
+    }
+
+    fun nudgeDownbeatMs(deltaMs: Long) {
+        playerController.nudgeDownbeatMs(deltaMs)
+    }
+
+    fun applyPendingStemsBeatGrid() {
+        playerController.applyPendingStemsBeatGrid()
+    }
+
+    fun dismissPendingStemsBeatGrid() {
+        playerController.dismissPendingStemsBeatGrid()
     }
 
     fun downloadStemModelAndAnalyze() {

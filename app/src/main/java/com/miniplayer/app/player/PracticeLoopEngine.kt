@@ -1,6 +1,8 @@
 package com.miniplayer.app.player
 
 import com.miniplayer.app.core.model.BeatGrid
+import com.miniplayer.app.core.model.BeatGridConfidence
+import com.miniplayer.app.core.model.BeatGridSource
 import com.miniplayer.app.core.model.CountInMode
 import com.miniplayer.app.core.model.PracticeBookmark
 import com.miniplayer.app.core.model.PracticeMath
@@ -9,7 +11,7 @@ import com.miniplayer.app.core.model.SpeedTrainerConfig
 import com.miniplayer.app.core.model.StemMixConfig
 import com.miniplayer.app.core.model.StemType
 import com.miniplayer.app.core.model.VideoSeekMode
-import kotlin.math.floor
+import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +22,18 @@ enum class AbLoopUiState {
     IDLE,
     A_SET_WAITING,
     ACTIVE_OR_SUSPENDED,
+}
+
+/** §3.9 outcome when a `.stems`-based grid arrives after separation finishes. */
+enum class StemsRegridDecision {
+    /** Current grid is MANUAL: never touched. */
+    KEEP_MANUAL,
+    /** Same phase (|Δanchor| < T/4) and |Δbpm| < 0.3: replace without user-visible change. */
+    REPLACE_SILENTLY,
+    /** Old grid was low-confidence: replace and re-snap loops. */
+    REPLACE_AND_RESNAP,
+    /** Old grid was confident: keep it and offer the new one ("检测到更准的节拍网格 — 应用?"). */
+    OFFER_TO_USER,
 }
 
 enum class PreviousButtonOutcome {
@@ -524,82 +538,120 @@ class PracticeLoopEngine(
         onHapticEvent()
     }
 
-    fun alignDownbeatToCurrentPosition(posMs: Long = port.currentPositionMs) {
+    /**
+     * Sets the bar anchor (Beat 1) to [posMs] **without** modulo-folding it into the first bar and marks
+     * the grid [BeatGridSource.MANUAL]. When [snapToExistingBeat] is true (default: only when the current
+     * grid came from a detector), the position is first snapped to the nearest beat of the existing grid
+     * so the user only fixes the bar phase and never introduces reaction-time jitter.
+     */
+    fun alignDownbeatToCurrentPosition(
+        posMs: Long = port.currentPositionMs,
+        snapToExistingBeat: Boolean? = null,
+    ) {
         val dur = port.durationMs
         updatePracticeState { state ->
-            val barDur = state.beatGrid().barDurationMs
             val safePos = posMs.coerceAtLeast(0L)
-            val newDownbeat = if (barDur > 1.0) {
-                (safePos - floor(safePos / barDur) * barDur).roundToLong().coerceAtLeast(0L)
-            } else {
-                0L
-            }
-            val updatedGrid = BeatGrid(
-                bpm = state.bpm,
-                firstBeatMs = newDownbeat,
+            val oldGrid = state.beatGrid()
+            val shouldSnap = snapToExistingBeat ?: state.beatGridSource.isDetectorGrid()
+            val newDownbeat = if (shouldSnap) nearestBeatMs(oldGrid, safePos) else safePos
+            val updated = state.copy(
                 firstDownbeatMs = newDownbeat,
-                beatsPerBar = 4,
+                beatGridSource = BeatGridSource.MANUAL,
             )
-            if (state.barSnapEnabled && state.activeAMs != null && state.activeBMs != null) {
-                val snapped = updatedGrid.snapDraggedLoopPoints(
-                    aMs = state.activeAMs,
-                    bMs = state.activeBMs,
-                    draggingHandle = null,
-                    durationMs = dur,
-                )
-                val normalized = PracticeMath.normalizeLoopPoints(snapped.first, snapped.second, dur)
-                state.copy(
-                    firstDownbeatMs = newDownbeat,
-                    activeAMs = normalized?.first ?: state.activeAMs,
-                    activeBMs = normalized?.second ?: state.activeBMs,
-                )
-            } else if (state.barSnapEnabled && state.activeAMs != null) {
-                state.copy(
-                    firstDownbeatMs = newDownbeat,
-                    activeAMs = updatedGrid.snapPointA(state.activeAMs, dur),
-                )
-            } else {
-                state.copy(firstDownbeatMs = newDownbeat)
-            }
+            reSnapLoopForUpdatedBeatGrid(updated, dur, shouldReSnapActiveLoop = state.barSnapEnabled)
         }
         syncLoopBoundaryMessage()
         onHapticEvent()
     }
 
-    fun setBpm(bpm: Int) {
-        val safe = PracticeMath.clampBpm(bpm)
+    /**
+     * Rekordbox-style insurance: moves Beat 1 by whole beats (`-1`, `+1`, `+2` = half-bar flip) on the
+     * existing precise grid. Loops that sat on the old bar grid are translated by the same amount.
+     */
+    fun shiftDownbeatByBeats(deltaBeats: Int) {
+        if (deltaBeats == 0) return
+        val state = _practiceState.value
+        val deltaMs = (deltaBeats * state.beatGrid().beatDurationMs).roundToLong()
+        moveDownbeatBy(deltaMs)
+    }
+
+    /** Fine-nudges Beat 1 by [deltaMs] (UI uses ±10 ms) and marks the grid [BeatGridSource.MANUAL]. */
+    fun nudgeDownbeatMs(deltaMs: Long) {
+        if (deltaMs == 0L) return
+        moveDownbeatBy(deltaMs)
+    }
+
+    private fun moveDownbeatBy(deltaMs: Long) {
         val dur = port.durationMs
         updatePracticeState { state ->
-            reSnapLoopForUpdatedBeatGrid(state.copy(bpm = safe), dur, shouldReSnapActiveLoop = _activeBookmarkId.value == null)
+            val oldGrid = state.beatGrid()
+            val updated = state.copy(
+                firstDownbeatMs = state.firstDownbeatMs + deltaMs,
+                beatGridSource = BeatGridSource.MANUAL,
+            )
+            translateLoopIfOnGrid(oldGrid, updated, deltaMs, dur)
         }
         syncLoopBoundaryMessage()
+        onHapticEvent()
     }
 
-    fun applyAutoDetectedBpm(bpm: Int) {
-        val safe = PracticeMath.clampBpm(bpm)
-        updatePracticeState { it.copy(bpm = safe) }
+    /** Manual integer BPM (±1 buttons, tap tempo, LAN). Keeps the anchor; marks [BeatGridSource.MANUAL]. */
+    fun setBpm(bpm: Int) {
+        setBpmPrecise(PracticeMath.clampBpm(bpm).toDouble())
     }
 
-    fun applyAutoDetectedBeatGrid(grid: BeatGrid, overwriteCustomBpm: Boolean = false) {
-        val safeBpm = PracticeMath.clampBpm(grid.bpm)
-        val safeDownbeat = grid.firstDownbeatMs.coerceAtLeast(0L)
+    /** Manual fractional BPM. Keeps the anchor; marks [BeatGridSource.MANUAL]. */
+    fun setBpmPrecise(bpm: Double) {
         val dur = port.durationMs
         updatePracticeState { state ->
-            val wasUnsetGrid = state.bpm == 120 && state.firstDownbeatMs == 0L
-            val nextBpm = if (overwriteCustomBpm || state.bpm == 120) safeBpm else state.bpm
-            val nextDownbeat = if (overwriteCustomBpm || state.firstDownbeatMs == 0L) {
-                safeDownbeat
-            } else {
-                state.firstDownbeatMs
-            }
-            val updated = state.copy(bpm = nextBpm, firstDownbeatMs = nextDownbeat)
             reSnapLoopForUpdatedBeatGrid(
-                state = updated,
-                durationMs = dur,
-                shouldReSnapActiveLoop = (overwriteCustomBpm || wasUnsetGrid) && _activeBookmarkId.value == null,
+                state.withBpmPrecise(bpm).copy(beatGridSource = BeatGridSource.MANUAL),
+                dur,
+                shouldReSnapActiveLoop = _activeBookmarkId.value == null,
             )
         }
         syncLoopBoundaryMessage()
+    }
+
+    /** ±N BPM buttons: keeps the fractional part of a detected tempo (120.4 + 1 = 121.4). */
+    fun adjustBpmBy(delta: Int) {
+        if (delta == 0) return
+        setBpmPrecise(_practiceState.value.exactBpm + delta)
+    }
+
+    fun applyAutoDetectedBpm(bpm: Int) {
+        if (_practiceState.value.beatGridSource == BeatGridSource.MANUAL) return
+        val safe = PracticeMath.clampBpm(bpm)
+        updatePracticeState { it.withBpmPrecise(safe.toDouble()) }
+    }
+
+    /**
+     * Applies a detector [grid] **atomically** (tempo, anchor, meter, phrase offset and source in one
+     * state transition). Overwrites iff the current grid is not [BeatGridSource.MANUAL] or [force] is
+     * set (the user pressed "重新检测"); a non-forced mix-based grid never downgrades an `AUTO_STEMS`
+     * grid. When [reSnapLoops] is true, loops that were snapped to the old bar grid are re-snapped.
+     *
+     * @return true if the practice state was changed.
+     */
+    fun applyAutoDetectedBeatGrid(grid: BeatGrid, force: Boolean = false, reSnapLoops: Boolean = true): Boolean {
+        val current = _practiceState.value
+        if (!shouldApplyAutoDetectedGrid(current, grid, force)) return false
+        val dur = port.durationMs
+        val candidate = applyGridFields(current, grid)
+        if (candidate == current) return false
+        val oldGrid = current.beatGrid()
+        updatePracticeState { state ->
+            val updated = applyGridFields(state, grid)
+            reSnapLoopForUpdatedBeatGrid(
+                state = updated,
+                durationMs = dur,
+                shouldReSnapActiveLoop = reSnapLoops &&
+                    _activeBookmarkId.value == null &&
+                    loopIsOnGrid(oldGrid, state, dur),
+            )
+        }
+        syncLoopBoundaryMessage()
+        return true
     }
 
     private fun reSnapLoopForUpdatedBeatGrid(
@@ -777,7 +829,7 @@ class PracticeLoopEngine(
             if (autoPlay) {
                 metronome.start(
                     mode = state.countInMode,
-                    bpm = state.bpm,
+                    bpm = state.exactBpm,
                     practiceSpeed = state.practiceSpeed,
                     playClickSound = clickSoundEnabled,
                     onComplete = {
@@ -849,8 +901,112 @@ class PracticeLoopEngine(
         }
     }
 
+    private fun translateLoopIfOnGrid(
+        oldGrid: BeatGrid,
+        state: PracticeState,
+        deltaMs: Long,
+        durationMs: Long,
+    ): PracticeState {
+        if (!state.barSnapEnabled || _activeBookmarkId.value != null || !loopIsOnGrid(oldGrid, state, durationMs)) {
+            return state
+        }
+        val a = state.activeAMs ?: return state
+        val b = state.activeBMs
+        if (b == null) {
+            val maxDur = if (durationMs > 0L) durationMs else Long.MAX_VALUE
+            return state.copy(activeAMs = (a + deltaMs).coerceIn(0L, maxDur))
+        }
+        val shifted = PracticeMath.normalizeLoopPoints(a + deltaMs, b + deltaMs, durationMs) ?: return state
+        return state.copy(activeAMs = shifted.first, activeBMs = shifted.second)
+    }
+
     companion object {
         const val PRE_ROLL_LEAD_MS = 2_000L
         const val DOUBLE_TAP_WINDOW_MS = 400L
+
+        /** Loop points within this distance of a bar boundary count as "snapped to the grid". */
+        const val ON_GRID_TOLERANCE_MS = 3L
+
+        /** `downbeatMargin` below this (log-lik units, §3.5) is "low confidence". */
+        const val LOW_DOWNBEAT_MARGIN = 2.0f
+
+        /** §3.9 silent-replace thresholds. */
+        const val STEMS_SILENT_MAX_BPM_DELTA = 0.3
+
+        fun shouldApplyAutoDetectedGrid(state: PracticeState, grid: BeatGrid, force: Boolean): Boolean {
+            if (force) return true
+            return when (state.beatGridSource) {
+                BeatGridSource.MANUAL -> false
+                BeatGridSource.AUTO_STEMS ->
+                    grid.source != BeatGridSource.AUTO_MIX && grid.source != BeatGridSource.AUTO_LEGACY
+                else -> true
+            }
+        }
+
+        /** Copies every grid field of [grid] onto [state] in one go (no partial updates). */
+        fun applyGridFields(state: PracticeState, grid: BeatGrid): PracticeState =
+            state.withBpmPrecise(grid.bpmPrecise).copy(
+                firstDownbeatMs = grid.firstDownbeatMs,
+                beatsPerBar = grid.beatsPerBar.coerceIn(2, 8),
+                phraseOffsetBars = grid.phraseOffsetBars,
+                beatGridSource = if (grid.source == BeatGridSource.MANUAL) BeatGridSource.AUTO_MIX else grid.source,
+            )
+
+        fun nearestBeatMs(grid: BeatGrid, positionMs: Long): Long {
+            val beat = grid.beatDurationMs
+            if (beat <= 1.0) return positionMs
+            val k = ((positionMs - grid.firstDownbeatMs) / beat).roundToLong()
+            return (grid.firstDownbeatMs + k * beat).roundToLong()
+        }
+
+        /** Distance (ms) from [positionMs] to the nearest bar boundary of [grid] (unclamped). */
+        fun distanceToNearestBarMs(grid: BeatGrid, positionMs: Long): Double {
+            val bar = grid.barDurationMs
+            if (bar <= 1.0) return 0.0
+            val rel = (positionMs - grid.firstDownbeatMs) / bar
+            return abs(rel - rel.roundToLong()) * bar
+        }
+
+        /** True when the active A (and B, if set) sit on [grid]'s bar boundaries (or the track ends). */
+        fun loopIsOnGrid(grid: BeatGrid, state: PracticeState, durationMs: Long): Boolean {
+            val a = state.activeAMs ?: return false
+            fun onGrid(p: Long): Boolean =
+                p == 0L ||
+                    (durationMs > 0L && p == durationMs) ||
+                    distanceToNearestBarMs(grid, p) <= ON_GRID_TOLERANCE_MS
+            return onGrid(a) && (state.activeBMs?.let(::onGrid) ?: true)
+        }
+
+        /**
+         * §3.9: decides what to do with a fresh `.stems` grid while the current grid is auto-detected.
+         * [oldConfidence] is the confidence of the grid currently in use (null = unknown/legacy).
+         */
+        fun decideStemsRegrid(
+            state: PracticeState,
+            oldConfidence: BeatGridConfidence?,
+            newGrid: BeatGrid,
+        ): StemsRegridDecision {
+            if (state.beatGridSource == BeatGridSource.MANUAL) return StemsRegridDecision.KEEP_MANUAL
+            val oldGrid = state.beatGrid()
+            val beat = oldGrid.beatDurationMs
+            val bar = oldGrid.barDurationMs
+            val deltaAnchor = (newGrid.firstDownbeatMs - oldGrid.firstDownbeatMs).toDouble()
+            val phaseDelta = if (bar > 1.0) deltaAnchor - (deltaAnchor / bar).roundToLong() * bar else deltaAnchor
+            val deltaBpm = abs(newGrid.bpmPrecise - oldGrid.bpmPrecise)
+            if (abs(phaseDelta) < beat / 4.0 && deltaBpm < STEMS_SILENT_MAX_BPM_DELTA &&
+                newGrid.beatsPerBar == oldGrid.beatsPerBar
+            ) {
+                return StemsRegridDecision.REPLACE_SILENTLY
+            }
+            val oldWasWeak = state.beatGridSource == BeatGridSource.AUTO_LEGACY ||
+                oldConfidence == null ||
+                oldConfidence == BeatGridConfidence.UNKNOWN ||
+                oldConfidence.halfBarAmbiguous ||
+                oldConfidence.downbeatMargin < LOW_DOWNBEAT_MARGIN
+            return if (oldWasWeak) StemsRegridDecision.REPLACE_AND_RESNAP else StemsRegridDecision.OFFER_TO_USER
+        }
+
+        private fun BeatGridSource.isDetectorGrid(): Boolean =
+            this == BeatGridSource.AUTO_MIX || this == BeatGridSource.AUTO_STEMS || this == BeatGridSource.EMBEDDED_TAG
     }
 }

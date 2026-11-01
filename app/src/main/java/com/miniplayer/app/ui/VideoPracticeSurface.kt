@@ -238,6 +238,7 @@ fun LandscapeVideoPlayerView(
     detectedBpm: Int? = null,
     isDetectingBpm: Boolean = false,
     onAutoDetectBpm: () -> Unit = {},
+    beatGridControls: BeatGridControls = BeatGridControls(),
     onToggleKeepScreenOn: () -> Unit = {},
     onBack: () -> Unit,
     onTogglePracticeMode: () -> Unit,
@@ -676,7 +677,7 @@ fun LandscapeVideoPlayerView(
                                     firstDownbeatMs = practiceState.firstDownbeatMs,
                                     onAdjustBpm = { delta ->
                                         bumpInteraction()
-                                        loopEngine.setBpm(practiceState.bpm + delta)
+                                        loopEngine.adjustBpmBy(delta)
                                     },
                                     onTapTempo = {
                                         bumpInteraction()
@@ -693,6 +694,18 @@ fun LandscapeVideoPlayerView(
                                     onAlignDownbeat = {
                                         bumpInteraction()
                                         loopEngine.alignDownbeatToCurrentPosition(snapshot.positionMs)
+                                    },
+                                    bpmPrecise = practiceState.exactBpm,
+                                    beatsPerBar = practiceState.beatsPerBar,
+                                    beatGridSource = practiceState.beatGridSource,
+                                    beatGridControls = beatGridControls,
+                                    onShiftDownbeatBeats = { beats ->
+                                        bumpInteraction()
+                                        loopEngine.shiftDownbeatByBeats(beats)
+                                    },
+                                    onNudgeDownbeatMs = { deltaMs ->
+                                        bumpInteraction()
+                                        loopEngine.nudgeDownbeatMs(deltaMs)
                                     },
                                 )
                             }
