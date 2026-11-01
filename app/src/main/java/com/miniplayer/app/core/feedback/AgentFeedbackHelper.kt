@@ -114,7 +114,7 @@ object AgentFeedbackHelper {
         val stripped = SemanticVersion.stripDebugSuffix(versionName)
             ?: versionName?.trim().orEmpty()
         val bare = stripped.trim().removePrefix("v").removePrefix("V").trim()
-        return if (bare.isEmpty()) "v1.0.11" else "v$bare"
+        return if (bare.isEmpty()) "v1.0.12" else "v$bare"
     }
 
     fun sanitizeSummary(summary: String?, detailsFallback: String? = null): String {

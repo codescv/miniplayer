@@ -1,13 +1,29 @@
-# MiniPlayer v1.0.10 — Verification, Security Audit & Release Report
+# MiniPlayer v1.0.12 — Verification, Security Audit & Release Report
 
-**Version:** `1.0.10` (`versionCode = 10010`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
+**Version:** `1.0.12` (`versionCode = 10012`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch / Worktree Verified (`v1.0.10`):** `/tmp/miniplayer-worktree-tester12` (verified on top of `coder-12` commit `b0842e2440bdb47619bf3e1a823e73d40cdbe0ae`, stacked on `v1.0.9` @ `3240c02`; **`84/84` unit, real ONNX Runtime E2E & cross-module integration tests across `14` suites**, `0` failures, `0` errors, `0` skipped)  
+**Branch / Worktree Verified (`v1.0.12`):** `/tmp/wt-play-1dc87ed0` (`vibe/1dc87ed0`, stacked on `v1.0.11` @ `e180b5d`; **`94/94` unit, real ONNX Runtime E2E & cross-module integration tests across `15` suites**, `0` failures, `0` errors, `0` skipped)  
+**Release APK (`v1.0.12`):** `MiniPlayer-v1.0.12.apk` (`app/build/outputs/apk/release/app-release.apk`) — **`85,238,929` bytes**, SHA-256 **`370565a8294e31669000a272d3038faafae7d5a7b68496e1a20215d86535999e`**  
+**Previous Release APK (`v1.0.11`):** `MiniPlayer-v1.0.11.apk` — `85,238,929` bytes, SHA-256 `b144cae8503c25099bdc416f4b04a5f003f8aa5a3b1ec3146370747faaca266c`  
 **Release APK (`v1.0.10`):** `app/build/outputs/apk/release/app-release.apk` — **`85,206,021` bytes**, SHA-256 **`ab7f57128e2772c432fde69f59b3bd253ab6a05ae33eb261e1c864ef04710979`**  
-**On-Demand Pretrained AI Stem Model (`v1.0.10`):** `htdemucs_6s.onnx` (Meta Research official `htdemucs_6s` hybrid transformer exported to self-contained FP32 ONNX opset 17) — **`110,242,365` bytes (`105.14 MB`)**, SHA-256 **`950b278ae3c2520b9b6e9a8ed8b25615db9cd82552f8fded6a5af0280a4016a2`** (downloaded on-demand into `filesDir/models/htdemucs_6s.onnx`; **not** bundled inside the APK)  
+**On-Demand Pretrained AI Stem Model (`v1.0.10+`):** `htdemucs_6s.onnx` (Meta Research official `htdemucs_6s` hybrid transformer exported to self-contained FP32 ONNX opset 17) — **`110,242,365` bytes (`105.14 MB`)**, SHA-256 **`950b278ae3c2520b9b6e9a8ed8b25615db9cd82552f8fded6a5af0280a4016a2`** (downloaded on-demand into `filesDir/models/htdemucs_6s.onnx`; **not** bundled inside the APK)  
 **Previous Release APK (`v1.0.9`):** `MiniPlayer-v1.0.9.apk` — `14,365,065` bytes, SHA-256 `3eaa89e261935253af02d0aef41e90792268cc73321d15b025d65275636d53f8`  
 **Previous Release APK (`v1.0.8`):** `MiniPlayer-v1.0.8.apk` — `14,274,675` bytes, SHA-256 `bcbb1dba7abbb5dbe6447d3b1122a0cb72ea238e8bcf0951a5d2cdcd39c762e8`  
 **Previous Release APK (`v1.0.7`):** `MiniPlayer-v1.0.7.apk` — `14,274,563` bytes, SHA-256 `5bd30fbac643f5741ac920380e2a6b0f9bf025902f92fa7fa6d01a594505d4f2`
+
+---
+
+## 00. `v1.0.12` Multi-Band BPM & Bar/Downbeat Grid Accuracy Verification
+
+Run in isolated verification worktree `/tmp/wt-play-1dc87ed0` (`vibe/1dc87ed0`):
+- **Command:** `./gradlew testDebugUnitTest lintDebug assembleRelease` (`BUILD SUCCESSFUL`)
+- **Unit, Real ORT E2E & Cross-Module Integration Tests:** **`94/94`** tests across **`15`** suites (`0` failures, `0` errors, `0` skipped), including `11` `BpmDetectorTest` cases and `13` `PracticeLoopEngineTest` cases verifying:
+  - Snare-dominant backbeat `4/4` grooves (`96 BPM` & `116 BPM`) with sustained guitar/chord beds and 8th-note hi-hats locking onto true **Beat 1 (Kick)** (`firstDownbeatMs`) rather than Beat 2 or 4 (Snare).
+  - Slow `72 BPM` & `82 BPM` ballad grooves with strong 8th-note hi-hat subdivisions resolving true quarter-note BPM without octave doubling (`144` / `164 BPM`).
+  - Syncopated `4/4` grooves (`2-&` / `3-&` offbeat kicks) preceded by a `5 s` ambient intro and 2-beat weak pickup (anacrusis) locking onto true Bar 1 Beat 1 phase.
+  - Acoustic verification of embedded `TBPM` tags (`BpmDetector.resolveEmbeddedAndAcousticBpm`) honoring consistent tags while rejecting bogus default `120 BPM` tags contradicted by clear `92 BPM` audio.
+  - Automatic A-B loop re-snapping when `applyAutoDetectedBeatGrid`, `setBpm`, or `toggleBarSnap` updates the active bar grid.
+- **Android Lint (`lintDebug` & `lintVitalRelease`):** **0** errors.
 
 ---
 

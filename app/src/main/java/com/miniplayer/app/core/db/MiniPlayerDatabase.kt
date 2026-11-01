@@ -279,7 +279,7 @@ class MiniPlayerDatabase(
 
     companion object {
         const val DATABASE_NAME = "miniplayer.db"
-        const val DATABASE_VERSION = 3
+        const val DATABASE_VERSION = 4
 
         val SCHEMA_STATEMENTS: List<String> = listOf(
             """
@@ -468,6 +468,12 @@ class MiniPlayerDatabase(
         }
         if (oldVersion < 3) {
             ensurePracticeStateV3Columns(db)
+        }
+        if (oldVersion < 4) {
+            // Reset legacy v1.0.11 auto-detected bpm/first_downbeat_ms so v1.0.12's 3-band bar/BPM detector re-populates them cleanly
+            runCatching {
+                db.execSQL("UPDATE track_practice_states SET bpm = 120, first_downbeat_ms = 0")
+            }
         }
     }
 

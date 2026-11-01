@@ -18,7 +18,7 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
     - **Row 1 — Bar-Snapped A-B Loop, Measure Ticks & Bookmarks**: Media3 `PlayerMessage` scheduled directly on `exoPlayer.applicationLooper`, `44 dp` 240-bar RMS waveform overlaid with detected bar/measure grid ticks (`BeatGrid`, every 4th bar highlighted) and bar-count loop header (`A 00:08.0 ━━● 4小节 ●━━ B 00:16.0`), `48×48 dp` rounded pill handles with **1:1 float finger tracking** and automatic bar-boundary snapping (`小节对齐`, `barSnapEnabled = true`), clean **`[A]` / `[B]`** timestamp buttons, instant restart-from-`A` (`⏮` single-tap guard with `400 ms` double-tap to `00:00`/previous), non-destructive loop suspend/clear, and an icon-only **Save Bookmark** button (`Intro`, `Verse`, `Pre-Chorus`, `Chorus`, `Bridge`, `Solo 1`, `Solo 2`, `Outro`, or custom label).
     - **Row 2 — Speed Stepper, HTDemucs 5-Stem Mixer, Beat-Only Count-In & Icon-Only Toggles**: `0.25x–2.00x` pitch-preserving speed stepper (`[-5%]` · `1.00x` reset · `[+5%]`) paired with **Pure Time-Domain Sonic Pitch Shift (`升降调`: `-6..+6 st` + `-50..+50 ct`)**, **On-Device Meta `HTDemucs` (`htdemucs_6s`) 5-Stem Offline Separator & Real-Time Mixer (`分轨乐器音量`: `人声 / 吉他 / Bass / 鼓 / 其他`, `0%–150%` + `M` / `S`)**, **1-Tap Beat-Only Count-In (`预备拍`: `关 ↔ 4拍`)**, anytime **`BPM <bpm>`** chip (expands `BpmQuickBar` with `小节对齐` toggle, `对齐第1拍` downbeat calibration, 1-tap **`"自动"`** auto-detection, and `Tap` tempo), icon-only **Keep-Screen-On (`练习常亮` `DeckIconToggleButton`)**, and **Video Mirror (`水平镜像`)**.
     - **Pure Sonic Real-Time Pitch Shift & On-Device `HTDemucs` 5-Stem Time-Domain Mixer (`RealTimeSonicAudioProcessor` + `StemSeparationEngine` + `HtdemucsStft`)**: `-6` to `+6` semitones + `-50` to `+50` cents fine tuning backed by pure time-domain `SonicAudioProcessor` (zero WOLA STFT phase/envelope artifacts, bit-exact passthrough at unity), paired with genuine **Meta Research `htdemucs_6s` (`htdemucs_6s.onnx`, `~105 MB`)** on-demand download + ONNX Runtime offline separation into 5 memory-mapped linear `BFP10` stereo stems (`.stems`, `~61 dB` SNR) mixed at zero latency in the time domain with sample-accurate cross-correlation playhead lock.
-    - **Automatic BPM & Bar/Downbeat Grid Detection (`BpmDetector` + `WaveformExtractor.loadOrDetectBeatGrid`)**: Automatically detects `BeatGrid(bpm, firstBeatMs, firstDownbeatMs, beatsPerBar = 4)` from `100 Hz` onset-flux autocorrelation + beat-phase grid search + `4/4` bar-phase scoring (`cacheDir/waveforms/bpm_<id>_<mtime>.dat`), auto-populating `bpm` and `firstDownbeatMs` for instant measure-aligned A-B loops.
+    - **Automatic BPM & Bar/Downbeat Grid Detection (`BpmDetector` + `WaveformExtractor.loadOrDetectBeatGrid`, `v1.0.12`)**: Automatically detects `BeatGrid(bpm, firstBeatMs, firstDownbeatMs, beatsPerBar = 4)` from a 3-band (`Low < 155 Hz` Kick/Bass, `Mid 155–2400 Hz` Snare/Chords, `High > 2400 Hz` Hi-Hat/Pick transients) log-compressed `100 Hz` onset-flux accumulator, fractional-lag multi-harmonic (`1x, 2x, 3x, 4x, 8x`) bar-aware autocorrelation with `< 2400 Hz` pulse vs `> 2400 Hz` subdivision octave disambiguation, multi-bar (`m = 1, 2, 3, 4, 6, 8, 12, 16`) `0.05 BPM` fine comb refinement, 128-phase parabolic beat alignment, and 4-phase Kick/Bass vs Snare backbeat downbeat scoring (`cacheDir/waveforms/bpm_v3_<id>_<mtime>.dat`), auto-populating `bpm` and `firstDownbeatMs` for instant measure-aligned A-B loops.
   - **Video Practice Enhancements**: `1.0x–4.0x` pinch-to-zoom & pan on fretboard/tab details, horizontal mirror flip, adaptive long-GOP video loop seeking (`>80 ms` keyframe fallback with `AUTO/EXACT` toggle), top/bottom dockable translucent landscape HUD, per-mode `FLAG_KEEP_SCREEN_ON`, and seamless screen-off audio-only continuation.
 
 - **Dual-Layer Metadata Editor & Zero-Key Online Auto-Completion**:
@@ -36,6 +36,16 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 - **Verified In-App GitHub Auto-Updater**:
   - Checks [`codescv/miniplayer` Releases](https://github.com/codescv/miniplayer/releases/latest) over HTTPS (`≤ 5` manual redirect hops, zero HTTP downgrade), verifies `SHA256SUMS.txt` digests, runs 4-stage `ApkValidator` checks (`PK\x03\x04` + `AndroidManifest.xml`, `com.miniplayer.app` package match, strict `versionCode > installed` anti-downgrade, and signing certificate SHA-256 equality), and launches `FileProvider` installation.
+
+---
+
+## What's New in `v1.0.12` (`versionCode = 10012`)
+
+1. **Multi-Band Onset Flux, Multi-Bar Comb BPM Refinement & Snare-Backbeat-Aware Bar/Downbeat Detection (`BpmDetector.kt`, `WaveformExtractor.kt`, `PracticeLoopEngine.kt`, `PlayerController.kt`, `PracticeDeck.kt`, `MiniPlayerDatabase.kt`)**:
+   - **3-Band IIR Filter Bank & Log-Compressed Onset Flux (`OnsetFluxAccumulator`)**: Splits incoming PCM into `Low (< 155 Hz)` Kick/Bass, `Mid (155–2400 Hz)` Snare body/Chords, and `High (> 2400 Hz)` Hi-Hat/Pick transients with log-compressed (`ln(1 + 24 * rms/p90)`) zero-phase onset flux and active groove window selection so quiet/rubato intros or loud crash peaks never skew detection.
+   - **Fractional-Lag Multi-Harmonic Autocorrelation & Octave Disambiguation**: Evaluates `1x, 2x, 3x, 4x, 8x` beat-period harmonics and compares `< 2400 Hz` Low+Mid pulse correlation against `> 2400 Hz` High-band subdivisions so `65–85 BPM` 8th-note hi-hat grooves are never falsely doubled to `130–170 BPM`, followed by multi-bar (`m = 1, 2, 3, 4, 6, 8, 12, 16`) `0.05 BPM` fine comb refinement to eliminate cumulative bar-line drift across full songs.
+   - **Kick/Bass Downbeat vs. Snare Backbeat (`2 & 4`) Bar Phase Scoring**: Scores all 4 candidate bar phases using Low-band Kick/Bass accents on Beat 1 (& Beat 3), explicit Snare backbeat contrast (`Mid+High > Low`) on Beats 2 & 4, bass/harmonic transitions at bar boundaries, and weak-pickup (anacrusis) entrance awareness—fixing the classic rock/pop/blues failure mode where a louder Snare on Beat 2 or 4 was mistaken for Beat 1 (`firstDownbeatMs`).
+   - **Extended `45 s` + Mid-Track Decode Fallback, Acoustic `TBPM` Verification & Cache/DB Migration (`DATABASE_VERSION = 4`, `bpm_v3_*.dat`)**: Expands `MediaCodec` decoding to `45 s` from `0:00` with a 2-pass middle-section (`35%` offset) fallback when the intro has low rhythmic clarity (`< 0.22`), cross-checks embedded `TBPM` tags against audio correlation, bypasses disk cache on manual `"自动"` re-detection, re-snaps active A-B loops when `BeatGrid` updates, aligns 4-bar phrase highlights relative to `firstDownbeatMs`, and resets stale `v1.0.11` auto-detected `(bpm, first_downbeat_ms)` rows on upgrade to `DATABASE_VERSION = 4`.
 
 ---
 
@@ -134,7 +144,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.10.apk` | Signed Android Release APK (`versionCode = 10010`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.12.apk` | Signed Android Release APK (`versionCode = 10012`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `app-release.apk` | Identical signed Android Release APK artifact |
 | `htdemucs_6s.onnx` | Meta Research `htdemucs_6s` hybrid transformer ONNX model (`105.1 MB` / `110,242,365` bytes) downloaded on-demand in-app for 5-stem offline separation |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
@@ -152,7 +162,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 export JAVA_HOME="/path/to/jdk21"
 export ANDROID_HOME="/path/to/Android/Sdk"
 
-# Run full JVM unit, real ONNX Runtime E2E & cross-module integration tests (84/84), debug/release APK builds, and Android Lint
+# Run full JVM unit, real ONNX Runtime E2E & cross-module integration tests (94/94), debug/release APK builds, and Android Lint
 ./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug
 ```
 
@@ -164,6 +174,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, `v1.0.9` automatic bar-snap A-B loop & beat-only `4拍` count-in, and `v1.0.10` pure Sonic pitch shifting & genuine Meta `HTDemucs` `htdemucs_6s.onnx` 5-stem separation + real-time time-domain mixer)
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 3`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`HtdemucsStft`/`StemSeparationEngine`/`StemSeparatedTrackCache` (`BFP10`)/`BeatGrid` specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit, real `OrtEnvironment` `htdemucs_6s.onnx` E2E & cross-module integration (`84/84` tests across `14` suites), Lint, and `v1.0.10` verification report
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, `v1.0.9` automatic bar-snap A-B loop & beat-only `4拍` count-in, `v1.0.10` pure Sonic pitch shifting & genuine Meta `HTDemucs` `htdemucs_6s.onnx` 5-stem separation + real-time time-domain mixer, `v1.0.11` local Agent Feedback sender, and `v1.0.12` 3-band onset-flux & Snare-backbeat-aware BPM/bar grid detection)
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 4`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`HtdemucsStft`/`StemSeparationEngine`/`StemSeparatedTrackCache` (`BFP10`)/`BeatGrid` specs, LAN Web Studio & Auto-Updater security invariants
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit, real `OrtEnvironment` `htdemucs_6s.onnx` E2E & cross-module integration (`94/94` tests across `15` suites), Lint, and `v1.0.12` verification report

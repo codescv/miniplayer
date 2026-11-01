@@ -242,6 +242,229 @@ class BpmDetectorTest {
         )
     }
 
+    @Test
+    fun computeBeatGrid_snareDominantBackbeatWithChordBed_locksOntoKickBeatOneDownbeat() {
+        val sampleRate = 44_100
+        // Test rock/pop/blues grooves where Snare on Beats 2 & 4 has higher broadband amplitude
+        // than Kick on Beats 1 & 3, plus 8th-note hi-hats and a continuous sustained guitar/pad bed.
+        for (targetBpm in listOf(96, 116)) {
+            val pickupOffsetMs = 640L
+            val durationSec = 18.0
+            val totalFrames = (durationSec * sampleRate).toInt()
+            val pcm = ShortArray(totalFrames)
+            val beatPeriodSec = 60.0 / targetBpm.toDouble()
+            val pickupSec = pickupOffsetMs / 1000.0
+            val totalBeats = ((durationSec - pickupSec) / beatPeriodSec).toInt()
+
+            // Continuous sustained chord bed (starts at pickupSec)
+            val startBedFrame = (pickupSec * sampleRate).toInt()
+            for (f in startBedFrame until totalFrames) {
+                val t = f.toDouble() / sampleRate
+                val chord = sin(2.0 * PI * 330.0 * t) * 0.45 +
+                    sin(2.0 * PI * 440.0 * t) * 0.35 +
+                    sin(2.0 * PI * 659.25 * t) * 0.20
+                pcm[f] = (chord * 3_200.0).toInt().toShort()
+            }
+
+            for (beat in 0 until totalBeats) {
+                val beatInBar = beat % 4
+                val startFrame = ((pickupSec + beat * beatPeriodSec) * sampleRate).toInt()
+                val hitLen = (0.055 * sampleRate).toInt()
+
+                if (beatInBar == 0 || beatInBar == 2) {
+                    // Kick + Bass on Beat 1 (stronger) and Beat 3 (medium)
+                    val kickAmp = if (beatInBar == 0) 19_500.0 else 14_500.0
+                    val bassAmp = if (beatInBar == 0) 6_500.0 else 4_000.0
+                    for (i in 0 until hitLen) {
+                        val f = startFrame + i
+                        if (f >= totalFrames) break
+                        val env = exp(-i.toDouble() / (0.015 * sampleRate))
+                        val kick = sin(2.0 * PI * 76.0 * i / sampleRate) * kickAmp * env +
+                            sin(2.0 * PI * 110.0 * i / sampleRate) * bassAmp * env
+                        pcm[f] = (pcm[f].toInt() + kick.toInt()).coerceIn(-32767, 32767).toShort()
+                    }
+                } else {
+                    // Snare backbeat on Beats 2 & 4 with HIGHER broadband peak than Kick!
+                    val snareAmp = 26_000.0
+                    for (i in 0 until hitLen) {
+                        val f = startFrame + i
+                        if (f >= totalFrames) break
+                        val env = exp(-i.toDouble() / (0.010 * sampleRate))
+                        val snare = (
+                            sin(2.0 * PI * 235.0 * i / sampleRate) * 0.35 +
+                                sin(2.0 * PI * 1_650.0 * i / sampleRate) * 0.40 +
+                                sin(2.0 * PI * 3_900.0 * i / sampleRate) * 0.25
+                            ) * snareAmp * env
+                        pcm[f] = (pcm[f].toInt() + snare.toInt()).coerceIn(-32767, 32767).toShort()
+                    }
+                }
+
+                // 8th-note hi-hat on both downbeat and offbeat (&)
+                for (sub in 0..1) {
+                    val hatStart = ((pickupSec + (beat + sub * 0.5) * beatPeriodSec) * sampleRate).toInt()
+                    val hatLen = (0.018 * sampleRate).toInt()
+                    val hatAmp = if (sub == 0) 5_200.0 else 4_200.0
+                    for (i in 0 until hatLen) {
+                        val f = hatStart + i
+                        if (f >= totalFrames) break
+                        val env = exp(-i.toDouble() / (0.004 * sampleRate))
+                        val hat = (
+                            sin(2.0 * PI * 4_600.0 * i / sampleRate) * 0.55 +
+                                sin(2.0 * PI * 6_900.0 * i / sampleRate) * 0.45
+                            ) * hatAmp * env
+                        pcm[f] = (pcm[f].toInt() + hat.toInt()).coerceIn(-32767, 32767).toShort()
+                    }
+                }
+            }
+
+            val grid = BpmDetector.detectBeatGridFromPcm(
+                pcmInterleaved = pcm,
+                frameCount = totalFrames,
+                sampleRate = sampleRate,
+                channelCount = 1,
+            )
+            assertNotNull("Expected BeatGrid for $targetBpm BPM snare-backbeat groove", grid)
+            assertTrue(
+                "Expected ~$targetBpm BPM (±1), got ${grid!!.bpm}",
+                abs(grid.bpm - targetBpm) <= 1,
+            )
+            // Beat 1 is at 640ms; Beat 2 (Snare) is at 640 + beatDurationMs (~1265ms at 96 BPM).
+            // Multi-band downbeat detector MUST lock onto Beat 1 (640ms), never Beat 2 or Beat 4!
+            assertTrue(
+                "Expected firstDownbeatMs aligned to Kick Beat 1 (~${pickupOffsetMs}ms ±80ms) for $targetBpm BPM, got ${grid.firstDownbeatMs}ms",
+                abs(grid.firstDownbeatMs - pickupOffsetMs) <= 80L,
+            )
+        }
+    }
+
+    @Test
+    fun detectBpmFromPcm_slowBalladGroovesWithStrongEighthSubdivisions_doNotDoubleBpm() {
+        val sampleRate = 44_100
+        for (expectedBpm in listOf(72, 82)) {
+            val pcm = synthesizeDrumPulseTrack(
+                bpm = expectedBpm,
+                durationSeconds = 18.0,
+                sampleRate = sampleRate,
+                channels = 1,
+                includeEighthHiHat = true,
+            )
+            val detected = BpmDetector.detectBpmFromPcm(
+                pcmInterleaved = pcm,
+                frameCount = pcm.size,
+                sampleRate = sampleRate,
+                channelCount = 1,
+            )
+            assertNotNull("Expected non-null BPM for $expectedBpm BPM slow groove", detected)
+            assertTrue(
+                "Expected ~$expectedBpm BPM (±1) without octave doubling to ${expectedBpm * 2}, got $detected",
+                abs(detected!! - expectedBpm) <= 1,
+            )
+        }
+    }
+
+    @Test
+    fun computeBeatGrid_syncopatedKickGrooveAndAmbientIntroWithWeakPickup_locksOntoTrueBarOne() {
+        val sampleRate = 44_100
+        val bpm = 120 // beat = 500ms, bar = 2000ms
+        val durationSec = 22.0
+        val totalFrames = (durationSec * sampleRate).toInt()
+        val pcm = ShortArray(totalFrames)
+        val beatPeriodSec = 60.0 / bpm
+
+        // 0.0s .. 5.0s: quiet ambient pad (no drums)
+        val fiveSecFrames = (5.0 * sampleRate).toInt()
+        for (f in 0 until fiveSecFrames) {
+            val t = f.toDouble() / sampleRate
+            pcm[f] = (sin(2.0 * PI * 261.63 * t) * 1_600.0).toInt().toShort()
+        }
+
+        // 5.0s and 5.5s: 2 weak hi-hat pickup clicks (Beats 3 & 4 of pickup measure before Bar 1 at 6.0s)
+        for (pickupBeat in listOf(5.0, 5.5)) {
+            val startF = (pickupBeat * sampleRate).toInt()
+            val len = (0.020 * sampleRate).toInt()
+            for (i in 0 until len) {
+                val env = exp(-i.toDouble() / (0.004 * sampleRate))
+                pcm[startF + i] = (sin(2.0 * PI * 4_800.0 * i / sampleRate) * 4_500.0 * env).toInt().toShort()
+            }
+        }
+
+        // 6.0s .. 22.0s: Full-band syncopated 4/4 groove (Bar 1 Beat 1 at 6000ms -> 6000 % 2000 == 0ms phase!)
+        // Kick on Beat 0.0 (Beat 1) and syncopated Beat 2.5 (3-&), Snare on Beat 1.0 (Beat 2) and Beat 3.0 (Beat 4).
+        val grooveStartSec = 6.0
+        val totalBars = ((durationSec - grooveStartSec) / (4.0 * beatPeriodSec)).toInt()
+        for (bar in 0 until totalBars) {
+            val barStartSec = grooveStartSec + bar * 4.0 * beatPeriodSec
+            // Kick hits at 0.0 (Beat 1) and 2.5 (syncopated 3-&)
+            for ((beatOffset, amp) in listOf(0.0 to 25_000.0, 2.5 to 17_000.0)) {
+                val startF = ((barStartSec + beatOffset * beatPeriodSec) * sampleRate).toInt()
+                val len = (0.050 * sampleRate).toInt()
+                for (i in 0 until len) {
+                    val f = startF + i
+                    if (f >= totalFrames) break
+                    val env = exp(-i.toDouble() / (0.014 * sampleRate))
+                    val sample = (sin(2.0 * PI * 80.0 * i / sampleRate) * amp * env).toInt()
+                    pcm[f] = (pcm[f].toInt() + sample).coerceIn(-32767, 32767).toShort()
+                }
+            }
+            // Snare hits at 1.0 (Beat 2) and 3.0 (Beat 4)
+            for (beatOffset in listOf(1.0, 3.0)) {
+                val startF = ((barStartSec + beatOffset * beatPeriodSec) * sampleRate).toInt()
+                val len = (0.045 * sampleRate).toInt()
+                for (i in 0 until len) {
+                    val f = startF + i
+                    if (f >= totalFrames) break
+                    val env = exp(-i.toDouble() / (0.010 * sampleRate))
+                    val sample = (
+                        (sin(2.0 * PI * 220.0 * i / sampleRate) * 0.4 +
+                            sin(2.0 * PI * 2_200.0 * i / sampleRate) * 0.6) * 23_000.0 * env
+                        ).toInt()
+                    pcm[f] = (pcm[f].toInt() + sample).coerceIn(-32767, 32767).toShort()
+                }
+            }
+        }
+
+        val grid = BpmDetector.detectBeatGridFromPcm(
+            pcmInterleaved = pcm,
+            frameCount = totalFrames,
+            sampleRate = sampleRate,
+            channelCount = 1,
+        )
+        assertNotNull("Expected BeatGrid for syncopated groove after ambient intro", grid)
+        assertTrue("Expected ~120 BPM (±1), got ${grid!!.bpm}", abs(grid.bpm - 120) <= 1)
+        // Bar 1 Beat 1 is at 6000ms, which folds modulo 2000ms to 0ms (or ~2000ms).
+        val foldedPhaseDiff = minOf(
+            abs(grid.firstDownbeatMs),
+            abs(grid.firstDownbeatMs - 2_000L),
+        )
+        assertTrue(
+            "Expected folded firstDownbeatMs near 0ms/2000ms (±90ms) rather than 1000ms pickup, got ${grid.firstDownbeatMs}ms",
+            foldedPhaseDiff <= 90L,
+        )
+    }
+
+    @Test
+    fun resolveEmbeddedAndAcousticBpm_honorsConsistentTagAndRejectsBogusTag() {
+        val pcm92 = synthesizeDrumPulseTrack(
+            bpm = 92,
+            durationSeconds = 12.0,
+            sampleRate = 44_100,
+            channels = 1,
+            includeEighthHiHat = true,
+        )
+        val acc92 = OnsetFluxAccumulator(sampleRate = 44_100, channelCount = 1).apply {
+            feedInterleavedPcm(pcm92, frameCount = pcm92.size)
+        }
+        // 1. Consistent embedded tag (92) is preserved
+        assertEquals(92, BpmDetector.resolveEmbeddedAndAcousticBpm(92, 92, acc92))
+        // 2. Half-time / double-time embedded tag (184) is preserved when musically related (2x)
+        assertEquals(184, BpmDetector.resolveEmbeddedAndAcousticBpm(184, 92, acc92))
+        // 3. Bogus default transcode tag (120) contradicted by high-clarity 92 BPM audio is rejected!
+        assertEquals(92, BpmDetector.resolveEmbeddedAndAcousticBpm(120, 92, acc92))
+        // 4. Empty/silent accumulator defers to valid embedded tag
+        val emptyAcc = OnsetFluxAccumulator(sampleRate = 44_100, channelCount = 1)
+        assertEquals(120, BpmDetector.resolveEmbeddedAndAcousticBpm(120, null, emptyAcc))
+    }
+
     private fun synthesizeDrumPulseTrack(
         bpm: Int,
         durationSeconds: Double,

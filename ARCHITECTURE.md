@@ -1,8 +1,8 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.11 (`versionCode = 10011`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.12 (`versionCode = 10012`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
-> **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · Microsoft ONNX Runtime Android `1.20.0` · SQLite (`SQLiteOpenHelper` `DATABASE_VERSION = 3` + Kotlin `StateFlow`)
+> **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · Microsoft ONNX Runtime Android `1.20.0` · SQLite (`SQLiteOpenHelper` `DATABASE_VERSION = 4` + Kotlin `StateFlow`)
 
 ---
 
@@ -275,7 +275,7 @@ CREATE TABLE app_settings (
    - 所有 `ExoPlayer` API 调用严格运行在主线程 (`exoPlayer.applicationLooper`)。
    - A-B 循环边界通过 `exoPlayer.createMessage { _, _ -> handleLoopWrap() }.setLooper(exoPlayer.applicationLooper).setPosition(bMs).setDeleteAfterDelivery(false).send()` 注册；任何修改 `aMs`/`bMs`、挂起循环、切换曲目或手动 `seekTo` 前必须先执行 `activeMessage?.cancel()`。
    - **1:1 浮点手柄拖拽与小节刻度吸附 (`WaveformLoopRuler` + `BeatGrid`)**：`.pointerInput(safeDuration)` 严格仅以 `safeDuration` 为 Key；开启 `barSnapEnabled`（默认 `true`）时，`markOrUpdateA`、`markOrUpdateB`、`setLoopPointsFromDrag` 及循环态标尺点击寻址统一经 `BeatGrid` 吸附至最近小节边界（保证 `B >= A + 1 bar`），标尺画布渲染每小节/每 4 小节竖向刻度并在顶部显示 `A mm:ss.d ━━● N小节 ●━━ B mm:ss.d`，`BpmQuickBar` 支持一键切换 `小节对齐` 及 `对齐第1拍`（`alignDownbeatToCurrentPosition`）。
-   - **自动 BPM 与小节重拍网格检测 (`BpmDetector.computeBeatGrid` + `WaveformExtractor.loadOrDetectBeatGrid`)**：优先命中向后兼容的 `cacheDir/waveforms/bpm_<id>_<mtime>.dat` 缓存（`bpm,firstBeatMs,firstDownbeatMs,beatsPerBar`）；否则通过 `100 Hz` 起始通量包络自相关求 `bpm`，再经节拍相位网格搜索定位 `firstBeatMs`，并对 4 个候选小节重拍相位结合低频重拍强调评分确定 `firstDownbeatMs`。
+   - **自动 BPM 与小节重拍网格检测 (`BpmDetector.computeBeatGrid` + `WaveformExtractor.loadOrDetectBeatGrid`, `v1.0.12`)**：优先命中 `cacheDir/waveforms/bpm_v3_<id>_<mtime>.dat` 缓存（`bpm,firstBeatMs,firstDownbeatMs,beatsPerBar`，手动点击 `"自动"` 时传入 `ignoreCache = true` 强制重算，且 `DATABASE_VERSION = 4` 迁移自动重置历史旧版自动检测残留的 `bpm = 120, first_downbeat_ms = 0`）；解码前 `45 秒` 音频（前奏清晰度 `< 0.22` 时自动追加 `35%` 中段二次采样）并通过 `100 Hz` 三频带（`Low < 155 Hz`、`Mid 155–2400 Hz`、`High > 2400 Hz`）对数起始通量包络、多谐波自相关与 `< 2400 Hz` 脉冲倍频消歧、多小节（`1..16` 拍）`0.05 BPM` 细粒度梳状精修求得精确 `bpm`，再经 128 相位抛物线插值定位 `firstBeatMs`，最后综合低频底鼓/Bass 重拍、第 2/4 拍中高频军鼓反拍特征（`snareBackbeatSignature`）、频谱跳变与弱起小节（anacrusis）检测精准锁定第 1 拍 `firstDownbeatMs`。当 `BeatGrid` 更新或手动调整 BPM 时，若当前存在未锁定书签的激活 A-B 循环且开启了 `barSnapEnabled`，`PracticeLoopEngine` 自动重吸附 A/B 循环端点并更新 `PlayerMessage`；`WaveformLoopRuler` 的 4 小节长刻度高亮严格按 `((tMs - firstDownbeatMs) / barDurationMs).roundToInt() % 4 == 0` 相对第 1 小节重拍对齐。
    - **一键 `关 ↔ 4拍` 纯节拍预备拍 (`CountInMode` & `CountInMetronome`, `v1.0.9`)**：`PracticeLoopEngine.cycleCountInMode()` 直接在 `OFF` 与 `BEAT_4` 间一键切换，所有非 `OFF` 状态统一执行 `runFourBeatCountdown`（第 1 拍重音木鱼 + 第 2–4 拍轻击，拍距 `60000 / (bpm * speed)`），且切换预备拍不再强制弹出 `BpmQuickBar`。
    - 视频连续循环（`countInMode == OFF`）：记录 `seekStartRealtimeMs` 至 `Player.Listener.onRenderedFirstFrame`（或 `onPlaybackStateChanged(STATE_READY)`）耗时；若 `> 80 ms` 且 `videoSeekMode == AUTO`，自动将 `exoPlayer.setSeekParameters(SeekParameters(1_500_000L, 0L))` 应用于后续循环绕回。
 3. **练习模式确定性状态机与专属视觉标识 (`MiniPlayerViewModel.kt` & `GuitarIcon.kt`)**：

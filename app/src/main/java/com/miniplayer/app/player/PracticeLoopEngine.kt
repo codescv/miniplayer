@@ -511,6 +511,11 @@ class PracticeLoopEngine(
                 } else {
                     state.copy(barSnapEnabled = true)
                 }
+            } else if (enabled && state.activeAMs != null) {
+                state.copy(
+                    barSnapEnabled = true,
+                    activeAMs = state.beatGrid().snapPointA(state.activeAMs, port.durationMs),
+                )
             } else {
                 state.copy(barSnapEnabled = enabled)
             }
@@ -563,7 +568,11 @@ class PracticeLoopEngine(
 
     fun setBpm(bpm: Int) {
         val safe = PracticeMath.clampBpm(bpm)
-        updatePracticeState { it.copy(bpm = safe) }
+        val dur = port.durationMs
+        updatePracticeState { state ->
+            reSnapLoopForUpdatedBeatGrid(state.copy(bpm = safe), dur, shouldReSnapActiveLoop = _activeBookmarkId.value == null)
+        }
+        syncLoopBoundaryMessage()
     }
 
     fun applyAutoDetectedBpm(bpm: Int) {
@@ -574,14 +583,50 @@ class PracticeLoopEngine(
     fun applyAutoDetectedBeatGrid(grid: BeatGrid, overwriteCustomBpm: Boolean = false) {
         val safeBpm = PracticeMath.clampBpm(grid.bpm)
         val safeDownbeat = grid.firstDownbeatMs.coerceAtLeast(0L)
+        val dur = port.durationMs
         updatePracticeState { state ->
+            val wasUnsetGrid = state.bpm == 120 && state.firstDownbeatMs == 0L
             val nextBpm = if (overwriteCustomBpm || state.bpm == 120) safeBpm else state.bpm
             val nextDownbeat = if (overwriteCustomBpm || state.firstDownbeatMs == 0L) {
                 safeDownbeat
             } else {
                 state.firstDownbeatMs
             }
-            state.copy(bpm = nextBpm, firstDownbeatMs = nextDownbeat)
+            val updated = state.copy(bpm = nextBpm, firstDownbeatMs = nextDownbeat)
+            reSnapLoopForUpdatedBeatGrid(
+                state = updated,
+                durationMs = dur,
+                shouldReSnapActiveLoop = (overwriteCustomBpm || wasUnsetGrid) && _activeBookmarkId.value == null,
+            )
+        }
+        syncLoopBoundaryMessage()
+    }
+
+    private fun reSnapLoopForUpdatedBeatGrid(
+        state: PracticeState,
+        durationMs: Long,
+        shouldReSnapActiveLoop: Boolean,
+    ): PracticeState {
+        if (!shouldReSnapActiveLoop || !state.barSnapEnabled || durationMs <= 0L) {
+            return state
+        }
+        val updatedGrid = state.beatGrid()
+        return if (state.activeAMs != null && state.activeBMs != null) {
+            val snapped = updatedGrid.snapDraggedLoopPoints(
+                aMs = state.activeAMs,
+                bMs = state.activeBMs,
+                draggingHandle = null,
+                durationMs = durationMs,
+            )
+            val normalized = PracticeMath.normalizeLoopPoints(snapped.first, snapped.second, durationMs)
+            state.copy(
+                activeAMs = normalized?.first ?: state.activeAMs,
+                activeBMs = normalized?.second ?: state.activeBMs,
+            )
+        } else if (state.activeAMs != null) {
+            state.copy(activeAMs = updatedGrid.snapPointA(state.activeAMs, durationMs))
+        } else {
+            state
         }
     }
 

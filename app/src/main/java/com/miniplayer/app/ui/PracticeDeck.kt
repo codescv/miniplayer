@@ -314,7 +314,12 @@ fun WaveformLoopRuler(
                 for (barIdx in barBoundaries.indices step stride) {
                     val tMs = barBoundaries[barIdx]
                     val tickX = ((tMs.toFloat() / safeDuration) * w).coerceIn(0f, w)
-                    val isPhraseBar = (barIdx % 4 == 0)
+                    val relBarIdx = if (beatGrid != null && beatGrid.barDurationMs > 1.0) {
+                        ((tMs - beatGrid.firstDownbeatMs).toDouble() / beatGrid.barDurationMs).roundToInt()
+                    } else {
+                        barIdx
+                    }
+                    val isPhraseBar = (relBarIdx % 4 == 0)
                     drawLine(
                         color = if (isPhraseBar) majorColor else minorColor,
                         start = Offset(tickX, if (isPhraseBar) 1.dp.toPx() else waveHeight * 0.14f),

@@ -68,32 +68,32 @@ class AgentFeedbackHelperTest {
     }
 
     @Test
-    fun `formatSubject enforces play routing prefix v1_0_11 tag strips debug suffix and sanitizes summary`() {
+    fun `formatSubject enforces play routing prefix v1_0_12 tag strips debug suffix and sanitizes summary`() {
         assertEquals(
-            "play: [v1.0.11] 练习模式希望支持导出循环片段",
+            "play: [v1.0.12] 练习模式希望支持导出循环片段",
             AgentFeedbackHelper.formatSubject(
                 summary = "练习模式希望支持导出循环片段",
-                versionName = "1.0.11",
+                versionName = "1.0.12",
             ),
         )
-        // Debug build suffix (-DEBUG) must normalize cleanly to [v1.0.11] and collapse newlines to single space
+        // Debug build suffix (-DEBUG) must normalize cleanly to [v1.0.12] and collapse newlines to single space
         assertEquals(
-            "play: [v1.0.11] 五轨混音 音量记忆优化",
+            "play: [v1.0.12] 五轨混音 音量记忆优化",
             AgentFeedbackHelper.formatSubject(
                 summary = "  五轨混音\n\t音量记忆优化  ",
-                versionName = "1.0.11-DEBUG",
+                versionName = "1.0.12-DEBUG",
             ),
         )
-        // Leading 'v' is not doubled and blank versionName falls back to v1.0.11
+        // Leading 'v' is not doubled and blank versionName falls back to v1.0.12
         assertEquals(
-            "play: [v1.0.11] 歌词字体大小调节",
+            "play: [v1.0.12] 歌词字体大小调节",
             AgentFeedbackHelper.formatSubject(
                 summary = "歌词字体大小调节",
-                versionName = "v1.0.11",
+                versionName = "v1.0.12",
             ),
         )
         assertEquals(
-            "play: [v1.0.11] 默认版本兜底",
+            "play: [v1.0.12] 默认版本兜底",
             AgentFeedbackHelper.formatSubject(
                 summary = "默认版本兜底",
                 versionName = "",
@@ -101,35 +101,35 @@ class AgentFeedbackHelperTest {
         )
         // Blank summary falls back to first non-empty line of details
         assertEquals(
-            "play: [v1.0.11] 第一行详细描述自动提炼为主题",
+            "play: [v1.0.12] 第一行详细描述自动提炼为主题",
             AgentFeedbackHelper.formatSubject(
                 summary = "   ",
-                versionName = "1.0.11",
+                versionName = "1.0.12",
                 detailsFallback = "\n  第一行详细描述自动提炼为主题 \n第二行补充细节",
             ),
         )
         // Both blank falls back to DEFAULT_SUMMARY
         assertEquals(
-            "play: [v1.0.11] 使用反馈",
+            "play: [v1.0.12] 使用反馈",
             AgentFeedbackHelper.formatSubject(
                 summary = "",
-                versionName = "1.0.11",
+                versionName = "1.0.12",
                 detailsFallback = "   ",
             ),
         )
         // Overly long summary is truncated safely
         val longSummary = "A".repeat(200)
-        val truncatedSubject = AgentFeedbackHelper.formatSubject(longSummary, "1.0.11")
-        assertTrue(truncatedSubject.startsWith("play: [v1.0.11] "))
+        val truncatedSubject = AgentFeedbackHelper.formatSubject(longSummary, "1.0.12")
+        assertTrue(truncatedSubject.startsWith("play: [v1.0.12] "))
         assertTrue(truncatedSubject.endsWith("…"))
-        assertTrue(truncatedSubject.length <= "play: [v1.0.11] ".length + AgentFeedbackHelper.MAX_SUMMARY_LENGTH)
+        assertTrue(truncatedSubject.length <= "play: [v1.0.12] ".length + AgentFeedbackHelper.MAX_SUMMARY_LENGTH)
     }
 
     @Test
     fun `formatBody formats practice and casual diagnostics cleanly and honors includeDiagnostics toggle`() {
         val practiceDiagnostics = FeedbackDiagnostics(
-            versionName = "1.0.11-DEBUG",
-            versionCode = 10011,
+            versionName = "1.0.12-DEBUG",
+            versionCode = 10012,
             androidVersion = "Android 15 (SDK 35)",
             deviceModel = "OnePlus 13T",
             currentTrackTitle = "Constellation Backing",
@@ -158,7 +158,7 @@ class AgentFeedbackHelperTest {
             diagnostics = practiceDiagnostics,
         )
         assertTrue(bodyWithDiag.startsWith("在 128 BPM 下希望支持半小节切换。"))
-        assertTrue(bodyWithDiag.contains("应用版本: v1.0.11 (10011)"))
+        assertTrue(bodyWithDiag.contains("应用版本: v1.0.12 (10012)"))
         assertTrue(bodyWithDiag.contains("设备环境: Android 15 (SDK 35) · OnePlus 13T"))
         assertTrue(bodyWithDiag.contains("当前媒体: Constellation Backing (音频 · 播放中 · 01:12.4 / 04:00.0)"))
         assertTrue(bodyWithDiag.contains("练习状态: 速度 0.85x · 变调 -1st-15c · BPM 128 · A 00:08.0 - B 00:16.0 (激活)"))
@@ -181,13 +181,13 @@ class AgentFeedbackHelperTest {
                 recipientEmail = "agent+triage@example.com",
                 summary = "A+B & C=1 混音反馈",
                 details = "第一行 A+B\n第二行 100% 正常",
-                versionName = "1.0.11",
+                versionName = "1.0.12",
                 includeDiagnostics = false,
             ),
         )
 
         assertEquals("agent+triage@example.com", payload.recipientEmail)
-        assertEquals("play: [v1.0.11] A+B & C=1 混音反馈", payload.subject)
+        assertEquals("play: [v1.0.12] A+B & C=1 混音反馈", payload.subject)
         assertFalse(payload.hasAttachment)
         assertTrue(payload.mailtoUri.startsWith("mailto:agent+triage@example.com?subject="))
 
@@ -200,7 +200,7 @@ class AgentFeedbackHelperTest {
             val idx = pair.indexOf('=')
             pair.substring(0, idx) to percentDecodeUtf8(pair.substring(idx + 1))
         }
-        assertEquals("play: [v1.0.11] A+B & C=1 混音反馈", params["subject"])
+        assertEquals("play: [v1.0.12] A+B & C=1 混音反馈", params["subject"])
         assertEquals("第一行 A+B\n第二行 100% 正常", params["body"])
     }
 

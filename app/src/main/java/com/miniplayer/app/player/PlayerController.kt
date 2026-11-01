@@ -737,7 +737,7 @@ class PlayerController(
             } else if (bpmJob?.isActive == true) {
                 forceApplyPendingBpmItemId = item.itemId
             } else {
-                startBpmDetectionFor(item, forceApply = true)
+                startBpmDetectionFor(item, forceApply = true, ignoreCache = true)
             }
         }
     }
@@ -844,7 +844,7 @@ class PlayerController(
         }
     }
 
-    private fun startBpmDetectionFor(item: MediaItem, forceApply: Boolean) {
+    private fun startBpmDetectionFor(item: MediaItem, forceApply: Boolean, ignoreCache: Boolean = false) {
         bpmJob?.cancel()
         _detectedBpm.value = null
         _detectedBeatGrid.value = null
@@ -857,7 +857,7 @@ class PlayerController(
         bpmJob = mainScope.launch {
             var detectedGrid: BeatGrid? = null
             try {
-                detectedGrid = waveformExtractor.loadOrDetectBeatGrid(item)
+                detectedGrid = waveformExtractor.loadOrDetectBeatGrid(item, ignoreCache = ignoreCache)
             } finally {
                 runOnPlayerThread {
                     if (_snapshot.value.currentItem?.itemId == item.itemId) {

@@ -471,6 +471,42 @@ class PracticeLoopEngineTest {
         assertFalse(engine.practiceState.value.barSnapEnabled)
         engine.markPointA(3_333L)
         assertEquals(3_333L, engine.practiceState.value.activeAMs)
+        engine.markPointBAndLoop(10_500L)
+        assertEquals(3_333L, engine.practiceState.value.activeAMs)
+        assertEquals(10_500L, engine.practiceState.value.activeBMs)
+
+        // 7. Re-enable bar-snap and verify that applyAutoDetectedBeatGrid and setBpm
+        // automatically re-snap an active A-B loop and reschedule the boundary message!
+        engine.toggleBarSnap() // snaps [3333..10500] onto [2500..10500] at 120 BPM (bar=2000ms, downbeat=500ms)
+        assertTrue(engine.practiceState.value.barSnapEnabled)
+        assertEquals(2_500L, engine.practiceState.value.activeAMs)
+        assertEquals(10_500L, engine.practiceState.value.activeBMs)
+
+        // Reset track to default [120 BPM, 0ms] and mark [2000..10000], then simulate auto-detected BeatGrid arriving
+        engine.bindTrack(
+            state = PracticeState(
+                itemId = 90L,
+                bpm = 120,
+                firstDownbeatMs = 0L,
+                barSnapEnabled = true,
+                activeAMs = 2_000L,
+                activeBMs = 10_000L,
+                loopEnabled = true,
+            ),
+            isVideo = false,
+            activatePracticeMode = true,
+        )
+        // Auto-detected BeatGrid arrives: 100 BPM (bar = 2400ms), firstDownbeatMs = 300ms
+        // Nearest bars to 2000ms and 10000ms on 300 + k*2400 grid ([300, 2700, 5100, 7500, 9900]) are 2700ms and 9900ms!
+        engine.applyAutoDetectedBeatGrid(
+            BeatGrid(bpm = 100, firstBeatMs = 300L, firstDownbeatMs = 300L, beatsPerBar = 4),
+            overwriteCustomBpm = false,
+        )
+        assertEquals(100, engine.practiceState.value.bpm)
+        assertEquals(300L, engine.practiceState.value.firstDownbeatMs)
+        assertEquals(2_700L, engine.practiceState.value.activeAMs)
+        assertEquals(9_900L, engine.practiceState.value.activeBMs)
+        assertEquals(9_900L, fakePort.scheduledBoundaryMs)
     }
 
     @Test
