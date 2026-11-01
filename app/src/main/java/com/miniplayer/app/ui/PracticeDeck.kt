@@ -699,6 +699,7 @@ fun PracticeDeck(
     onAutoDetectBpm: () -> Unit = {},
     onDownloadStemModel: () -> Unit = {},
     onAnalyzeTrackStems: () -> Unit = {},
+    onCancelStemOperation: () -> Unit = {},
     onToggleKeepScreenOn: () -> Unit = {},
     onSaveNewBookmark: (label: String) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -808,18 +809,16 @@ fun PracticeDeck(
                 )
             }
 
-            // Inline Semitone, Cents & Formant Preservation Pitch Shift Panel
+            // Inline Pure Sonic Semitone & Fine Cents Pitch Shift Panel
             AnimatedVisibility(visible = expandedDrawer == ExpandedDeckDrawer.PITCH_SHIFT) {
                 PitchShiftInlinePanel(
                     semitones = practiceState.pitchSemitones,
                     cents = practiceState.pitchCents,
-                    preserveFormants = practiceState.preserveFormants,
                     onUpdatePitch = { st, ct -> loopEngine.setPitchShift(st, ct) },
-                    onTogglePreserveFormants = { enabled -> loopEngine.setPreserveFormants(enabled) },
                 )
             }
 
-            // Inline 5-Stem Separation & Independent Instrument Volume Mixer Panel
+            // Inline HTDemucs 5-Stem Separation & Independent Instrument Volume Mixer Panel
             AnimatedVisibility(visible = expandedDrawer == ExpandedDeckDrawer.STEM_MIXER) {
                 StemMixerInlinePanel(
                     itemId = practiceState.itemId,
@@ -827,6 +826,7 @@ fun PracticeDeck(
                     stemAnalysisState = stemAnalysisState,
                     onDownloadStemModel = onDownloadStemModel,
                     onAnalyzeTrackStems = onAnalyzeTrackStems,
+                    onCancelStemOperation = onCancelStemOperation,
                     onStemVolumeChange = { stem, gain, commit ->
                         loopEngine.setStemVolume(stem, gain, commitPersist = commit)
                     },
@@ -1520,10 +1520,9 @@ private fun DeckIconBadgeContent(
 private fun PitchShiftInlinePanel(
     semitones: Int,
     cents: Int,
-    preserveFormants: Boolean,
     onUpdatePitch: (Int, Int) -> Unit,
-    onTogglePreserveFormants: (Boolean) -> Unit,
 ) {
+    val isShifted = semitones != 0 || cents != 0
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1547,11 +1546,16 @@ private fun PitchShiftInlinePanel(
                 }
                 TextButton(
                     onClick = { onUpdatePitch(0, 0) },
+                    enabled = isShifted,
                     modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 ) {
                     val stSign = if (semitones > 0) "+" else ""
                     Text(
-                        text = if (semitones == 0 && cents == 0) "原调 (0 st)" else "${stSign}${semitones} st · 复位",
+                        text = if (!isShifted) {
+                            "原调 (0 st)"
+                        } else {
+                            "${stSign}${semitones} st · 恢复原调"
+                        },
                         style = MaterialTheme.typography.labelLarge.tnum(),
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -1569,7 +1573,7 @@ private fun PitchShiftInlinePanel(
                 text = when (semitones) {
                     -1 -> "提示：将标准调原曲降半音至 Eb（无需改调弦）"
                     1 -> "提示：+1 半音 = 用标准调弦吉他跟弹 Eb 降半音原曲"
-                    else -> "范围 ±6 半音；下方可做 ±50 音分微偏校准"
+                    else -> "范围 ±6 半音；下方可做 ±50 ct 音分微调校准"
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1577,59 +1581,40 @@ private fun PitchShiftInlinePanel(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedButton(
                     onClick = { onUpdatePitch(semitones, (cents - 5).coerceAtLeast(-50)) },
-                    modifier = Modifier.defaultMinSize(minHeight = 44.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(36.dp),
                 ) {
                     Text("-5c", style = MaterialTheme.typography.labelMedium.tnum())
                 }
+                Slider(
+                    value = cents.toFloat(),
+                    onValueChange = { next ->
+                        onUpdatePitch(semitones, next.roundToInt().coerceIn(-50, 50))
+                    },
+                    valueRange = -50f..50f,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics {
+                            contentDescription = "音分微调 $cents ct"
+                        },
+                )
                 Text(
-                    text = "音分校准: ${if (cents > 0) "+$cents" else "$cents"} cents",
+                    text = "${if (cents > 0) "+$cents" else "$cents"} ct",
                     style = MaterialTheme.typography.labelMedium.tnum(),
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.width(44.dp),
                 )
                 OutlinedButton(
                     onClick = { onUpdatePitch(semitones, (cents + 5).coerceAtMost(50)) },
-                    modifier = Modifier.defaultMinSize(minHeight = 44.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(36.dp),
                 ) {
                     Text("+5c", style = MaterialTheme.typography.labelMedium.tnum())
-                }
-            }
-
-            // Formant-Preserving Spectral Envelope Toggle (`保持人声音色 / 共振峰保护`)
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceContainer,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { onTogglePreserveFormants(!preserveFormants) },
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text(
-                            text = "保持人声音色 (共振峰保护)",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "升降调时校正声道共振峰包络，避免女声变男声或卡通音",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = preserveFormants,
-                        onCheckedChange = onTogglePreserveFormants,
-                    )
                 }
             }
         }
@@ -1643,11 +1628,18 @@ private fun StemMixerInlinePanel(
     stemAnalysisState: StemAnalysisState,
     onDownloadStemModel: () -> Unit,
     onAnalyzeTrackStems: () -> Unit,
+    onCancelStemOperation: () -> Unit,
     onStemVolumeChange: (StemType, Float, Boolean) -> Unit,
     onToggleStemMute: (StemType) -> Unit,
     onToggleStemSolo: (StemType) -> Unit,
     onResetStemMix: () -> Unit,
 ) {
+    val isTrackReady = stemAnalysisState is StemAnalysisState.Ready &&
+        (itemId <= 0L || stemAnalysisState.itemId == itemId)
+    val isModelMissing = stemAnalysisState is StemAnalysisState.ModelNotInstalled ||
+        stemAnalysisState is StemAnalysisState.DownloadingModel ||
+        (stemAnalysisState is StemAnalysisState.Error && stemAnalysisState.modelMissing)
+
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1657,133 +1649,247 @@ private fun StemMixerInlinePanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Header Row: On-Demand AI Model / Per-Track Separation Status + Reset
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                when (stemAnalysisState) {
-                    is StemAnalysisState.ModelNotInstalled -> {
-                        FilledTonalButton(
-                            onClick = onDownloadStemModel,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            modifier = Modifier.height(34.dp),
-                        ) {
-                            Text(
-                                text = "下载 AI 分轨模型 (首次按需)",
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                softWrap = false,
-                            )
-                        }
-                    }
+            if (isModelMissing) {
+                // Step 1: Prominent card when htdemucs_6s.onnx is not yet downloaded
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "首次使用需下载 HTDemucs 6s 专业分离模型 (~100 MB)",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        Text(
+                            text = if (stemAnalysisState is StemAnalysisState.Error) {
+                                stemAnalysisState.message
+                            } else {
+                                "Meta HTDemucs 混合 Transformer 端侧离线分离 5 轨音频（下载一次后永久本地可用）"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (stemAnalysisState is StemAnalysisState.Error) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.82f)
+                            },
+                        )
 
-                    is StemAnalysisState.DownloadingModel -> {
-                        val pct = (stemAnalysisState.progress * 100f).roundToInt().coerceIn(0, 100)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Text(
-                                text = "AI 模型准备中 $pct%...",
-                                style = MaterialTheme.typography.labelMedium.tnum(),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    }
-
-                    is StemAnalysisState.AnalyzingTrack -> {
-                        val pct = (stemAnalysisState.progress * 100f).roundToInt().coerceIn(0, 100)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Text(
-                                text = "AI 分轨分析中 $pct%...",
-                                style = MaterialTheme.typography.labelMedium.tnum(),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    }
-
-                    is StemAnalysisState.Ready -> {
-                        if (itemId <= 0L || stemAnalysisState.itemId == itemId) {
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                        if (stemAnalysisState is StemAnalysisState.DownloadingModel) {
+                            val pct = (stemAnalysisState.progress * 100f).roundToInt().coerceIn(0, 100)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "AI 分轨已就绪",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    text = "正在下载 HTDemucs 模型 $pct%...",
+                                    style = MaterialTheme.typography.labelMedium.tnum(),
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    color = MaterialTheme.colorScheme.primary,
                                 )
+                                TextButton(
+                                    onClick = onCancelStemOperation,
+                                    contentPadding = PaddingValues(horizontal = 8.dp),
+                                    modifier = Modifier.height(32.dp),
+                                ) {
+                                    Text("取消", style = MaterialTheme.typography.labelMedium)
+                                }
                             }
-                        } else {
-                            FilledTonalButton(
-                                onClick = onAnalyzeTrackStems,
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                modifier = Modifier.height(34.dp),
-                            ) {
-                                Text(
-                                    text = "AI 深度分轨识别",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                )
-                            }
-                        }
-                    }
-
-                    is StemAnalysisState.Idle -> {
-                        FilledTonalButton(
-                            onClick = onAnalyzeTrackStems,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            modifier = Modifier.height(34.dp),
-                        ) {
-                            Text(
-                                text = "AI 深度分轨识别",
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                softWrap = false,
+                            LinearProgressIndicator(
+                                progress = { stemAnalysisState.progress.coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
                             )
+                        } else {
+                            Button(
+                                onClick = onDownloadStemModel,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "下载 HTDemucs 模型",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
                         }
                     }
                 }
-
-                TextButton(
-                    onClick = onResetStemMix,
-                    enabled = !stemMix.isUnity,
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    modifier = Modifier.height(34.dp),
+            } else if (!isTrackReady) {
+                // Step 2: Model is downloaded, current track not yet separated (or currently separating)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(
-                        text = "重置",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (stemAnalysisState is StemAnalysisState.AnalyzingTrack &&
+                            (itemId <= 0L || stemAnalysisState.itemId == itemId)
+                        ) {
+                            val pct = (stemAnalysisState.progress * 100f).roundToInt().coerceIn(0, 100)
+                            val statusText = if (stemAnalysisState.totalSegments > 0 && stemAnalysisState.currentSegment > 0) {
+                                "正在分离音轨 ${stemAnalysisState.currentSegment}/${stemAnalysisState.totalSegments} ($pct%)..."
+                            } else {
+                                "正在解码音频准备分离 ($pct%)..."
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                    Text(
+                                        text = statusText,
+                                        style = MaterialTheme.typography.labelMedium.tnum(),
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                    )
+                                }
+                                TextButton(
+                                    onClick = onCancelStemOperation,
+                                    contentPadding = PaddingValues(horizontal = 8.dp),
+                                    modifier = Modifier.height(32.dp),
+                                ) {
+                                    Text("取消", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                            LinearProgressIndicator(
+                                progress = { stemAnalysisState.progress.coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                            )
+                        } else {
+                            if (stemAnalysisState is StemAnalysisState.Error) {
+                                Text(
+                                    text = stemAnalysisState.message,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                FilledTonalButton(
+                                    onClick = onAnalyzeTrackStems,
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(38.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.AutoAwesome,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "使用 HTDemucs 分离当前曲目 (5轨)",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
+                                }
+                                if (!stemMix.isUnity) {
+                                    Spacer(Modifier.width(6.dp))
+                                    TextButton(
+                                        onClick = onResetStemMix,
+                                        contentPadding = PaddingValues(horizontal = 8.dp),
+                                        modifier = Modifier.height(38.dp),
+                                    ) {
+                                        Text(
+                                            text = "重置",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Step 3: Track separated & cached on disk -> instant 0s real-time 5-stem mixer
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                    ) {
+                        Text(
+                            text = "HTDemucs 5轨已就绪",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        )
+                    }
+
+                    TextButton(
+                        onClick = onResetStemMix,
+                        enabled = !stemMix.isUnity,
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.height(34.dp),
+                    ) {
+                        Text(
+                            text = "重置",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
             }
 
             // 5 Independent Stem Rows: 人声 / 吉他 / Bass / 鼓 / 其他 (0%–150%, Mute M, Solo S)
+            val controlsEnabled = !isModelMissing
             StemType.entries.forEach { stem ->
                 val sliderGain = stemMix.sliderGain(stem)
                 val effectiveGain = stemMix.effectiveGain(stem)
                 val isMuted = stem in stemMix.mutedStems
                 val isSolo = stemMix.soloStem == stem
-                val isAudible = effectiveGain > 0.001f
+                val isAudible = effectiveGain > 0.001f && controlsEnabled
 
                 Row(
                     modifier = Modifier
@@ -1812,6 +1918,7 @@ private fun StemMixerInlinePanel(
 
                     Slider(
                         value = sliderGain,
+                        enabled = controlsEnabled,
                         onValueChange = { next ->
                             onStemVolumeChange(stem, next.coerceIn(0f, 1.5f), false)
                         },
@@ -1843,6 +1950,7 @@ private fun StemMixerInlinePanel(
                     // Mute (`M`) pill button
                     Surface(
                         onClick = { onToggleStemMute(stem) },
+                        enabled = controlsEnabled,
                         shape = RoundedCornerShape(8.dp),
                         color = if (isMuted) {
                             MaterialTheme.colorScheme.errorContainer
@@ -1873,6 +1981,7 @@ private fun StemMixerInlinePanel(
                     // Solo (`S`) pill button
                     Surface(
                         onClick = { onToggleStemSolo(stem) },
+                        enabled = controlsEnabled,
                         shape = RoundedCornerShape(8.dp),
                         color = if (isSolo) {
                             MaterialTheme.colorScheme.tertiaryContainer

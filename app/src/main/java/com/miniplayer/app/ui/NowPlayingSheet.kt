@@ -650,6 +650,7 @@ fun NowPlayingSheet(
                                 onAutoDetectBpm = viewModel::autoDetectBpm,
                                 onDownloadStemModel = viewModel::downloadStemModelAndAnalyze,
                                 onAnalyzeTrackStems = viewModel::analyzeCurrentTrackStems,
+                                onCancelStemOperation = viewModel::cancelStemOperation,
                                 onToggleKeepScreenOn = {
                                     viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
                                 },

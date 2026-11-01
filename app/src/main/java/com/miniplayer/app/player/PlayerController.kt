@@ -193,9 +193,9 @@ class PlayerController(
             }
         }
 
-        override fun applyDspParameters(preserveFormants: Boolean, stemMix: StemMixConfig) {
+        override fun applyStemMix(stemMix: StemMixConfig) {
             runOnPlayerThread {
-                SharedExoPlayerHolder.updateDspParameters(preserveFormants, stemMix)
+                SharedExoPlayerHolder.updateStemMix(stemMix)
             }
         }
 
@@ -401,7 +401,7 @@ class PlayerController(
                     _detectedBeatGrid.value = null
                     _isDetectingBpm.value = false
                     forceApplyPendingBpmItemId = null
-                    SharedExoPlayerHolder.updateStemMaskContext(null, null)
+                    SharedExoPlayerHolder.updateSeparatedStemsContext(null, null)
                     mainScope.launch { stemSeparationEngine.onTrackBound(null) }
                     loopEngine.bindTrack(
                         state = PracticeState(itemId = -1L),
@@ -744,15 +744,19 @@ class PlayerController(
 
     fun downloadStemModelAndAnalyzeCurrentTrack() {
         val current = _snapshot.value.currentItem
+        val autoSeparate = !loopEngine.practiceState.value.stemMix.isUnity && current != null
         stemJob?.cancel()
         stemJob = mainScope.launch {
-            val grid = stemSeparationEngine.downloadModelAndAnalyze(current)
+            val separated = stemSeparationEngine.downloadModelOnlyOrSeparate(
+                item = current,
+                autoSeparateAfterDownload = autoSeparate,
+            )
             runOnPlayerThread {
                 val activeId = _snapshot.value.currentItem?.itemId
-                if (grid != null && activeId == grid.itemId) {
-                    SharedExoPlayerHolder.updateStemMaskContext(grid) { _snapshot.value.positionMs }
-                    _hapticTicks.tryEmit(Unit)
+                if (separated != null && activeId == separated.itemId) {
+                    SharedExoPlayerHolder.updateSeparatedStemsContext(separated) { _snapshot.value.positionMs }
                 }
+                _hapticTicks.tryEmit(Unit)
             }
         }
     }
@@ -761,20 +765,27 @@ class PlayerController(
         val current = _snapshot.value.currentItem ?: return
         stemJob?.cancel()
         stemJob = mainScope.launch {
-            val grid = stemSeparationEngine.analyzeTrackStems(current)
+            val separated = stemSeparationEngine.analyzeTrackStems(current)
             runOnPlayerThread {
                 val activeId = _snapshot.value.currentItem?.itemId
-                if (grid != null && activeId == grid.itemId) {
-                    SharedExoPlayerHolder.updateStemMaskContext(grid) { _snapshot.value.positionMs }
+                if (separated != null && activeId == separated.itemId) {
+                    SharedExoPlayerHolder.updateSeparatedStemsContext(separated) { _snapshot.value.positionMs }
                     _hapticTicks.tryEmit(Unit)
                 }
             }
         }
     }
 
+    fun cancelStemOperation() {
+        val activeJob = stemJob
+        stemJob = null
+        activeJob?.cancel()
+        stemSeparationEngine.onOperationCancelled(_snapshot.value.currentItem)
+    }
+
     private fun maybeAutoAnalyzeCurrentTrackStems() {
         val current = _snapshot.value.currentItem ?: return
-        if (!stemModelManager.isModelInstalled()) return
+        if (!stemModelManager.isModelReady()) return
         if (stemJob?.isActive == true) return
         val state = stemSeparationEngine.stemAnalysisState.value
         if (state is StemAnalysisState.Ready && state.itemId == current.itemId) return
@@ -815,15 +826,15 @@ class PlayerController(
 
     private fun bindStemStateFor(item: MediaItem) {
         stemJob?.cancel()
-        SharedExoPlayerHolder.updateStemMaskContext(null) { _snapshot.value.positionMs }
+        SharedExoPlayerHolder.updateSeparatedStemsContext(null) { _snapshot.value.positionMs }
         stemJob = mainScope.launch {
             stemSeparationEngine.onTrackBound(item)
-            val readyGrid = stemSeparationEngine.activeMaskGridForItem(item.itemId)
+            val readyCache = stemSeparationEngine.activeSeparatedCacheForItem(item.itemId)
             runOnPlayerThread {
                 if (_snapshot.value.currentItem?.itemId == item.itemId) {
-                    SharedExoPlayerHolder.updateStemMaskContext(readyGrid) { _snapshot.value.positionMs }
-                    if (readyGrid == null &&
-                        stemModelManager.isModelInstalled() &&
+                    SharedExoPlayerHolder.updateSeparatedStemsContext(readyCache) { _snapshot.value.positionMs }
+                    if (readyCache == null &&
+                        stemModelManager.isModelReady() &&
                         !loopEngine.practiceState.value.stemMix.isUnity
                     ) {
                         maybeAutoAnalyzeCurrentTrackStems()

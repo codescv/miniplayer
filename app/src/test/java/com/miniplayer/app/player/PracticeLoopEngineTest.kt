@@ -21,16 +21,19 @@ class PracticeLoopEngineTest {
     private lateinit var metronome: CountInMetronome
     private lateinit var engine: PracticeLoopEngine
     private val persistedStates = mutableListOf<PracticeState>()
+    private var stemSliderActivationCount = 0
 
     @Before
     fun setUp() {
         testScope = CoroutineScope(SupervisorJob())
         fakePort = FakeLoopPlayerPort(durationMs = 240_000L)
         metronome = CountInMetronome(testScope)
+        stemSliderActivationCount = 0
         engine = PracticeLoopEngine(
             port = fakePort,
             metronome = metronome,
             onStatePersisted = { persistedStates += it },
+            onStemSliderActivated = { stemSliderActivationCount++ },
         )
         fakePort.attachedEngine = engine
     }
@@ -471,7 +474,7 @@ class PracticeLoopEngineTest {
     }
 
     @Test
-    fun beatOnlyCountInToggleAndFormantStemDspPropagation_behaveDeterministically() {
+    fun beatOnlyCountInToggleAndStemMixPropagation_behaveDeterministically() {
         engine.bindTrack(
             state = PracticeState(itemId = 89L),
             isVideo = false,
@@ -490,31 +493,31 @@ class PracticeLoopEngineTest {
         assertEquals(CountInMode.BEAT_4, CountInMode.fromStoredValue("SEC_2"))
         assertEquals(CountInMode.OFF, CountInMode.fromStoredValue("OFF"))
 
-        // Formant preservation & 5-stem mixer propagation to LoopPlayerPort
-        assertTrue(fakePort.lastPreserveFormants)
+        // 5-stem mixer propagation to LoopPlayerPort + auto-analyze callback trigger
         assertTrue(fakePort.lastStemMix.isUnity)
-
-        engine.setPreserveFormants(false)
-        assertFalse(fakePort.lastPreserveFormants)
+        assertEquals(0, stemSliderActivationCount)
 
         engine.setStemVolume(StemType.VOCALS, 0.25f)
         assertEquals(0.25f, fakePort.lastStemMix.effectiveGain(StemType.VOCALS), 1e-4f)
+        assertEquals(1, stemSliderActivationCount)
 
         engine.toggleStemMute(StemType.DRUMS)
         assertEquals(0f, fakePort.lastStemMix.effectiveGain(StemType.DRUMS), 1e-4f)
+        assertEquals(2, stemSliderActivationCount)
 
         engine.toggleStemSolo(StemType.GUITAR)
         assertEquals(1.0f, fakePort.lastStemMix.effectiveGain(StemType.GUITAR), 1e-4f)
         assertEquals(0f, fakePort.lastStemMix.effectiveGain(StemType.VOCALS), 1e-4f)
+        assertEquals(3, stemSliderActivationCount)
 
         engine.resetStemMix()
         assertTrue(fakePort.lastStemMix.isUnity)
+        assertEquals(3, stemSliderActivationCount)
 
-        // Exiting Practice Mode resets live DSP parameters to casual bit-transparent defaults
+        // Exiting Practice Mode resets live stem mix parameters to casual bit-transparent defaults
         engine.setStemVolume(StemType.BASS, 1.40f)
         assertFalse(fakePort.lastStemMix.isUnity)
         engine.setPracticeModeActive(false)
-        assertTrue(fakePort.lastPreserveFormants)
         assertTrue(fakePort.lastStemMix.isUnity)
     }
 
@@ -527,7 +530,6 @@ class PracticeLoopEngineTest {
         var cancelBoundaryCount: Int = 0
         var lastSpeed: Float = 1.0f
         var lastPitch: Float = 1.0f
-        var lastPreserveFormants: Boolean = true
         var lastStemMix: StemMixConfig = StemMixConfig()
         var fastVideoSeekConfigured: Boolean = false
         var abLoopOwnsRepeatSnapshot: Boolean = false
@@ -551,8 +553,7 @@ class PracticeLoopEngineTest {
             abLoopOwnsRepeatSnapshot = attachedEngine?.abLoopOwnsRepeat == true
         }
 
-        override fun applyDspParameters(preserveFormants: Boolean, stemMix: StemMixConfig) {
-            lastPreserveFormants = preserveFormants
+        override fun applyStemMix(stemMix: StemMixConfig) {
             lastStemMix = stemMix
         }
 

@@ -15,8 +15,8 @@ android {
         applicationId = "com.miniplayer.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10009
-        versionName = "1.0.9"
+        versionCode = 10010
+        versionName = "1.0.10"
 
         val apiBase = System.getenv("MINIPLAYER_UPDATE_API_BASE")
             ?.takeIf { it.isNotBlank() }
@@ -110,6 +110,7 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.onnxruntime.android)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.core)

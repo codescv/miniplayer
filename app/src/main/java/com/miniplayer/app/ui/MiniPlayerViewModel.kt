@@ -648,6 +648,10 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         playerController.analyzeCurrentTrackStems()
     }
 
+    fun cancelStemOperation() {
+        playerController.cancelStemOperation()
+    }
+
     fun fetchLyricsOnlineIfNeeded() {
         val item = playbackSnapshot.value.currentItem ?: return
         if (_isLoadingLyrics.value) return

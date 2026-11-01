@@ -1,8 +1,8 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.9 (`versionCode = 10009`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.10 (`versionCode = 10010`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
-> **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · SQLite (`SQLiteOpenHelper` `DATABASE_VERSION = 3` + Kotlin `StateFlow`)
+> **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · Microsoft ONNX Runtime Android `1.20.0` · SQLite (`SQLiteOpenHelper` `DATABASE_VERSION = 3` + Kotlin `StateFlow`)
 
 ---
 
@@ -15,7 +15,7 @@ flowchart TD
     subgraph UI_Player["feat/ui-player (@coder-ui)"]
         UI["com.miniplayer.app.ui.*\nM3 Screens · GuitarIcon · PracticeDeck · VideoPracticeSurface\nMetadataEditorSheet · SettingsScreen"]
         VM["MiniPlayerViewModel"]
-        PL["com.miniplayer.app.player.*\nPlaybackService · RealTimeSonicAudioProcessor · FormantStemDspProcessor\nStemSeparationEngine · PlayerController · PracticeLoopEngine\nCountInMetronome · WaveformExtractor · BpmDetector"]
+        PL["com.miniplayer.app.player.*\nPlaybackService · RealTimeSonicAudioProcessor · HtdemucsStft\nStemSeparationEngine · PlayerController · PracticeLoopEngine\nCountInMetronome · WaveformExtractor · BpmDetector"]
     end
 
     subgraph LAN_Studio["feat/lan-studio (@coder-lan)"]
@@ -267,9 +267,9 @@ CREATE TABLE app_settings (
 1. **`PlaybackService.kt` (`MediaSessionService`) & `RealTimeSonicAudioProcessor.kt` (`v1.0.2`)**：
    - Manifest 声明 `android:foregroundServiceType="mediaPlayback"` 与 `androidx.media3.session.MediaSessionService` Intent Filter。
    - `ExoPlayer.Builder(this)` 配置 `AudioAttributes` (`USAGE_MEDIA`, `AUDIO_CONTENT_TYPE_MUSIC`)、`handleAudioFocus = true`、**`setHandleAudioBecomingNoisy(true)`**。
-   - **零寻址实时变调与零相位 STFT 共振峰保护 / 5 轨软掩码混音管线 (`RealTimeSonicAudioProcessor` + `FormantStemDspProcessor`, `v1.0.2` / `v1.0.9`)**：`DefaultAudioSink` 关闭浮点输出与硬件 `AudioTrack` 倍速参数，注入常驻激活（`isActive() == true`）的 `RealTimeSonicAudioProcessor`。连续点击升降调时，处理器在 `queueInput` 内将旧 `SonicAudioProcessor` 残余采样排空拼接至直接内存 `stagingBuffer` 并原地切换参数。当 `(preserveFormants && |pitch - 1.0| >= 0.005) || !stemMix.isUnity` 时，`Sonic` 输出紧接进入 **`FormantStemDspProcessor`**（`N = 1024`, `hop = 256`, `75%` 重叠周期 Hann 分析+合成窗，COLA 归一化系数 `1 / 1.5`）：
-     1. **共振峰频谱包络校正 (`preserveFormants = true`)**：对每帧幅度谱求对数幅度 $L[k] = \ln(|X[k]| + 10^{-7})$，利用前缀和滑动均值（半宽 $W = \max(6, \text{round}(320\text{ Hz}\cdot N/f_s))$）提取平滑共振峰包络 $E_{\text{shifted}}[k]$，按变调比逆映射插值恢复原声道包络 $E_{\text{orig}}[k] = E_{\text{shifted}}[\text{clamp}(k \cdot p, 0, N/2)]$，乘以人声共振峰频带余弦权重 $\alpha(k)$（`130–220 Hz` 渐入、`220–4500 Hz` 为 `1.0`、`4500–6200 Hz` 渐出）、限幅 $[-2.2, +2.2]$ 并做帧间指数平滑（`0.65` / `0.35`），施加**纯实数零相位增益**并匹配补偿前帧 RMS 能量——既消除变调导致的男女声异化/花栗鼠效应，又 100% 保留 `Sonic` 的相位一致性与鼓/拨弦瞬态冲击力。
-     2. **端侧 AI + 实时 STFT 5 轨软掩码混音 (`StemModelManager` + `StemSeparationEngine` + `FormantStemDspProcessor`)**：`StemModelManager` 管理 `filesDir/models/miniplayer-stem-net-v1.bin`（`64 KB` 量化双层 16-Bark 频带 + Mid/Side + HPSS 神经掩码网络权重，支持从 GitHub Release `v1.0.9` 按需下载并内置 APK 资源/确定性权重离线兜底）；`StemSeparationEngine` 以 `25 Hz`（`40 ms` 帧移）解码全曲生成 `stem_<id>_<mtime>.stm` GZIP 软掩码缓存（单曲约 `30–90 KB`）。实时混音对每个频点合成严格满足单位分解 $\sum_{s \in \{\text{vocals,guitar,bass,drums,other}\}} M_s[k] \equiv 1.0$ 的软掩码，并分别作用于立体声 Mid 与 Side 分量（$G_M[k], G_S[k]$），在全 `100%` 增益时严格恒等透传。
+   - **纯粹时域 Sonic 零寻址变调与端侧 `HTDemucs` (`htdemucs_6s`) 离线五轨混音管线 (`RealTimeSonicAudioProcessor` + `StemSeparationEngine` + `HtdemucsStft`, `v1.0.10`)**：
+     1. **纯粹时域 `SonicAudioProcessor` 实时变调**：移除 STFT 共振峰保护开关与相位/包络修饰路径；`DefaultAudioSink` 注入常驻激活（`isActive() == true`）的 `RealTimeSonicAudioProcessor`，连续点击半音/音分微调时在 `queueInput` 内将旧 `Sonic` 残余采样排空拼接至直接内存 `stagingBuffer` 并原地切换参数，在 `(1.0x, 0st, unity stems)` 下严格逐比特零延迟透传。
+     2. **Meta `htdemucs_6s` (`htdemucs_6s.onnx`) 端侧离线五轨分离与 `BFP8` 内存映射时域混音**：`StemModelManager` 管理 `filesDir/models/htdemucs_6s.onnx`（首次使用按需从 GitHub Release `v1.0.10` 流式下载 `~105 MB` ONNX 模型并校验 `> 20 MB` 及 ModelProto 头，绝不静默回退假模型）；`StemSeparationEngine` 解码音频并重采样至 `44,100 Hz` 立体声，以 `7.8 s`（`343,980` 采样，`overlap = 0.25`，三角过渡权重）滑窗经 `HtdemucsStft`（`4096`-pt 周期 Hann `cac=True` 实数谱）与 ONNX Runtime（`OrtSession`）分离出 `[VOCALS, GUITAR, BASS, DRUMS, OTHER(other+piano)]` 五轨立体声，流式编码至 `cacheDir/stems/htdemucs_<id>_<mtime>.stems`（`64` 帧块浮点压扩 `BFP8`，`SNR > 52 dB`，`MappedByteBuffer` `O(1)` 随机访问）。播放时 `RealTimeSonicAudioProcessor` 在 `flush()` 后的首帧利用两阶段归一化互相关在 `playheadMs` 邻域实现 **0 采样级对齐**，在时域完成五轨独立增益/静音/独奏混音与软限幅后直通 `SonicAudioProcessor`。
    - 视频熄屏续播：当 Activity 进入后台/熄屏时仅调用 `exoPlayer.clearVideoTextureView(surface)` 而不调用 `pause()`，使视频音轨在后台零中断继续播放；Activity 回到前台时重新绑定 `TextureView`。
 2. **`PracticeLoopEngine.kt`、`WaveformLoopRuler`、`BeatGrid` & `BpmDetector.kt` (`v1.0.2` / `v1.0.9`)**：
    - 所有 `ExoPlayer` API 调用严格运行在主线程 (`exoPlayer.applicationLooper`)。

@@ -35,7 +35,7 @@ interface LoopPlayerPort {
     fun scheduleBoundaryMessage(positionMs: Long, onReached: () -> Unit)
     fun cancelBoundaryMessage()
     fun applyPlaybackParameters(speed: Float, pitch: Float)
-    fun applyDspParameters(preserveFormants: Boolean, stemMix: StemMixConfig) {}
+    fun applyStemMix(stemMix: StemMixConfig) {}
     fun configureExactSeek()
     fun configureFastVideoKeyframeSeek()
     fun seekToPosition(positionMs: Long)
@@ -164,7 +164,7 @@ class PracticeLoopEngine(
         if (!active) {
             port.cancelBoundaryMessage()
             port.configureExactSeek()
-            port.applyDspParameters(preserveFormants = true, stemMix = StemMixConfig())
+            port.applyStemMix(StemMixConfig())
             port.applyPlaybackParameters(1.0f, 1.0f)
             _speedTrainer.update { it.copy(currentLoopInStep = 0) }
         } else {
@@ -420,11 +420,6 @@ class PracticeLoopEngine(
         val st = semitones.coerceIn(-6, 6)
         val ct = cents.coerceIn(-50, 50)
         updatePracticeState { it.copy(pitchSemitones = st, pitchCents = ct) }
-        syncSonicParameters()
-    }
-
-    fun setPreserveFormants(enabled: Boolean) {
-        updatePracticeState { it.copy(preserveFormants = enabled) }
         syncSonicParameters()
     }
 
@@ -768,10 +763,10 @@ class PracticeLoopEngine(
             val s = _practiceState.value
             val speed = PracticeMath.clampSpeed(s.practiceSpeed)
             val pitch = PracticeMath.computePitchFactor(s.pitchSemitones, s.pitchCents)
-            port.applyDspParameters(preserveFormants = s.preserveFormants, stemMix = s.stemMix)
+            port.applyStemMix(s.stemMix)
             port.applyPlaybackParameters(speed, pitch)
         } else {
-            port.applyDspParameters(preserveFormants = true, stemMix = StemMixConfig())
+            port.applyStemMix(StemMixConfig())
             port.applyPlaybackParameters(1.0f, 1.0f)
         }
     }

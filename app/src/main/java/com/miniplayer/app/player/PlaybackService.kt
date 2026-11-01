@@ -38,16 +38,15 @@ internal object SharedExoPlayerHolder {
         realTimeSonicProcessor.setTargetSpeedAndPitch(speed, pitch)
     }
 
-    fun updateDspParameters(preserveFormants: Boolean, stemMix: StemMixConfig) {
-        realTimeSonicProcessor.setPreserveFormants(preserveFormants)
+    fun updateStemMix(stemMix: StemMixConfig) {
         realTimeSonicProcessor.setStemMix(stemMix)
     }
 
-    fun updateStemMaskContext(
-        maskGrid: StemTrackMaskGrid?,
+    fun updateSeparatedStemsContext(
+        cache: StemSeparatedTrackCache?,
         positionMsSupplier: (() -> Long)? = null,
     ) {
-        realTimeSonicProcessor.setStemMaskContext(maskGrid, positionMsSupplier)
+        realTimeSonicProcessor.setSeparatedStemsContext(cache, positionMsSupplier)
     }
 
     fun getOrCreate(context: Context): ExoPlayer {
