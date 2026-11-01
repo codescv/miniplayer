@@ -102,6 +102,34 @@ class StemSeparatedTrackCache private constructor(
     }
 
     /**
+     * Bulk block decoder for the BeatGrid v2 stems fast path: decodes the mono `(L + R) / 2` of
+     * stem [stemIndex] (`0..4` = `[VOCALS, GUITAR, BASS, DRUMS, OTHER]`) for all frames of block
+     * [blockIdx] into [out] at [outOffset]. The two per-block `uint16` scales are read once per
+     * block. Returns the number of valid frames written.
+     */
+    fun decodeBlockMono(blockIdx: Int, stemIndex: Int, out: FloatArray, outOffset: Int): Int {
+        if (blockIdx < 0 || blockIdx >= numBlocks || stemIndex !in 0 until NUM_STEMS) return 0
+        val start = blockIdx * BLOCK_FRAMES
+        val valid = min(BLOCK_FRAMES, totalFrames - start)
+        val blockOffset = HEADER_BYTES + blockIdx * BLOCK_BYTES
+        val msbBase = blockOffset + SCALE_HEADER_BYTES
+        val lsbBase = msbBase + MSB_BYTES
+        val buf = dataBuf
+        val scL = stemIndex * 2
+        val scR = scL + 1
+        val unitL = (buf.getShort(blockOffset + scL * 2).toInt() and 0xFFFF) * U16_TO_Q10_UNIT
+        val unitR = (buf.getShort(blockOffset + scR * 2).toInt() and 0xFFFF) * U16_TO_Q10_UNIT
+        val n = min(valid, out.size - outOffset)
+        for (i in 0 until n) {
+            val elemBase = i * STEM_CHANNELS
+            val l = if (unitL != 0f) decodeQ10(buf, msbBase, lsbBase, elemBase + scL) * unitL else 0f
+            val r = if (unitR != 0f) decodeQ10(buf, msbBase, lsbBase, elemBase + scR) * unitR else 0f
+            out[outOffset + i] = 0.5f * (l + r)
+        }
+        return n
+    }
+
+    /**
      * Fast mono sum `0.5 * sum_s (L_s + R_s)` at [frameIndex] used by local cross-correlation
      * playhead alignment in [RealTimeSonicAudioProcessor].
      */
@@ -839,11 +867,19 @@ class StemSeparationEngine(
     fun activeSeparatedCacheForItem(itemId: Long): StemSeparatedTrackCache? =
         activeCache?.takeIf { it.itemId == itemId }
 
-    fun stemCacheFileFor(item: MediaItem): File {
-        val base = cacheRootDir ?: File(System.getProperty("java.io.tmpdir"), "miniplayer-cache")
-        val dir = File(base, "stems")
-        if (!dir.exists()) dir.mkdirs()
-        return File(dir, "htdemucs_${item.itemId}_${item.lastModified}.stems")
+    fun stemCacheFileFor(item: MediaItem): File = stemCacheFile(cacheRootDir, item)
+
+    companion object {
+        /**
+         * Path of the `.stems` cache for [item] under [cacheRoot] (shared with
+         * `WaveformExtractor`'s BeatGrid v2 stems fast path).
+         */
+        fun stemCacheFile(cacheRoot: File?, item: MediaItem): File {
+            val base = cacheRoot ?: File(System.getProperty("java.io.tmpdir"), "miniplayer-cache")
+            val dir = File(base, "stems")
+            if (!dir.exists()) dir.mkdirs()
+            return File(dir, "htdemucs_${item.itemId}_${item.lastModified}.stems")
+        }
     }
 
     /**

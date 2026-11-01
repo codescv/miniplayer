@@ -2,6 +2,8 @@ package com.miniplayer.app.player
 
 import android.media.AudioFormat
 import com.miniplayer.app.core.model.BeatGrid
+import com.miniplayer.app.core.model.BeatGridConfidence
+import com.miniplayer.app.core.model.BeatGridSource
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -197,10 +199,10 @@ class BpmDetectorTest {
         assertNotNull("Expected valid BeatGrid for 120 BPM 4/4 groove", grid)
         assertTrue("Expected ~120 BPM (±1), got ${grid!!.bpm}", abs(grid.bpm - 120) <= 1)
         assertEquals(4, grid.beatsPerBar)
-        // 820ms is inside [0, 2000ms), so folded firstDownbeatMs should align near 820ms (±75ms)
+        // Unfolded anchor: any true downbeat (820 + k·2000 ms) is valid; bar phase must match (±25 ms).
         assertTrue(
-            "Expected firstDownbeatMs near 820ms (±75ms), got ${grid.firstDownbeatMs}ms",
-            abs(grid.firstDownbeatMs - pickupSilenceMs) <= 75L,
+            "Expected downbeat bar phase ≡ 820ms (±25ms), got ${grid.firstDownbeatMs}ms",
+            barPhaseError(grid.firstDownbeatMs, pickupSilenceMs.toDouble(), grid.barDurationMs) <= 25.0,
         )
     }
 
@@ -228,18 +230,34 @@ class BpmDetectorTest {
         assertEquals(8_200L to 10_200L, grid.snapDraggedLoopPoints(9_900L, 10_200L, "A", 20_000L))
         assertEquals(4_200L to 6_200L, grid.snapDraggedLoopPoints(4_200L, 4_600L, "B", 20_000L))
 
-        // WaveformExtractor backward-compatible cache parser ("120" vs "128,180,180,4")
+        // WaveformExtractor backward-compatible cache parser ("120" / "128,180,180,4" -> AUTO_LEGACY)
         val legacyParsed = WaveformExtractor.parseCachedBeatGrid("120")
-        assertEquals(BeatGrid(bpm = 120, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = 4), legacyParsed)
-
-        val serialized = WaveformExtractor.formatCachedBeatGrid(
-            BeatGrid(bpm = 128, firstBeatMs = 180L, firstDownbeatMs = 180L, beatsPerBar = 4),
-        )
-        assertEquals("128,180,180,4", serialized)
         assertEquals(
-            BeatGrid(bpm = 128, firstBeatMs = 180L, firstDownbeatMs = 180L, beatsPerBar = 4),
-            WaveformExtractor.parseCachedBeatGrid(serialized),
+            BeatGrid(bpmPrecise = 120.0, firstBeatMs = 0L, firstDownbeatMs = 0L, source = BeatGridSource.AUTO_LEGACY),
+            legacyParsed,
         )
+        assertEquals(BeatGridSource.AUTO_LEGACY, WaveformExtractor.parseCachedBeatGrid("128,180,180,4")!!.source)
+
+        // bpm_v4 codec round-trip (fractional tempo, unfolded/negative anchor, meter, phrase, confidence)
+        val v4 = BeatGrid(
+            bpmPrecise = 120.3871,
+            firstBeatMs = 180L,
+            firstDownbeatMs = 16_180L,
+            beatsPerBar = 3,
+            phraseOffsetBars = 2,
+            confidence = BeatGridConfidence(
+                tempoClarity = 0.5f,
+                tempoStable = false,
+                downbeatMargin = 3.25f,
+                halfBarAmbiguous = true,
+                attackOffsetMs = -14.5f,
+                meterIrregular = true,
+            ),
+            source = BeatGridSource.AUTO_STEMS,
+        )
+        val serialized = WaveformExtractor.formatCachedBeatGrid(v4)
+        assertEquals("4,120.3871,180,16180,3,2,0.500,3.250,-14.50,AUTO_STEMS,6", serialized)
+        assertEquals(v4, WaveformExtractor.parseCachedBeatGrid(serialized))
     }
 
     @Test
@@ -329,10 +347,10 @@ class BpmDetectorTest {
                 abs(grid.bpm - targetBpm) <= 1,
             )
             // Beat 1 is at 640ms; Beat 2 (Snare) is at 640 + beatDurationMs (~1265ms at 96 BPM).
-            // Multi-band downbeat detector MUST lock onto Beat 1 (640ms), never Beat 2 or Beat 4!
+            // Downbeat detector MUST lock onto the Beat 1 bar phase, never Beat 2 or Beat 4!
             assertTrue(
-                "Expected firstDownbeatMs aligned to Kick Beat 1 (~${pickupOffsetMs}ms ±80ms) for $targetBpm BPM, got ${grid.firstDownbeatMs}ms",
-                abs(grid.firstDownbeatMs - pickupOffsetMs) <= 80L,
+                "Expected downbeat bar phase ≡ Kick Beat 1 (${pickupOffsetMs}ms ±25ms) for $targetBpm BPM, got ${grid.firstDownbeatMs}ms",
+                barPhaseError(grid.firstDownbeatMs, pickupOffsetMs.toDouble(), grid.barDurationMs) <= 25.0,
             )
         }
     }
@@ -431,15 +449,12 @@ class BpmDetectorTest {
         )
         assertNotNull("Expected BeatGrid for syncopated groove after ambient intro", grid)
         assertTrue("Expected ~120 BPM (±1), got ${grid!!.bpm}", abs(grid.bpm - 120) <= 1)
-        // Bar 1 Beat 1 is at 6000ms, which folds modulo 2000ms to 0ms (or ~2000ms).
-        val foldedPhaseDiff = minOf(
-            abs(grid.firstDownbeatMs),
-            abs(grid.firstDownbeatMs - 2_000L),
-        )
+        // Bar 1 Beat 1 is at 6000ms: the unfolded anchor must sit on that bar phase, not the 5000ms pickup.
         assertTrue(
-            "Expected folded firstDownbeatMs near 0ms/2000ms (±90ms) rather than 1000ms pickup, got ${grid.firstDownbeatMs}ms",
-            foldedPhaseDiff <= 90L,
+            "Expected downbeat bar phase ≡ 6000ms (±25ms) rather than the 5000ms pickup, got ${grid.firstDownbeatMs}ms",
+            barPhaseError(grid.firstDownbeatMs, 6_000.0, grid.barDurationMs) <= 25.0,
         )
+        assertTrue("Expected anchor at/after the groove entry, got ${grid.firstDownbeatMs}", grid.firstDownbeatMs >= 5_900L)
     }
 
     @Test
@@ -454,16 +469,20 @@ class BpmDetectorTest {
         val acc92 = OnsetFluxAccumulator(sampleRate = 44_100, channelCount = 1).apply {
             feedInterleavedPcm(pcm92, frameCount = pcm92.size)
         }
-        // 1. Consistent embedded tag (92) is preserved
-        assertEquals(92, BpmDetector.resolveEmbeddedAndAcousticBpm(92, 92, acc92))
-        // 2. Half-time / double-time embedded tag (184) is preserved when musically related (2x)
-        assertEquals(184, BpmDetector.resolveEmbeddedAndAcousticBpm(184, 92, acc92))
-        // 3. Bogus default transcode tag (120) contradicted by high-clarity 92 BPM audio is rejected!
-        assertEquals(92, BpmDetector.resolveEmbeddedAndAcousticBpm(120, 92, acc92))
-        // 4. Empty/silent accumulator defers to valid embedded tag
-        val emptyAcc = OnsetFluxAccumulator(sampleRate = 44_100, channelCount = 1)
-        assertEquals(120, BpmDetector.resolveEmbeddedAndAcousticBpm(120, null, emptyAcc))
+        val acoustic = acc92.computeBpmWithClarity()!!.exactBpm
+        assertEquals(92.0, acoustic, 0.6)
+        // 1. Consistent embedded tag keeps the acoustic (regressed) tempo, never the tag value itself
+        assertEquals(acoustic, BpmDetector.resolveEmbeddedAndAcousticBpm(92.0, acoustic)!!, 1e-9)
+        // 2. Double-time embedded tag (184) only selects the octave of the acoustic tempo
+        assertEquals(acoustic * 2.0, BpmDetector.resolveEmbeddedAndAcousticBpm(184.0, acoustic)!!, 1e-9)
+        // 3. Bogus default transcode tag (120) is ignored
+        assertEquals(acoustic, BpmDetector.resolveEmbeddedAndAcousticBpm(120.0, acoustic)!!, 1e-9)
+        // 4. No acoustic estimate defers to the valid embedded tag
+        assertEquals(120.0, BpmDetector.resolveEmbeddedAndAcousticBpm(120.0, null)!!, 1e-9)
     }
+
+    private fun barPhaseError(anchorMs: Long, trueDownbeatMs: Double, barMs: Double): Double =
+        phaseErrorMs(anchorMs.toDouble(), trueDownbeatMs, barMs)
 
     private fun synthesizeDrumPulseTrack(
         bpm: Int,

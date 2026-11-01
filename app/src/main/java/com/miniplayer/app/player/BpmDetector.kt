@@ -2,7 +2,18 @@ package com.miniplayer.app.player
 
 import android.media.AudioFormat
 import com.miniplayer.app.core.model.BeatGrid
+import com.miniplayer.app.core.model.BeatGridSource
 import com.miniplayer.app.core.model.PracticeMath
+import com.miniplayer.app.player.beat.BeatFeatureFrames
+import com.miniplayer.app.player.beat.BeatGridAnalysis
+import com.miniplayer.app.player.beat.BeatGridAnalyzer
+import com.miniplayer.app.player.beat.BpmOctave
+import com.miniplayer.app.player.beat.DpBeatTracker
+import com.miniplayer.app.player.beat.TempoFit
+import com.miniplayer.app.player.beat.TempoRegression
+import com.miniplayer.app.player.beat.EdgeEnvelopeBuilder
+import com.miniplayer.app.player.beat.TonalFrames
+import com.miniplayer.app.player.beat.TonalStreamBuilder
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.ShortBuffer
@@ -28,6 +39,8 @@ import kotlin.math.sqrt
 class OnsetFluxAccumulator(
     sampleRate: Int,
     channelCount: Int,
+    /** Also build the ÷4 chroma / ÷16 bass streams (BeatGrid v2 Stage 1c). */
+    enableTonal: Boolean = true,
 ) {
     val safeSampleRate: Int = sampleRate.coerceAtLeast(8_000)
     val safeChannelCount: Int = channelCount.coerceAtLeast(1)
@@ -59,6 +72,10 @@ class OnsetFluxAccumulator(
     private var partialChannelIndex = 0
     private var partialFrameSignedSum = 0.0
     private var partialFrameAbsSum = 0.0
+
+    // BeatGrid v2 Stage 1b/1c front-ends fed from the same per-sample loop.
+    private val edgeBuilder = EdgeEnvelopeBuilder(safeSampleRate)
+    private val tonalBuilder: TonalStreamBuilder? = if (enableTonal) TonalStreamBuilder(safeSampleRate) else null
 
     val accumulatedHopCount: Int
         get() = energyCount
@@ -194,6 +211,9 @@ class OnsetFluxAccumulator(
         val bLow = lpLow2
         val bMid = lpMid - lpLow2
         val bHigh = signedMono - lpMid
+
+        edgeBuilder.push(signedMono, absMono, bLow)
+        tonalBuilder?.push(signedMono.toFloat())
 
         currentHopAbsSum += absMono
         currentHopLowSqSum += bLow * bLow
@@ -616,338 +636,105 @@ class OnsetFluxAccumulator(
         return 0.50 * r1 + 0.30 * r2 + 0.20 * r4
     }
 
+    /** Start (s) of the most rhythmically active span (window policy, §3.1). */
+    internal fun activeGrooveStartSeconds(): Double? {
+        val env = buildBandEnvelopes() ?: return null
+        return findActiveGrooveRange(env).first / envelopeRateHz
+    }
+
     /**
-     * Detects full [BeatGrid] (`bpm`, `firstBeatMs`, `firstDownbeatMs`, `beatsPerBar = 4`)
-     * via 128-phase fractional comb-filter correlation against log-compressed multi-band onset flux
-     * plus 4-phase Kick/Bass (`< 155 Hz`) vs Snare Backbeat (`> 155 Hz`) bar accent scoring.
+     * Onset-only local Stage 2–3 fit (long-baseline mid window, §3.3). Times are relative to the
+     * first fed sample. The local tempo prior is snapped to the octave of [bpmHint].
      */
-    fun computeBeatGrid(overrideBpm: Int? = null, beatsPerBar: Int = 4): BeatGrid? {
-        val safeBeatsPerBar = beatsPerBar.coerceIn(2, 8)
-        val n = energyCount
-        val env = buildBandEnvelopes()
-        val bpm = overrideBpm?.let(PracticeMath::clampBpm)
-            ?: computeBpmInternal(precomputedEnv = env)?.bpm
-            ?: return null
-
-        if (n < 16 || env == null) {
-            return BeatGrid(bpm = bpm, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = safeBeatsPerBar)
-        }
-
-        val tauBeat = (60.0 * envelopeRateHz) / bpm.toDouble()
-        if (tauBeat < 2.0) {
-            return BeatGrid(bpm = bpm, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = safeBeatsPerBar)
-        }
-
-        val grooveRange = findActiveGrooveRange(env)
-
-        // 1. Search 128 fractional phase offsets phi in [0, tauBeat) maximizing comb-filter correlation
-        val phaseSteps = 128
-        val phaseScores = DoubleArray(phaseSteps)
-        var bestPhaseIdx = 0
-        var bestCombScore = Double.NEGATIVE_INFINITY
-
-        for (p in 0 until phaseSteps) {
-            val phi = (p.toDouble() / phaseSteps.toDouble()) * tauBeat
-            var sum = 0.0
-            var weightSum = 0.0
-            var m = 0
-            while (true) {
-                val exactHop = phi + m * tauBeat
-                val hopIdx = exactHop.roundToInt()
-                if (hopIdx >= n) break
-                val prev = env.compositeOnset[(hopIdx - 1).coerceAtLeast(0)]
-                val cur = env.compositeOnset[hopIdx]
-                val next = env.compositeOnset[(hopIdx + 1).coerceAtMost(n - 1)]
-                val pulseCur = env.pulseOnset[hopIdx]
-                val onsetVal = 0.55 * (0.64 * cur + 0.18 * (prev + next)) + 0.45 * pulseCur
-                val w = if (hopIdx in grooveRange) 1.0 else 0.35
-                sum += w * onsetVal
-                weightSum += w
-                m++
-            }
-            val avgScore = if (weightSum > 0.0) sum / weightSum else 0.0
-            phaseScores[p] = avgScore
-            if (avgScore > bestCombScore) {
-                bestCombScore = avgScore
-                bestPhaseIdx = p
-            }
-        }
-
-        // Parabolic sub-step refinement on circular phase [0, phaseSteps)
-        val pMinus = (bestPhaseIdx - 1 + phaseSteps) % phaseSteps
-        val pPlus = (bestPhaseIdx + 1) % phaseSteps
-        val yMinus = phaseScores[pMinus]
-        val yZero = phaseScores[bestPhaseIdx]
-        val yPlus = phaseScores[pPlus]
-        val denom = 2.0 * (yMinus - 2.0 * yZero + yPlus)
-        val phaseDelta = if (abs(denom) > 1e-6 && yZero >= yMinus && yZero >= yPlus) {
-            ((yMinus - yPlus) / denom).coerceIn(-0.5, 0.5)
+    internal fun localTempoFit(bpmHint: Double): TempoFit? {
+        val frames = buildFeatureFrames() ?: return null
+        val local = computeBpmInternal()?.exactBpm
+        val bpm = if (local != null && abs(ln(BpmOctave.resolve(bpmHint, local) / bpmHint)) < 0.03) {
+            BpmOctave.resolve(bpmHint, local)
         } else {
-            0.0
+            bpmHint
         }
-        var bestPhi = ((bestPhaseIdx.toDouble() + phaseDelta + phaseSteps) % phaseSteps) / phaseSteps.toDouble() * tauBeat
-        if (bestPhi >= tauBeat) bestPhi -= tauBeat
+        val dp = DpBeatTracker.track(frames, bpm) ?: return null
+        return TempoRegression.fit(dp.index, dp.timesMs, dp.strength)
+    }
 
-        val totalBeats = floor((n - 1 - bestPhi) / tauBeat).toInt() + 1
-        if (totalBeats <= 0) {
-            return BeatGrid(bpm = bpm, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = safeBeatsPerBar)
-        }
+    /**
+     * Exposes all Stage 1 front-end features (100 Hz bands + onsets, 400 Hz edge signal, tonal
+     * frames) for BeatGrid v2. [tonalOverride] / [accentOverride] are used by the `.stems` path.
+     */
+    internal fun buildFeatureFrames(
+        tonalOverride: TonalFrames? = null,
+        accentOverride: FloatArray? = null,
+    ): BeatFeatureFrames? {
+        val env = buildBandEnvelopes() ?: return null
+        val n = env.n
+        val (edge, edgeLow) = edgeBuilder.build()
+        val tonal = tonalOverride ?: tonalBuilder?.build() ?: TonalFrames.EMPTY
+        val accent = accentOverride?.let { a -> FloatArray(n) { i -> if (i < a.size) a[i] else 0f } }
+        return BeatFeatureFrames(
+            envelopeRateHz = envelopeRateHz,
+            energy = energyFrames.copyOf(n),
+            lowRms = lowRmsFrames.copyOf(n),
+            midRms = midRmsFrames.copyOf(n),
+            highRms = highRmsFrames.copyOf(n),
+            broadOnset = env.broadOnset,
+            lowOnset = env.lowOnset,
+            midOnset = env.midOnset,
+            highOnset = env.highOnset,
+            compositeOnset = env.compositeOnset,
+            pulseOnset = env.pulseOnset,
+            hasLowBand = env.hasLowBand,
+            hasMidBand = env.hasMidBand,
+            hasHighBand = env.hasHighBand,
+            peakEnergy = env.peakEnergy,
+            edgeRateHz = edgeBuilder.rateHz,
+            edge = edge,
+            edgeLow = edgeLow,
+            tonal = tonal,
+            accentEnergy = accent ?: energyFrames.copyOf(n),
+        )
+    }
 
-        // 2. Extract per-beat multi-band features along the aligned beat grid
-        val beatComp = DoubleArray(totalBeats)
-        val beatLow = DoubleArray(totalBeats)
-        val beatMid = DoubleArray(totalBeats)
-        val beatHigh = DoubleArray(totalBeats)
-        val beatEnergy = DoubleArray(totalBeats)
-        val beatTransition = DoubleArray(totalBeats)
+    /**
+     * BeatGrid v2 (§3): Stage 2 tempo prior (`exactBpm`, or [overrideBpm]) with optional embedded
+     * tag octave disambiguation ([embeddedBpm]) → Ellis DP + Theil–Sen/IRLS regression → beat-sync
+     * features → PRE|GROOVE phrase Viterbi → attack back-tracking. [beatsPerBar] `null` = auto
+     * (4/4 vs 3/4). Returns an **unfolded** downbeat anchor.
+     */
+    fun computeBeatGrid(
+        overrideBpm: Double? = null,
+        beatsPerBar: Int? = null,
+        embeddedBpm: Double? = null,
+        source: BeatGridSource = BeatGridSource.AUTO_MIX,
+    ): BeatGrid? = computeBeatGridDetailed(overrideBpm, beatsPerBar, embeddedBpm, source)?.grid
 
-        val windowRadius = maxOf(2, (tauBeat * 0.12).roundToInt().coerceAtMost(4))
-        for (m in 0 until totalBeats) {
-            val center = (bestPhi + m * tauBeat).roundToInt().coerceIn(0, n - 1)
-            val lo = (center - windowRadius).coerceAtLeast(0)
-            val hi = (center + windowRadius).coerceAtMost(n - 1)
-            var maxComp = 0f
-            var maxLow = 0f
-            var maxMid = 0f
-            var maxHigh = 0f
-            var maxE = 0f
-            for (i in lo..hi) {
-                if (env.compositeOnset[i] > maxComp) maxComp = env.compositeOnset[i]
-                if (env.lowOnset[i] > maxLow) maxLow = env.lowOnset[i]
-                if (env.midOnset[i] > maxMid) maxMid = env.midOnset[i]
-                if (env.highOnset[i] > maxHigh) maxHigh = env.highOnset[i]
-                if (energyFrames[i] > maxE) maxE = energyFrames[i]
-            }
-            beatComp[m] = maxComp.toDouble()
-            beatLow[m] = maxLow.toDouble()
-            beatMid[m] = maxMid.toDouble()
-            beatHigh[m] = maxHigh.toDouble()
-            beatEnergy[m] = (maxE / env.peakEnergy).toDouble()
-
-            // Spectral / bass-harmonic change across beat m (comparing half-beat after vs half-beat before)
-            val span = (tauBeat * 0.45).roundToInt().coerceIn(2, 25)
-            val preStart = (center - span).coerceAtLeast(0)
-            val preEnd = (center - 1).coerceAtLeast(preStart)
-            val postStart = center
-            val postEnd = (center + span).coerceAtMost(n - 1)
-            var preLow = 0.0
-            var preMid = 0.0
-            for (i in preStart..preEnd) {
-                preLow += lowRmsFrames[i]
-                preMid += midRmsFrames[i]
-            }
-            val preCount = (preEnd - preStart + 1).coerceAtLeast(1)
-            preLow /= preCount
-            preMid /= preCount
-
-            var postLow = 0.0
-            var postMid = 0.0
-            for (i in postStart..postEnd) {
-                postLow += lowRmsFrames[i]
-                postMid += midRmsFrames[i]
-            }
-            val postCount = (postEnd - postStart + 1).coerceAtLeast(1)
-            postLow /= postCount
-            postMid /= postCount
-
-            val lowJump = max(0.0, postLow - preLow) / env.peakEnergy.coerceAtLeast(1e-5f)
-            val midJump = max(0.0, postMid - preMid) / env.peakEnergy.coerceAtLeast(1e-5f)
-            beatTransition[m] = (0.65 * lowJump + 0.35 * midJump).coerceAtMost(1.5)
-        }
-
-        // 3. Locate first musical entrance hop kOnset and first aligned beat m0 using robust p75 reference
-        val refBeatComp = percentilePositiveDouble(beatComp, 0.75).coerceAtLeast(0.15)
-        val refBeatEnergy = percentilePositiveDouble(beatEnergy, 0.75).coerceAtLeast(0.10)
-
-        val energyThresh = (0.10 * refBeatEnergy * env.peakEnergy).toFloat().coerceAtLeast(BpmDetector.SILENCE_ENERGY_FLOOR)
-        val onsetThresh = (0.14 * refBeatComp).toFloat()
-        var kOnset = -1
-        for (k in 0 until n) {
-            if (energyFrames[k] >= energyThresh && env.compositeOnset[k] >= onsetThresh) {
-                kOnset = k
-                break
-            }
-        }
-        if (kOnset < 0) {
-            for (k in 0 until n) {
-                if (energyFrames[k] >= 0.08f * env.peakEnergy) {
-                    kOnset = k
-                    break
-                }
-            }
-        }
-        if (kOnset < 0) kOnset = 0
-
-        val rawM0 = ((kOnset.toDouble() - bestPhi) / tauBeat).roundToInt().coerceAtLeast(0)
-        val m0 = if (bestPhi + rawM0 * tauBeat < kOnset - 0.38 * tauBeat) {
-            (rawM0 + 1).coerceAtMost((totalBeats - 1).coerceAtLeast(0))
-        } else {
-            rawM0.coerceAtMost((totalBeats - 1).coerceAtLeast(0))
-        }
-
-        // Detect if there is a major full-band groove entrance (e.g. after a quiet intro or pickup)
-        var grooveEntranceBeat = m0
-        for (m in m0 until minOf(totalBeats, m0 + 32)) {
-            if (beatEnergy[m] >= 0.45 * refBeatEnergy && beatComp[m] >= 0.45 * refBeatComp) {
-                grooveEntranceBeat = m
-                break
-            }
-        }
-
-        // 4. Evaluate candidate downbeat phases b in 0 until safeBeatsPerBar
-        // Combines:
-        // - Broadband / composite pulse accent (Beat 1 strongest, Beat 3 secondary)
-        // - Low-band (< 155 Hz) Kick/Bass downbeat signature on Beat 1 (& Beat 3) vs Beats 2 & 4
-        // - Snare backbeat signature (Mid+High > Low) on Beats 2 & 4 (prevents Snare from being mistaken for Beat 1!)
-        // - Harmonic/bass transition at bar boundary (Beat 1)
-        // - Entrance & pickup/anacrusis prior
-        fun beatTotalStrength(m: Int): Double {
-            if (m !in 0 until totalBeats) return 0.0
-            return 0.72 * (beatComp[m] / refBeatComp).coerceAtMost(2.0) +
-                0.28 * (beatEnergy[m] / refBeatEnergy).coerceAtMost(2.0)
-        }
-
-        val refLow = percentilePositiveDouble(beatLow, 0.80).coerceAtLeast(0.15)
-        val refMid = percentilePositiveDouble(beatMid, 0.80).coerceAtLeast(0.15)
-        val refHigh = percentilePositiveDouble(beatHigh, 0.80).coerceAtLeast(0.15)
-
-        fun normLow(m: Int): Double = if (m in 0 until totalBeats && env.hasLowBand) {
-            (beatLow[m] / refLow).coerceAtMost(2.2)
-        } else {
-            0.0
-        }
-
-        fun snareBackbeatSignature(m: Int): Double {
-            if (m !in 0 until totalBeats || !env.hasLowBand) return 0.0
-            val mh = 0.62 * (beatMid[m] / refMid).coerceAtMost(2.2) +
-                0.38 * (if (env.hasHighBand) (beatHigh[m] / refHigh).coerceAtMost(2.2) else (beatMid[m] / refMid).coerceAtMost(2.2))
-            val lo = normLow(m)
-            return (mh - 0.65 * lo).coerceIn(-1.5, 2.0)
-        }
-
-        var bestPhaseB = 0
-        var bestDownbeatScore = Double.NEGATIVE_INFINITY
-
-        for (b in 0 until safeBeatsPerBar) {
-            val startBeat = m0 + b
-            if (startBeat >= totalBeats) continue
-            var barSum = 0.0
-            var weightSum = 0.0
-            var bar = 0
-            while (startBeat + bar * safeBeatsPerBar < totalBeats) {
-                val base = startBeat + bar * safeBeatsPerBar
-                val s1 = beatTotalStrength(base)
-                val s2 = if (base + 1 < totalBeats) beatTotalStrength(base + 1) else 0.0
-                val s3 = if (safeBeatsPerBar >= 4 && base + 2 < totalBeats) beatTotalStrength(base + 2) else 0.0
-                val s4 = if (safeBeatsPerBar >= 4 && base + 3 < totalBeats) beatTotalStrength(base + 3) else 0.0
-
-                val l1 = normLow(base)
-                val l2 = if (base + 1 < totalBeats) normLow(base + 1) else 0.0
-                val l3 = if (safeBeatsPerBar >= 4 && base + 2 < totalBeats) normLow(base + 2) else 0.0
-                val l4 = if (safeBeatsPerBar >= 4 && base + 3 < totalBeats) normLow(base + 3) else 0.0
-
-                val sn1 = snareBackbeatSignature(base)
-                val sn2 = if (base + 1 < totalBeats) snareBackbeatSignature(base + 1) else 0.0
-                val sn3 = if (safeBeatsPerBar >= 4 && base + 2 < totalBeats) snareBackbeatSignature(base + 2) else 0.0
-                val sn4 = if (safeBeatsPerBar >= 4 && base + 3 < totalBeats) snareBackbeatSignature(base + 3) else 0.0
-
-                val trans1 = beatTransition[base]
-                val trans3 = if (safeBeatsPerBar >= 4 && base + 2 < totalBeats) beatTransition[base + 2] else 0.0
-
-                val pulseScore = 1.25 * s1 + 0.65 * s3 - 0.18 * (s2 + s4)
-                val kickBassScore = if (env.hasLowBand) {
-                    1.35 * l1 + 0.55 * l3 - 0.55 * (l2 + l4)
-                } else {
-                    0.0
-                }
-                val backbeatScore = if (env.hasLowBand && safeBeatsPerBar == 4) {
-                    0.42 * (sn2 + sn4) - 0.32 * (sn1 + sn3)
-                } else {
-                    0.0
-                }
-                val transitionScore = 0.45 * (trans1 - 0.5 * trans3)
-
-                val barCenterHop = (bestPhi + base * tauBeat).roundToInt()
-                val w = if (barCenterHop in grooveRange) 1.0 else 0.40
-                barSum += w * (pulseScore + 0.85 * kickBassScore + 0.65 * backbeatScore + transitionScore)
-                weightSum += w
-                bar++
-            }
-            val avgBar = if (weightSum > 0.0) barSum / weightSum else 0.0
-
-            // Entrance alignment:
-            // If m0 itself is already a strong downbeat (not a weak pickup), favor b == 0;
-            // if m0 is a weak pickup preceding grooveEntranceBeat, favor the phase aligned with grooveEntranceBeat.
-            val m0IsStrongEntrance = beatEnergy[m0] >= 0.48 * refBeatEnergy &&
-                (!env.hasLowBand || normLow(m0) >= 0.55 * maxOf(normLow(m0), normLow((m0 + 1).coerceAtMost(totalBeats - 1))))
-            val alignsWithGrooveDrop = ((grooveEntranceBeat - startBeat) % safeBeatsPerBar + safeBeatsPerBar) % safeBeatsPerBar == 0
-            val entrancePrior = when {
-                b == 0 && m0IsStrongEntrance -> 1.15
-                alignsWithGrooveDrop && !m0IsStrongEntrance -> 1.12
-                b == 0 -> 1.04
-                else -> 1.0
-            }
-            val totalScore = avgBar * entrancePrior
-            if (totalScore > bestDownbeatScore) {
-                bestDownbeatScore = totalScore
-                bestPhaseB = b
-            }
-        }
-
-        // 5. Fine local attack-edge alignment on the winning downbeat series so bar markers sit right on Beat 1
-        var refinedPhi = bestPhi
-        val downbeatStart = m0 + bestPhaseB
-        if (downbeatStart < totalBeats) {
-            var offsetWeightedSum = 0.0
-            var offsetWeightTotal = 0.0
-            var bar = 0
-            while (downbeatStart + bar * safeBeatsPerBar < totalBeats) {
-                val beatIdx = downbeatStart + bar * safeBeatsPerBar
-                val nominalHop = bestPhi + beatIdx * tauBeat
-                val centerHop = nominalHop.roundToInt()
-                val searchLo = (centerHop - 2).coerceAtLeast(1)
-                val searchHi = (centerHop + 2).coerceAtMost(n - 1)
-                var bestLocalHop = centerHop
-                var bestLocalVal = -1f
-                for (h in searchLo..searchHi) {
-                    val v = 0.60f * env.pulseOnset[h] + 0.40f * env.compositeOnset[h]
-                    if (v > bestLocalVal) {
-                        bestLocalVal = v
-                        bestLocalHop = h
-                    }
-                }
-                if (bestLocalVal > 0.15f) {
-                    val diff = (bestLocalHop.toDouble() - nominalHop).coerceIn(-1.8, 1.8)
-                    offsetWeightedSum += bestLocalVal * diff
-                    offsetWeightTotal += bestLocalVal
-                }
-                bar++
-            }
-            if (offsetWeightTotal > 0.0) {
-                val adj = (offsetWeightedSum / offsetWeightTotal).coerceIn(-1.2, 1.2)
-                refinedPhi = (bestPhi + adj).coerceAtLeast(0.0)
-            }
-        }
-
-        val firstBeatHop = (refinedPhi + m0 * tauBeat).coerceAtLeast(0.0)
-        val firstDownbeatHop = (refinedPhi + (m0 + bestPhaseB) * tauBeat).coerceAtLeast(0.0)
-
-        val firstBeatMs = ((firstBeatHop * 1000.0) / envelopeRateHz).roundToLong().coerceAtLeast(0L)
-        val rawDownbeatMs = ((firstDownbeatHop * 1000.0) / envelopeRateHz).roundToLong().coerceAtLeast(0L)
-        val barDurationMs = (60_000.0 / bpm) * safeBeatsPerBar
-        val foldedDownbeatMs = if (barDurationMs > 1.0 && rawDownbeatMs >= barDurationMs) {
-            (rawDownbeatMs - floor(rawDownbeatMs / barDurationMs) * barDurationMs)
-                .roundToLong()
-                .coerceAtLeast(0L)
-        } else {
-            rawDownbeatMs
-        }
-
-        return BeatGrid(
-            bpm = bpm,
-            firstBeatMs = firstBeatMs,
-            firstDownbeatMs = foldedDownbeatMs,
-            beatsPerBar = safeBeatsPerBar,
+    internal fun computeBeatGridDetailed(
+        overrideBpm: Double? = null,
+        beatsPerBar: Int? = null,
+        embeddedBpm: Double? = null,
+        source: BeatGridSource = BeatGridSource.AUTO_MIX,
+    ): BeatGridAnalysis? {
+        val estimate = computeBpmInternal()
+        val acoustic = overrideBpm?.takeIf { it in 30.0..300.0 } ?: estimate?.exactBpm ?: return null
+        val bpm = if (overrideBpm == null) BpmOctave.resolve(embeddedBpm, acoustic) else acoustic
+        val clarity = estimate?.clarity ?: 0.0
+        val frames = buildFeatureFrames()
+        val analysis = frames?.let { BeatGridAnalyzer.run(it, bpm, clarity, source, beatsPerBar?.coerceIn(3, 4)) }
+        if (analysis != null) return analysis
+        // Too short / too sparse for the full pipeline: honest tempo-only grid.
+        return BeatGridAnalysis(
+            BeatGrid(
+                bpmPrecise = bpm.coerceIn(30.0, 300.0),
+                firstBeatMs = 0L,
+                firstDownbeatMs = 0L,
+                beatsPerBar = beatsPerBar?.coerceIn(2, 8) ?: 4,
+                source = source,
+            ),
+            com.miniplayer.app.player.beat.BeatGridDiagnostics(
+                dpBeats = 0, tempoFit = null, pattern = null, harmRhythm = 0, drumPresence = 0.0,
+                chromaFallbackBeats = 0, emptyChromaBeats = 0, anchorBeatIndex = -1, attackSamples = 0,
+                halfBarMargin = 0.0, sectionNoveltyAtAnchor = 0.0,
+            ),
         )
     }
 
@@ -1040,20 +827,6 @@ class OnsetFluxAccumulator(
         val idx = ((posCount - 1) * quantile.coerceIn(0f, 1f)).roundToInt().coerceIn(0, posCount - 1)
         return positive[idx]
     }
-
-    private fun percentilePositiveDouble(values: DoubleArray, quantile: Double): Double {
-        val positive = DoubleArray(values.size)
-        var posCount = 0
-        for (v in values) {
-            if (v > 1e-6) {
-                positive[posCount++] = v
-            }
-        }
-        if (posCount == 0) return 0.0
-        positive.sort(0, posCount)
-        val idx = ((posCount - 1) * quantile.coerceIn(0.0, 1.0)).roundToInt().coerceIn(0, posCount - 1)
-        return positive[idx]
-    }
 }
 
 object BpmDetector {
@@ -1094,16 +867,27 @@ object BpmDetector {
     }
 
     /**
-     * Pure-JVM helper for detecting full [BeatGrid] (`bpm`, `firstBeatMs`, `firstDownbeatMs`)
-     * directly from interleaved 16-bit PCM frames.
+     * Pure-JVM helper for detecting a full BeatGrid v2 (`bpmPrecise`, `firstBeatMs`, unfolded
+     * `firstDownbeatMs`, `beatsPerBar`, `phraseOffsetBars`, confidence) directly from interleaved
+     * 16-bit PCM frames. [beatsPerBar] `null` = automatic 4/4 vs 3/4.
      */
     fun detectBeatGridFromPcm(
         pcmInterleaved: ShortArray,
         frameCount: Int = pcmInterleaved.size / 1,
         sampleRate: Int,
         channelCount: Int,
-        beatsPerBar: Int = 4,
-    ): BeatGrid? {
+        beatsPerBar: Int? = null,
+        embeddedBpm: Double? = null,
+    ): BeatGrid? = detectBeatGridDetailedFromPcm(pcmInterleaved, frameCount, sampleRate, channelCount, beatsPerBar, embeddedBpm)?.grid
+
+    internal fun detectBeatGridDetailedFromPcm(
+        pcmInterleaved: ShortArray,
+        frameCount: Int = pcmInterleaved.size / 1,
+        sampleRate: Int,
+        channelCount: Int,
+        beatsPerBar: Int? = null,
+        embeddedBpm: Double? = null,
+    ): BeatGridAnalysis? {
         if (sampleRate <= 0 || channelCount <= 0 || frameCount <= 0 || pcmInterleaved.isEmpty()) {
             return null
         }
@@ -1111,58 +895,47 @@ object BpmDetector {
         if (safeFrames <= 0) return null
         val accumulator = OnsetFluxAccumulator(sampleRate = sampleRate, channelCount = channelCount)
         accumulator.feedInterleavedPcm(pcmInterleaved, frameCount = safeFrames, sampleOffset = 0)
-        return accumulator.computeBeatGrid(beatsPerBar = beatsPerBar)
+        return accumulator.computeBeatGridDetailed(beatsPerBar = beatsPerBar, embeddedBpm = embeddedBpm)
     }
 
     /**
-     * Reconciles an optional embedded metadata `TBPM` / `BPM` tag with the acoustically detected
-     * BPM so valid tags resolve octave ambiguities while bogus default tags (e.g. `120`) are rejected
-     * when contradicted by clear audio rhythm.
+     * Reconciles an optional embedded metadata `TBPM` / `BPM` tag with the acoustic tempo. The tag
+     * (parsed as Double) is used **only** to pick the octave (`×0.5 / ×1 / ×2`) of the acoustic
+     * estimate; it never overrides the regressed tempo itself.
      */
     internal fun resolveEmbeddedAndAcousticBpm(
-        embeddedBpm: Int?,
-        acousticBpm: Int?,
-        accumulator: OnsetFluxAccumulator,
-    ): Int? {
-        val validEmbedded = embeddedBpm?.takeIf { it in 30..300 }
-        if (validEmbedded == null) return acousticBpm
-        if (acousticBpm == null) return validEmbedded
-
-        // Direct agreement or 0.5x / 2.0x octave agreement -> trust embedded tag
-        if (abs(validEmbedded - acousticBpm) <= 3 ||
-            abs(validEmbedded * 2 - acousticBpm) <= 4 ||
-            abs(validEmbedded - acousticBpm * 2) <= 4
-        ) {
-            return validEmbedded
-        }
-
-        val embeddedScore = accumulator.scoreCandidateBpmAgreement(validEmbedded)
-        val acousticScore = accumulator.scoreCandidateBpmAgreement(acousticBpm)
-        return if (embeddedScore >= 0.78 * acousticScore && embeddedScore >= 0.12) {
-            validEmbedded
-        } else {
-            acousticBpm
-        }
+        embeddedBpm: Double?,
+        acousticBpm: Double?,
+    ): Double? {
+        val validEmbedded = embeddedBpm?.takeIf { it in 30.0..300.0 }
+        if (acousticBpm == null || !(acousticBpm in 30.0..300.0)) return validEmbedded
+        return BpmOctave.resolve(validEmbedded, acousticBpm)
     }
 
     /**
-     * Parses a raw embedded `TBPM` / `BPM` metadata value (e.g. `"120"`, `"128.0"`, `"96 BPM"`),
-     * returning a valid BPM in `30..300` or `null` if missing/invalid.
+     * Parses a raw embedded `TBPM` / `BPM` metadata value (e.g. `"120"`, `"120.4"`, `"96 BPM"`),
+     * returning a fractional BPM in `30..300` or `null` if missing/invalid.
      */
-    fun parseBpmTagString(raw: String?): Int? {
+    fun parseBpmTagDouble(raw: String?): Double? {
         if (raw.isNullOrBlank()) return null
         val match = BPM_NUMBER_REGEX.find(raw.trim()) ?: return null
         val numeric = match.value.toDoubleOrNull() ?: return null
         if (!numeric.isFinite()) return null
-        val rounded = numeric.roundToInt()
-        return rounded.takeIf { it in 30..300 }
+        return numeric.takeIf { it in 30.0..300.0 }
     }
+
+    /** Integer convenience wrapper over [parseBpmTagDouble] (display / legacy callers). */
+    fun parseBpmTagString(raw: String?): Int? = parseBpmTagDouble(raw)?.roundToInt()?.takeIf { it in 30..300 }
+
+    /** Integer convenience wrapper over [extractEmbeddedBpmDoubleFromHeader]. */
+    fun extractEmbeddedBpmFromHeader(headerBytes: ByteArray, length: Int = headerBytes.size): Int? =
+        extractEmbeddedBpmDoubleFromHeader(headerBytes, length)?.roundToInt()?.takeIf { it in 30..300 }
 
     /**
      * Fast pure-JVM check for embedded ID3v2 (`TBPM` / `TBP`) or FLAC (`BPM=` / `TEMPO=`) tags
      * inside the leading header bytes of an audio file.
      */
-    fun extractEmbeddedBpmFromHeader(headerBytes: ByteArray, length: Int = headerBytes.size): Int? {
+    fun extractEmbeddedBpmDoubleFromHeader(headerBytes: ByteArray, length: Int = headerBytes.size): Double? {
         val limit = minOf(length, headerBytes.size)
         if (limit < 10) return null
 
@@ -1189,7 +962,7 @@ object BpmDetector {
                         (headerBytes[pos + 5].toInt() and 0xFF)
                     if (frameSize <= 0 || pos + 6 + frameSize > tagEnd) break
                     if (id == "TBP") {
-                        decodeId3TextPayload(headerBytes, pos + 6, frameSize)?.let(::parseBpmTagString)?.let { return it }
+                        decodeId3TextPayload(headerBytes, pos + 6, frameSize)?.let(::parseBpmTagDouble)?.let { return it }
                     }
                     pos += 6 + frameSize
                 }
@@ -1204,7 +977,7 @@ object BpmDetector {
                     }
                     if (frameSize <= 0 || pos + 10 + frameSize > tagEnd) break
                     if (id == "TBPM") {
-                        decodeId3TextPayload(headerBytes, pos + 10, frameSize)?.let(::parseBpmTagString)?.let { return it }
+                        decodeId3TextPayload(headerBytes, pos + 10, frameSize)?.let(::parseBpmTagDouble)?.let { return it }
                     }
                     pos += 10 + frameSize
                 }
@@ -1238,7 +1011,7 @@ object BpmDetector {
         return null
     }
 
-    private fun extractVorbisCommentBpm(bytes: ByteArray, offset: Int, length: Int): Int? {
+    private fun extractVorbisCommentBpm(bytes: ByteArray, offset: Int, length: Int): Double? {
         val end = offset + length
         if (offset + 4 > end) return null
         val vendorLen = readLittleEndianInt(bytes, offset)
@@ -1257,12 +1030,74 @@ object BpmDetector {
             if (eq > 0) {
                 val key = entry.substring(0, eq).trim().uppercase()
                 if (key == "BPM" || key == "TEMPO" || key == "TBPM") {
-                    parseBpmTagString(entry.substring(eq + 1))?.let { return it }
+                    parseBpmTagDouble(entry.substring(eq + 1))?.let { return it }
                 }
             }
             pos += len
         }
         return null
+    }
+
+    /** LAME/Xing gapless info (§3.1 RC8): encoder delay and padding in samples. */
+    data class Mp3GaplessInfo(val encoderDelay: Int, val padding: Int, val sampleRate: Int) {
+        val encoderDelayMs: Double get() = if (sampleRate > 0) encoderDelay * 1000.0 / sampleRate else 0.0
+    }
+
+    /**
+     * Parses the Xing/Info + LAME extension of the first MPEG audio frame in [headerBytes] (after
+     * any ID3v2 tag): 24-bit field at LAME + 21 = 12-bit `encoderDelay` + 12-bit `padding`.
+     */
+    fun parseMp3GaplessInfo(headerBytes: ByteArray, length: Int = headerBytes.size): Mp3GaplessInfo? {
+        val limit = minOf(length, headerBytes.size)
+        var pos = 0
+        if (limit >= 10 && headerBytes[0] == 'I'.code.toByte() && headerBytes[1] == 'D'.code.toByte() &&
+            headerBytes[2] == '3'.code.toByte()
+        ) {
+            val footer = if ((headerBytes[5].toInt() and 0x10) != 0) 10 else 0
+            pos = 10 + readSynchsafeInt(headerBytes, 6) + footer
+        }
+        // Find frame sync.
+        val scanEnd = minOf(limit - 4, pos + 8192)
+        while (pos < scanEnd) {
+            val b0 = headerBytes[pos].toInt() and 0xFF
+            val b1 = headerBytes[pos + 1].toInt() and 0xFF
+            if (b0 == 0xFF && (b1 and 0xE0) == 0xE0 && ((b1 shr 1) and 0x03) == 0x01) break
+            pos++
+        }
+        if (pos >= scanEnd) return null
+        val b1 = headerBytes[pos + 1].toInt() and 0xFF
+        val b2 = headerBytes[pos + 2].toInt() and 0xFF
+        val b3 = headerBytes[pos + 3].toInt() and 0xFF
+        val versionBits = (b1 shr 3) and 0x03 // 3 = MPEG1, 2 = MPEG2, 0 = MPEG2.5
+        val srIdx = (b2 shr 2) and 0x03
+        if (srIdx == 3 || versionBits == 1) return null
+        val baseRates = intArrayOf(44_100, 48_000, 32_000)
+        val sampleRate = when (versionBits) {
+            3 -> baseRates[srIdx]
+            2 -> baseRates[srIdx] / 2
+            else -> baseRates[srIdx] / 4
+        }
+        val mono = ((b3 shr 6) and 0x03) == 3
+        val sideInfo = if (versionBits == 3) (if (mono) 17 else 32) else (if (mono) 9 else 17)
+        val xing = pos + 4 + sideInfo
+        if (xing + 8 > limit) return null
+        val tag = String(headerBytes, xing, 4, StandardCharsets.ISO_8859_1)
+        if (tag != "Xing" && tag != "Info") return null
+        val flags = readBigEndianInt(headerBytes, xing + 4)
+        var lame = xing + 8
+        if ((flags and 0x1) != 0) lame += 4
+        if ((flags and 0x2) != 0) lame += 4
+        if ((flags and 0x4) != 0) lame += 100
+        if ((flags and 0x8) != 0) lame += 4
+        if (lame + 24 > limit) return null
+        val enc = String(headerBytes, lame, 4, StandardCharsets.ISO_8859_1)
+        if (enc != "LAME" && enc != "Lavf" && enc != "Lavc" && enc != "GOGO") return null
+        val d0 = headerBytes[lame + 21].toInt() and 0xFF
+        val d1 = headerBytes[lame + 22].toInt() and 0xFF
+        val d2 = headerBytes[lame + 23].toInt() and 0xFF
+        val delay = (d0 shl 4) or (d1 shr 4)
+        val padding = ((d1 and 0x0F) shl 8) or d2
+        return Mp3GaplessInfo(delay, padding, sampleRate)
     }
 
     private fun decodeId3TextPayload(bytes: ByteArray, offset: Int, size: Int): String? {
