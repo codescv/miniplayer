@@ -90,8 +90,10 @@ internal class FloatSink(initial: Int = 16_384, private val maxSize: Int = Int.M
  * < 300 Hz-band FIR, ≈2.756 kHz).
  */
 internal class TonalStreamBuilder(val inputSampleRate: Int, maxSeconds: Double = 75.0) {
-    private val chromaDecimator = PolyphaseDecimator(4, 47, 0.85)
-    private val bassPreDecimator = PolyphaseDecimator(4, 47, 0.85)
+    // Cutoff is a fraction of the *input* Nyquist: 0.85 / 4 keeps 85 % of the ÷4 output band
+    // (≈ 4.7 kHz at 44.1 kHz) and rejects what would alias into the chroma band (8 kHz hats → 3 kHz).
+    private val chromaDecimator = PolyphaseDecimator(4, 47, 0.85 / 4.0)
+    private val bassPreDecimator = PolyphaseDecimator(4, 47, 0.85 / 4.0)
     // 15-tap Blackman: passes the 35–260 Hz bass band flat and attenuates the band that would alias
     // into it (> 1.38 kHz); a short kernel keeps the bass timeline tight (< 1 ms group delay).
     private val bassDecimator = PolyphaseDecimator(4, 15, 0.2, blackman = true)

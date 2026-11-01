@@ -59,7 +59,8 @@ object TempoRegression {
         val phase0 = Stats.median(DoubleArray(sel.size) { timesMs[sel[it]] - slope0 * index[sel[it]] })
         val res0 = DoubleArray(sel.size) { timesMs[sel[it]] - (phase0 + slope0 * index[sel[it]]) }
         val mad0 = Stats.mad(res0, 0.0).coerceAtLeast(1.0)
-        val inl = sel.indices.filter { abs(res0[it]) < 2.5 * mad0 }.map { sel[it] }
+        // Inliers: |res| < 2.5·σ̂ with σ̂ = 1.4826·MAD (raw MAD ≈ 0.67σ would drop ~10 % of good beats).
+        val inl = sel.indices.filter { abs(res0[it]) < 2.5 * 1.4826 * mad0 }.map { sel[it] }
         val use = if (inl.size >= 3) inl else sel
         // Weighted LS refit, w = sqrt(strength).
         var sw = 0.0
