@@ -2,24 +2,29 @@
 
 **Version:** `1.0.9` (`versionCode = 10009`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch Verified (`v1.0.9`):** `wt/coder-11` (stacked on `v1.0.8` @ `496f20d`; **`80/80` unit & cross-module integration tests across `14` suites**, `0` failures, `0` errors)  
+**Branch Verified (`v1.0.9`):** `wt/tester-11` (`wt/coder-11` @ `b173a1c`, stacked on `v1.0.8` @ `496f20d`; **`80/80` unit & cross-module integration tests across `14` suites**, `0` failures, `0` errors)  
+**Release APK (`v1.0.9`):** `MiniPlayer-v1.0.9.apk` — **`14,365,065` bytes**, SHA-256 **`3eaa89e261935253af02d0aef41e90792268cc73321d15b025d65275636d53f8`**  
 **Pretrained AI Stem Model Asset (`v1.0.9`):** `miniplayer-stem-net-v1.bin` — **`65,536` bytes (`64 KB`)**, SHA-256 **`ad8c3019c7161093fab1fb72d66dc999460392f9ed1cec06f71b912d747d930a`** (bundled at `app/src/main/assets/miniplayer-stem-net-v1.bin` and staged at root `miniplayer-stem-net-v1.bin` for GitHub Release `v1.0.9`)  
 **Previous Release APK (`v1.0.8`):** `MiniPlayer-v1.0.8.apk` — `14,274,675` bytes, SHA-256 `bcbb1dba7abbb5dbe6447d3b1122a0cb72ea238e8bcf0951a5d2cdcd39c762e8`  
 **Previous Release APK (`v1.0.7`):** `MiniPlayer-v1.0.7.apk` — `14,274,563` bytes, SHA-256 `5bd30fbac643f5741ac920380e2a6b0f9bf025902f92fa7fa6d01a594505d4f2`
 
 ---
 
-## 0. `v1.0.9` Build, DSP/UI Unit Tests & Asset Verification
+## 0. `v1.0.9` Build, DSP/UI Unit Tests, Release-Signing & Asset Verification
 
-Run on `wt/coder-11` (stacked on `496f20d`) with `ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`, Build-Tools `35.0.0`, **100% offline**.
+Run on `wt/tester-11` (`wt/coder-11` @ `b173a1c`, stacked on `496f20d`) with `ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`, Build-Tools `35.0.0`, **100% offline**.
 
 | Check | Details / Result | Status |
 |---|---|---|
-| **Offline Verification Command (`v1.0.9`)** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug` — `BUILD SUCCESSFUL` | **PASS** |
+| **Offline Verification Command (`v1.0.9`)** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug assembleRelease` — `BUILD SUCCESSFUL in 1m 23s`, `102` actionable tasks (`63` executed, `39` from cache), plus uncached `./gradlew --offline --rerun-tasks testDebugUnitTest` (`BUILD SUCCESSFUL in 40s`, `24` executed) | **PASS** |
 | **Unit & Cross-Module Integration Tests** | `app/build/test-results/testDebugUnitTest/*.xml`: **`80/80`** tests across **`14`** suites (`+9` new `v1.0.9` tests), `0` failures, `0` errors, `0` skipped | **PASS** |
-| **Android Lint (`lintDebug`)** | **0** errors, `37` warnings (`app/build/reports/lint-results-debug.{html,xml}`) | **PASS** |
-| **Debug APK (`v1.0.9`)** | `app/build/outputs/apk/debug/app-debug.apk`; `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10009' versionName='1.0.9-DEBUG'`, `compileSdkVersion='35'`, `targetSdkVersion:'35'`, `application-label:'Play'` | **PASS** |
-| **Bundled `miniplayer-stem-net-v1.bin` Asset** | `unzip -l app/build/outputs/apk/debug/app-debug.apk` confirms `assets/miniplayer-stem-net-v1.bin` (`65,536` bytes, SHA-256 `ad8c3019c7161093fab1fb72d66dc999460392f9ed1cec06f71b912d747d930a`) byte-identical to root `miniplayer-stem-net-v1.bin` | **PASS** |
+| **Android Lint (`lintDebug` & `lintVitalRelease`)** | **0** errors, `37` warnings (`app/build/reports/lint-results-debug.{html,xml}`); `lintVitalRelease` also passed cleanly during `assembleRelease` | **PASS** |
+| **Debug APK (`v1.0.9`)** | `app/build/outputs/apk/debug/app-debug.apk` (`20,540,284` bytes); `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10009' versionName='1.0.9-DEBUG'`, `compileSdkVersion='35'`, `targetSdkVersion:'35'`, `application-label:'Play'` | **PASS** |
+| **Release APK (`v1.0.9`)** | `MiniPlayer-v1.0.9.apk` (byte-identical to `app/build/outputs/apk/release/app-release.apk`): **`14,365,065` bytes**, SHA-256 **`3eaa89e261935253af02d0aef41e90792268cc73321d15b025d65275636d53f8`**; aligned with `zipalign -f -p 4` (`zipalign -c -v 4` `Verification succesful`) and signed with `apksigner sign` (v2 + v3) using `~/.android/miniplayer-release.jks` (alias `miniplayer`) | **PASS** |
+| **`SHA256SUMS.txt` Manifest (`v1.0.9`)** | `3eaa89e261935253af02d0aef41e90792268cc73321d15b025d65275636d53f8  MiniPlayer-v1.0.9.apk` and `ad8c3019c7161093fab1fb72d66dc999460392f9ed1cec06f71b912d747d930a  miniplayer-stem-net-v1.bin` | **PASS** |
+| **`apksigner verify -v --print-certs` (`v1.0.9`)** | `Verifies`; v1 `false`, v2 `true`, v3 `true`, v3.1 `false`, v4 `false`; `Number of signers: 1`; certificate DN `C=US, O=Android, CN=Android Debug`; certificate SHA-256 `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5`, SHA-1 `f5d0cccfda49440bbb5422cb880fc8c68166a654`, MD5 `c9afe876ab15d9ad178e962f066bd4e6`; RSA `2048`; public-key SHA-256 `7cf9fa0eae8ab472ea68688a0754ac4e3e7f62486a37d51c00964caaeb023c83` — identical to `miniplayer-release.jks` / alias `miniplayer` and `v1.0.5`–`v1.0.8` for seamless in-place upgrades | **PASS** |
+| **`aapt2 dump badging` (`v1.0.9` release)** | `package: name='com.miniplayer.app' versionCode='10009' versionName='1.0.9' platformBuildVersionName='15' platformBuildVersionCode='35' compileSdkVersion='35' compileSdkVersionCodename='15'`, `minSdkVersion:'26'`, `targetSdkVersion:'35'`, `application-label:'Play'` | **PASS** |
+| **Bundled `miniplayer-stem-net-v1.bin` Asset** | `unzip -l MiniPlayer-v1.0.9.apk` confirms `assets/miniplayer-stem-net-v1.bin` (`65,536` bytes, SHA-256 `ad8c3019c7161093fab1fb72d66dc999460392f9ed1cec06f71b912d747d930a`) byte-identical to root `miniplayer-stem-net-v1.bin` | **PASS** |
 | **Terminology & Emoji Hygiene** | **0** `练琴` strings in `app/src/main/**`; **0** new emojis in Compose UI (`PracticeDeck.kt`, `NowPlayingSheet.kt`, `VideoPracticeSurface.kt`) or `LanStudioWebApp.kt` | **PASS** |
 
 ### `v1.0.9` Requirement Verification Matrix
