@@ -171,7 +171,7 @@ CREATE TABLE track_practice_states (
     practice_speed REAL NOT NULL DEFAULT 1.0,
     pitch_semitones INTEGER NOT NULL DEFAULT 0,
     pitch_cents INTEGER NOT NULL DEFAULT 0,
-    preserve_formants INTEGER NOT NULL DEFAULT 1, -- 1 开启零相位 STFT 共振峰保护 (保持人声音色)
+    preserve_formants INTEGER NOT NULL DEFAULT 1, -- v1.0.9 遗留兼容列 (v1.0.10 起改为纯粹时域 Sonic 升降调，不再启用 STFT 共振峰处理)
     bpm INTEGER NOT NULL DEFAULT 120,
     count_in_mode TEXT NOT NULL DEFAULT 'OFF',    -- OFF | BEAT_4 (读取旧库 SEC_1/SEC_2 自动映射为 BEAT_4)
     pre_roll_enabled INTEGER NOT NULL DEFAULT 0,
@@ -269,7 +269,7 @@ CREATE TABLE app_settings (
    - `ExoPlayer.Builder(this)` 配置 `AudioAttributes` (`USAGE_MEDIA`, `AUDIO_CONTENT_TYPE_MUSIC`)、`handleAudioFocus = true`、**`setHandleAudioBecomingNoisy(true)`**。
    - **纯粹时域 Sonic 零寻址变调与端侧 `HTDemucs` (`htdemucs_6s`) 离线五轨混音管线 (`RealTimeSonicAudioProcessor` + `StemSeparationEngine` + `HtdemucsStft`, `v1.0.10`)**：
      1. **纯粹时域 `SonicAudioProcessor` 实时变调**：移除 STFT 共振峰保护开关与相位/包络修饰路径；`DefaultAudioSink` 注入常驻激活（`isActive() == true`）的 `RealTimeSonicAudioProcessor`，连续点击半音/音分微调时在 `queueInput` 内将旧 `Sonic` 残余采样排空拼接至直接内存 `stagingBuffer` 并原地切换参数，在 `(1.0x, 0st, unity stems)` 下严格逐比特零延迟透传。
-     2. **Meta `htdemucs_6s` (`htdemucs_6s.onnx`) 端侧离线五轨分离与 `BFP8` 内存映射时域混音**：`StemModelManager` 管理 `filesDir/models/htdemucs_6s.onnx`（首次使用按需从 GitHub Release `v1.0.10` 流式下载 `~105 MB` ONNX 模型并校验 `> 20 MB` 及 ModelProto 头，绝不静默回退假模型）；`StemSeparationEngine` 解码音频并重采样至 `44,100 Hz` 立体声，以 `7.8 s`（`343,980` 采样，`overlap = 0.25`，三角过渡权重）滑窗经 `HtdemucsStft`（`4096`-pt 周期 Hann `cac=True` 实数谱）与 ONNX Runtime（`OrtSession`）分离出 `[VOCALS, GUITAR, BASS, DRUMS, OTHER(other+piano)]` 五轨立体声，流式编码至 `cacheDir/stems/htdemucs_<id>_<mtime>.stems`（`64` 帧块浮点压扩 `BFP8`，`SNR > 52 dB`，`MappedByteBuffer` `O(1)` 随机访问）。播放时 `RealTimeSonicAudioProcessor` 在 `flush()` 后的首帧利用两阶段归一化互相关在 `playheadMs` 邻域实现 **0 采样级对齐**，在时域完成五轨独立增益/静音/独奏混音与软限幅后直通 `SonicAudioProcessor`。
+     2. **Meta `htdemucs_6s` (`htdemucs_6s.onnx`) 端侧离线五轨分离与线性 `BFP10` 内存映射时域混音**：`StemModelManager` 管理 `filesDir/models/htdemucs_6s.onnx`（首次使用按需从 GitHub Release `v1.0.10` 流式下载 `~105 MB` ONNX 模型并校验 `> 20 MB` 及 ModelProto 头，绝不静默回退假模型）；`StemSeparationEngine` 解码音频并重采样至 `44,100 Hz` 立体声，以 `7.8 s`（`343,980` 采样，`overlap = 0.25`，三角过渡权重）滑窗经 `HtdemucsStft`（`4096`-pt 周期 Hann `cac=True` 实数谱）与 ONNX Runtime（`OrtSession`）分离出 `[VOCALS, GUITAR, BASS, DRUMS, OTHER(other+piano)]` 五轨立体声，流式编码至 `cacheDir/stems/htdemucs_<id>_<mtime>.stems`（`64` 帧线性块浮点 `BFP10`，每块 `820` 字节，`FORMAT_VERSION = 2`，`SNR ≈ 61 dB`，`MappedByteBuffer` `O(1)` 随机访问）。播放时 `RealTimeSonicAudioProcessor` 在 `flush()` 后的首帧利用两阶段归一化互相关在 `playheadMs` 邻域实现 **0 采样级对齐**，在时域完成五轨独立增益/静音/独奏混音与软限幅后直通 `SonicAudioProcessor`。
    - 视频熄屏续播：当 Activity 进入后台/熄屏时仅调用 `exoPlayer.clearVideoTextureView(surface)` 而不调用 `pause()`，使视频音轨在后台零中断继续播放；Activity 回到前台时重新绑定 `TextureView`。
 2. **`PracticeLoopEngine.kt`、`WaveformLoopRuler`、`BeatGrid` & `BpmDetector.kt` (`v1.0.2` / `v1.0.9`)**：
    - 所有 `ExoPlayer` API 调用严格运行在主线程 (`exoPlayer.applicationLooper`)。

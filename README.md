@@ -17,7 +17,7 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
   - **Ergonomic 2-Row Practice Deck (`360 dp` portrait friendly)**:
     - **Row 1 — Bar-Snapped A-B Loop, Measure Ticks & Bookmarks**: Media3 `PlayerMessage` scheduled directly on `exoPlayer.applicationLooper`, `44 dp` 240-bar RMS waveform overlaid with detected bar/measure grid ticks (`BeatGrid`, every 4th bar highlighted) and bar-count loop header (`A 00:08.0 ━━● 4小节 ●━━ B 00:16.0`), `48×48 dp` rounded pill handles with **1:1 float finger tracking** and automatic bar-boundary snapping (`小节对齐`, `barSnapEnabled = true`), clean **`[A]` / `[B]`** timestamp buttons, instant restart-from-`A` (`⏮` single-tap guard with `400 ms` double-tap to `00:00`/previous), non-destructive loop suspend/clear, and an icon-only **Save Bookmark** button (`Intro`, `Verse`, `Pre-Chorus`, `Chorus`, `Bridge`, `Solo 1`, `Solo 2`, `Outro`, or custom label).
     - **Row 2 — Speed Stepper, HTDemucs 5-Stem Mixer, Beat-Only Count-In & Icon-Only Toggles**: `0.25x–2.00x` pitch-preserving speed stepper (`[-5%]` · `1.00x` reset · `[+5%]`) paired with **Pure Time-Domain Sonic Pitch Shift (`升降调`: `-6..+6 st` + `-50..+50 ct`)**, **On-Device Meta `HTDemucs` (`htdemucs_6s`) 5-Stem Offline Separator & Real-Time Mixer (`分轨乐器音量`: `人声 / 吉他 / Bass / 鼓 / 其他`, `0%–150%` + `M` / `S`)**, **1-Tap Beat-Only Count-In (`预备拍`: `关 ↔ 4拍`)**, anytime **`BPM <bpm>`** chip (expands `BpmQuickBar` with `小节对齐` toggle, `对齐第1拍` downbeat calibration, 1-tap **`"自动"`** auto-detection, and `Tap` tempo), icon-only **Keep-Screen-On (`练习常亮` `DeckIconToggleButton`)**, and **Video Mirror (`水平镜像`)**.
-    - **Pure Sonic Real-Time Pitch Shift & On-Device `HTDemucs` 5-Stem Time-Domain Mixer (`RealTimeSonicAudioProcessor` + `StemSeparationEngine` + `HtdemucsStft`)**: `-6` to `+6` semitones + `-50` to `+50` cents fine tuning backed by pure time-domain `SonicAudioProcessor` (zero WOLA STFT phase/envelope artifacts, bit-exact passthrough at unity), paired with genuine **Meta Research `htdemucs_6s` (`htdemucs_6s.onnx`, `~105 MB`)** on-demand download + ONNX Runtime offline separation into 5 memory-mapped `BFP8` stereo stems (`.stems`, `> 52 dB` SNR) mixed at zero latency in the time domain with sample-accurate cross-correlation playhead lock.
+    - **Pure Sonic Real-Time Pitch Shift & On-Device `HTDemucs` 5-Stem Time-Domain Mixer (`RealTimeSonicAudioProcessor` + `StemSeparationEngine` + `HtdemucsStft`)**: `-6` to `+6` semitones + `-50` to `+50` cents fine tuning backed by pure time-domain `SonicAudioProcessor` (zero WOLA STFT phase/envelope artifacts, bit-exact passthrough at unity), paired with genuine **Meta Research `htdemucs_6s` (`htdemucs_6s.onnx`, `~105 MB`)** on-demand download + ONNX Runtime offline separation into 5 memory-mapped linear `BFP10` stereo stems (`.stems`, `~61 dB` SNR) mixed at zero latency in the time domain with sample-accurate cross-correlation playhead lock.
     - **Automatic BPM & Bar/Downbeat Grid Detection (`BpmDetector` + `WaveformExtractor.loadOrDetectBeatGrid`)**: Automatically detects `BeatGrid(bpm, firstBeatMs, firstDownbeatMs, beatsPerBar = 4)` from `100 Hz` onset-flux autocorrelation + beat-phase grid search + `4/4` bar-phase scoring (`cacheDir/waveforms/bpm_<id>_<mtime>.dat`), auto-populating `bpm` and `firstDownbeatMs` for instant measure-aligned A-B loops.
   - **Video Practice Enhancements**: `1.0x–4.0x` pinch-to-zoom & pan on fretboard/tab details, horizontal mirror flip, adaptive long-GOP video loop seeking (`>80 ms` keyframe fallback with `AUTO/EXACT` toggle), top/bottom dockable translucent landscape HUD, per-mode `FLAG_KEEP_SCREEN_ON`, and seamless screen-off audio-only continuation.
 
@@ -42,7 +42,7 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 ## What's New in `v1.0.10` (`versionCode = 10010`)
 
 1. **Pure Time-Domain Sonic Pitch Shifting (`PracticeDeck.kt`, `RealTimeSonicAudioProcessor.kt`, `PracticeLoopEngine.kt`)**: Removed the `保持人声音色 (共振峰保护)` switch from `PitchShiftInlinePanel` and deleted the real-time WOLA STFT formant-preservation DSP path (`FormantStemDspProcessor.kt`) so semitone (`-6 .. +6 st`) and fine cents (`-50 .. +50 ct`) adjustments run exclusively through crisp, phase-coherent time-domain `SonicAudioProcessor` with zero STFT latency or spectral-envelope artifacts.
-2. **Genuine Meta `HTDemucs` (`htdemucs_6s`) On-Device Offline 5-Stem Separation (`HtdemucsStft.kt`, `StemSeparationEngine.kt`, `RealTimeSonicAudioProcessor.kt`, `PracticeDeck.kt`)**: Replaced the `64 KB` heuristic filter (`miniplayer-stem-net-v1.bin`) with Meta Research's official pre-trained **`htdemucs_6s`** hybrid transformer exported to self-contained `htdemucs_6s.onnx` (`105.1 MB`, `cac=True` real `float32` STFT/waveform branches summing `other + piano` into 5 stems `[VOCALS, GUITAR, BASS, DRUMS, OTHER]`) executed on-device via **Microsoft ONNX Runtime Android (`1.20.0`)**. Features a clear 3-step UX in `StemMixerInlinePanel` (Step 1: on-demand model download with live byte progress & cancel and zero fake fallback; Step 2: `7.8 s` overlapping-segment separation with `1/N` segment progress & cancel into memory-mappable `BFP8` `.stems` cache at `> 52 dB` SNR; Step 3: instant zero-latency time-domain 5-stem `0%–150%` / `M` / `S` mixing with sample-accurate cross-correlated playhead alignment).
+2. **Genuine Meta `HTDemucs` (`htdemucs_6s`) On-Device Offline 5-Stem Separation (`HtdemucsStft.kt`, `StemSeparationEngine.kt`, `RealTimeSonicAudioProcessor.kt`, `PracticeDeck.kt`)**: Replaced the `64 KB` heuristic filter (`miniplayer-stem-net-v1.bin`) with Meta Research's official pre-trained **`htdemucs_6s`** hybrid transformer exported to self-contained `htdemucs_6s.onnx` (`105.1 MB`, `cac=True` real `float32` STFT/waveform branches summing `other + piano` into 5 stems `[VOCALS, GUITAR, BASS, DRUMS, OTHER]`) executed on-device via **Microsoft ONNX Runtime Android (`1.20.0`)**. Features a clear 3-step UX in `StemMixerInlinePanel` (Step 1: on-demand model download with live byte progress & cancel and zero fake fallback; Step 2: `7.8 s` overlapping-segment separation with `1/N` segment progress & cancel into memory-mappable linear `BFP10` `.stems` cache at `~61 dB` SNR; Step 3: instant zero-latency time-domain 5-stem `0%–150%` / `M` / `S` mixing with sample-accurate cross-correlated playhead alignment).
 
 ---
 
@@ -128,9 +128,9 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.9.apk` | Signed Android Release APK (`versionCode = 10009`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.10.apk` | Signed Android Release APK (`versionCode = 10010`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `app-release.apk` | Identical signed Android Release APK artifact |
-| `miniplayer-stem-net-v1.bin` | Compact `64 KB` (`65,536` bytes) quantized neural spectral-mask model weights for 5-stem separation (also bundled offline inside the APK) |
+| `htdemucs_6s.onnx` | Meta Research `htdemucs_6s` hybrid transformer ONNX model (`105.1 MB` / `110,242,365` bytes) downloaded on-demand in-app for 5-stem offline separation |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
 ---
@@ -141,13 +141,13 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 - **JDK 21** (`JAVA_HOME`)
 - **Android SDK Platform 35** & Build-Tools `35.0.0` (`ANDROID_HOME`)
 
-### Offline Build, Unit/Integration Tests & Lint
+### Build, Unit/Integration Tests & Lint
 ```bash
 export JAVA_HOME="/path/to/jdk21"
 export ANDROID_HOME="/path/to/Android/Sdk"
 
-# Run full pure-JVM unit & cross-module integration tests (80/80), debug/release APK builds, and Android Lint
-./gradlew --offline testDebugUnitTest assembleDebug assembleRelease lintDebug
+# Run full JVM unit, real ONNX Runtime E2E & cross-module integration tests (84/84), debug/release APK builds, and Android Lint
+./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug
 ```
 
 Output APKs:
@@ -158,6 +158,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, and `v1.0.9` formant-preserving pitch shift, 5-stem AI/STFT mixer, automatic bar-snap A-B loop, and beat-only `4拍` count-in)
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 3`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`FormantStemDspProcessor`/`StemSeparationEngine`/`BeatGrid` specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit & cross-module E2E integration (`80/80` tests across `14` suites), Lint, and `v1.0.9` verification report
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, `v1.0.9` automatic bar-snap A-B loop & beat-only `4拍` count-in, and `v1.0.10` pure Sonic pitch shifting & genuine Meta `HTDemucs` `htdemucs_6s.onnx` 5-stem separation + real-time time-domain mixer)
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 3`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`HtdemucsStft`/`StemSeparationEngine`/`StemSeparatedTrackCache` (`BFP10`)/`BeatGrid` specs, LAN Web Studio & Auto-Updater security invariants
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit, real `OrtEnvironment` `htdemucs_6s.onnx` E2E & cross-module integration (`84/84` tests across `14` suites), Lint, and `v1.0.10` verification report

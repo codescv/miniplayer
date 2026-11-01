@@ -66,6 +66,9 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            it.maxHeapSize = "1536m"
+        }
     }
 
     packaging {
@@ -114,4 +117,5 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.core)
+    testImplementation(libs.onnxruntime.jvm)
 }

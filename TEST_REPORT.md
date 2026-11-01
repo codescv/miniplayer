@@ -1,16 +1,43 @@
-# MiniPlayer v1.0.9 — Verification, Security Audit & Release Report
+# MiniPlayer v1.0.10 — Verification, Security Audit & Release Report
 
-**Version:** `1.0.9` (`versionCode = 10009`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
+**Version:** `1.0.10` (`versionCode = 10010`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch Verified (`v1.0.9`):** `wt/tester-11` (`wt/coder-11` @ `b173a1c`, stacked on `v1.0.8` @ `496f20d`; **`80/80` unit & cross-module integration tests across `14` suites**, `0` failures, `0` errors)  
-**Release APK (`v1.0.9`):** `MiniPlayer-v1.0.9.apk` — **`14,365,065` bytes**, SHA-256 **`3eaa89e261935253af02d0aef41e90792268cc73321d15b025d65275636d53f8`**  
-**Pretrained AI Stem Model Asset (`v1.0.9`):** `miniplayer-stem-net-v1.bin` — **`65,536` bytes (`64 KB`)**, SHA-256 **`ad8c3019c7161093fab1fb72d66dc999460392f9ed1cec06f71b912d747d930a`** (bundled at `app/src/main/assets/miniplayer-stem-net-v1.bin` and staged at root `miniplayer-stem-net-v1.bin` for GitHub Release `v1.0.9`)  
+**Branch / Worktree Verified (`v1.0.10`):** `/tmp/miniplayer-worktree-tester12` (verified on top of `coder-12` commit `b0842e2440bdb47619bf3e1a823e73d40cdbe0ae`, stacked on `v1.0.9` @ `3240c02`; **`84/84` unit, real ONNX Runtime E2E & cross-module integration tests across `14` suites**, `0` failures, `0` errors, `0` skipped)  
+**Release APK (`v1.0.10`):** `app/build/outputs/apk/release/app-release.apk` — **`85,206,021` bytes**, SHA-256 **`ab7f57128e2772c432fde69f59b3bd253ab6a05ae33eb261e1c864ef04710979`**  
+**On-Demand Pretrained AI Stem Model (`v1.0.10`):** `htdemucs_6s.onnx` (Meta Research official `htdemucs_6s` hybrid transformer exported to self-contained FP32 ONNX opset 17) — **`110,242,365` bytes (`105.14 MB`)**, SHA-256 **`950b278ae3c2520b9b6e9a8ed8b25615db9cd82552f8fded6a5af0280a4016a2`** (downloaded on-demand into `filesDir/models/htdemucs_6s.onnx`; **not** bundled inside the APK)  
+**Previous Release APK (`v1.0.9`):** `MiniPlayer-v1.0.9.apk` — `14,365,065` bytes, SHA-256 `3eaa89e261935253af02d0aef41e90792268cc73321d15b025d65275636d53f8`  
 **Previous Release APK (`v1.0.8`):** `MiniPlayer-v1.0.8.apk` — `14,274,675` bytes, SHA-256 `bcbb1dba7abbb5dbe6447d3b1122a0cb72ea238e8bcf0951a5d2cdcd39c762e8`  
 **Previous Release APK (`v1.0.7`):** `MiniPlayer-v1.0.7.apk` — `14,274,563` bytes, SHA-256 `5bd30fbac643f5741ac920380e2a6b0f9bf025902f92fa7fa6d01a594505d4f2`
 
 ---
 
-## 0. `v1.0.9` Build, DSP/UI Unit Tests, Release-Signing & Asset Verification
+## 0. `v1.0.10` Build, Real ONNX Runtime `htdemucs_6s.onnx` E2E, DSP/UI Unit Tests & Asset Verification
+
+Run in isolated verification worktree `/tmp/miniplayer-worktree-tester12` (`ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`, Build-Tools `35.0.0`, Microsoft ONNX Runtime `1.20.0`).
+
+| Check | Details / Result | Status |
+|---|---|---|
+| **Full Uncached Verification Command (`v1.0.10`)** | `./gradlew --rerun-tasks testDebugUnitTest lintDebug assembleDebug assembleRelease` (`BUILD SUCCESSFUL in 5m 4s`, `103` actionable tasks: `103` executed) + `./gradlew testDebugUnitTest lintDebug assembleRelease` (`BUILD SUCCESSFUL`) | **PASS** |
+| **Unit, Real ORT E2E & Cross-Module Integration Tests** | `app/build/test-results/testDebugUnitTest/TEST-*.xml`: **`84/84`** tests across **`14`** suites (`0` failures, `0` errors, `0` skipped) | **PASS** |
+| **Real `htdemucs_6s.onnx` JVM ONNX Runtime E2E Test** | `HtdemucsStemSeparationTest.realHtdemucs6sOnnxEndToEnd_separatesFull343980ChunkInto5FiniteNonZeroStems_andMixesViaBfp10AndSonic` loads `/tmp/htdemucs-export/htdemucs_6s.onnx` (`110,242,365` bytes, SHA-256 `950b278ae3c2520b9b6e9a8ed8b25615db9cd82552f8fded6a5af0280a4016a2`) via `ai.onnxruntime.OrtEnvironment` (`onnxruntime:1.20.0`), runs a full `343,980`-sample (`7.8 s` @ `44.1 kHz`) stereo multi-instrument chunk through `HtdemucsStft.specCacStereo` -> `OrtSession.run` (`~3.71 s` = `2.1x` real-time on CPU) -> `HtdemucsStft.ispecCacStereoStem` + `out_wave`, verifying 5 finite non-zero distinct stems (`VOCALS=0.0755`, `GUITAR=0.0380`, `BASS=0.0953`, `DRUMS=0.0618`, `OTHER=0.0011`), mixture reconstruction (`NCC = 0.99084`, `SNR = 17.39 dB`), `BFP10` `.stems` cache quantization (`SNR = 60.66 dB`), exact NCC playhead lock (`±0` frames from `-121 ms` drift) & `<= 2 LSB` (`NCC > 0.99`) solo stem isolation in `RealTimeSonicAudioProcessor`, and chained `-2 st` / `0.85x` pure Sonic output | **PASS** |
+| **Android Lint (`lintDebug` & `lintVitalRelease`)** | **0** errors, `85` warnings (`app/build/reports/lint-results-debug.{html,xml}`); `lintVitalRelease` also passed with **0** fatal errors during `assembleRelease` | **PASS** |
+| **Debug APK (`v1.0.10`)** | `app/build/outputs/apk/debug/app-debug.apk` (`91,415,059` bytes, SHA-256 `53821d3b8e85299018a243b30754f4489ce0255e145e22ab0aa8c0946950d5e0`); `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10010' versionName='1.0.10-DEBUG'`, `compileSdkVersion='35'`, `targetSdkVersion:'35'` | **PASS** |
+| **Release APK (`v1.0.10`)** | `app/build/outputs/apk/release/app-release.apk` (`85,206,021` bytes, SHA-256 `ab7f57128e2772c432fde69f59b3bd253ab6a05ae33eb261e1c864ef04710979`); `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10010' versionName='1.0.10' platformBuildVersionName='15' platformBuildVersionCode='35' compileSdkVersion='35'`, `minSdkVersion:'26'`, `targetSdkVersion:'35'` | **PASS** |
+| **APK Asset & Native ABI Hygiene** | `unzip -l app-release.apk` confirms **0** `miniplayer-stem-net-v1.bin` and **0** `htdemucs_6s.onnx` files bundled inside `assets/`, while packaging `libonnxruntime.so` + `libonnxruntime4j_jni.so` across `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64` from `onnxruntime-android:1.20.0` (`onnxruntime:1.20.0` JVM native libs remain strictly scoped to `testImplementation`) | **PASS** |
+| **Terminology & Emoji Hygiene** | **0** `练琴` strings and **0** `共振峰` strings in `app/src/main/**`; **0** UI emojis in Compose screens (`PracticeDeck.kt`, `NowPlayingSheet.kt`, `VideoPracticeSurface.kt`) or `LanStudioWebApp.kt` | **PASS** |
+
+### `v1.0.10` Requirement Verification Matrix
+
+| # | Requirement | Verified Implementation & Files | Status |
+|---:|---|---|---|
+| **1** | **Remove Formant Preservation Switch & WOLA STFT Formant DSP; Keep Pure Time-Domain Sonic Pitch Shift** | `PitchShiftInlinePanel` (`PracticeDeck.kt`) completely removes the `保持人声音色 (共振峰保护)` switch and exposes only pure Sonic semitone (`-6 .. +6 st`, `-1 半音`, `原调 (0 st)` / `恢复原调`, `+1 半音`) and fine cents (`-50 .. +50 ct`, `-5c`, `+5c`) controls. `FormantStemDspProcessor.kt`, `FormantStemDspProcessorTest.kt`, and `app/src/main/assets/miniplayer-stem-net-v1.bin` are completely deleted. `RealTimeSonicAudioProcessor.kt` delegates pitch/speed exclusively to time-domain `SonicAudioProcessor`. | **PASS** |
+| **2** | **Genuine Meta `htdemucs_6s` (`htdemucs_6s.onnx`) Offline 5-Stem Separation via ONNX Runtime** | `HtdemucsStft.kt` implements exact `demucs/hdemucs.py` `4096`-pt periodic Hann STFT (`hop = 1024`, `pad1d(..., 'reflect')`, `cac = True`, `1/sqrt(4096)`) and WOLA iSTFT (`F.pad(z, (2, 2))` + `STD_WIN_SUM` + `out_wave` fusion) with `< 1e-5` roundtrip error. `StemModelManager` enforces strict `> 20 MB` + ONNX `0x08` `ModelProto` header validation with zero fake fallback and cleans up legacy `miniplayer-stem-net-v1.bin`. `StemSeparationEngine` decodes/resamples tracks to `44.1 kHz` stereo and executes `343,980`-sample (`7.8 s`, `overlap = 0.25`, triangular weights) overlapping segments through `OrtSession` into `[VOCALS, GUITAR, BASS, DRUMS, OTHER(other+piano)]`. | **PASS** |
+| **3** | **Memory-Mapped Linear `BFP10` `.stems` Cache & Zero-Latency Time-Domain 5-Stem Mixer** | `StemSeparatedTrackCache` (`FORMAT_VERSION = 2`, `FLAG_LINEAR_BFP10 = 2`, `820` bytes per `64`-frame stereo 5-stem block) achieves `> 60 dB` SNR with `O(1)` `MappedByteBuffer` random frame access. `RealTimeSonicAudioProcessor` Stage 0 performs two-stage coarse-to-fine normalized cross-correlation playhead lock (`[-250 ms, +650 ms]`), `44.1 kHz <-> trackSampleRate` linear interpolation, per-stem `0%–150%` / `M` / `S` mixing, and $C^1$ soft-clipping before `SonicAudioProcessor` (with bit-exact passthrough when `stemMix` and speed/pitch are at identity). | **PASS** |
+| **4** | **3-Step `StemMixerInlinePanel` UX & Version Bump (`10010` / `1.0.10`)** | `StemMixerInlinePanel` (`PracticeDeck.kt`) guides users cleanly through Step 1 (`下载 HTDemucs 模型 (~105 MB)` with byte progress & cancel), Step 2 (`开始 HTDemucs 分轨` with `1/N` segment progress & cancel), and Step 3 (`HTDemucs 5轨已就绪` badge + live 5-stem sliders / `M` / `S` / `重置`). `app/build.gradle.kts` bumped to `versionCode = 10010`, `versionName = "1.0.10"`; all 4 docs (`DESIGN.md`, `ARCHITECTURE.md`, `TEST_REPORT.md`, `README.md`) updated. | **PASS** |
+
+---
+
+## 0a. `v1.0.9` Build, DSP/UI Unit Tests, Release-Signing & Asset Verification (previous)
 
 Run on `wt/tester-11` (`wt/coder-11` @ `b173a1c`, stacked on `496f20d`) with `ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`, Build-Tools `35.0.0`, **100% offline**.
 
@@ -111,9 +138,9 @@ All Android builds and pure-JVM unit/integration tests succeeded **100% offline*
 
 ## 3. Unit & End-to-End Integration Test Suites
 
-### 3.1 Offline JVM Test Summary (`./gradlew --offline testDebugUnitTest`)
+### 3.1 JVM & Real ONNX Runtime Test Summary (`./gradlew testDebugUnitTest`)
 
-**Summary:** `14` test suites, **`80/80` tests passed (`0` failures, `0` errors, `0` skipped)**.
+**Summary:** `14` test suites, **`84/84` tests passed (`0` failures, `0` errors, `0` skipped)**.
 
 | Test Suite | Tests | Passed | Coverage Scope |
 |---|---:|---:|---|
@@ -121,14 +148,14 @@ All Android builds and pure-JVM unit/integration tests succeeded **100% offline*
 | `core.metadata.AudioTagCodecTest` | 5 | 5 | Crash-safe read/write & unknown-frame preservation across MP3 ID3v2.3/v2.4 + APIC, FLAC Vorbis Comments + PICTURE, Ogg Vorbis / Opus (`granulePosition = 0L` & valid Ogg CRC-32), MP4/M4A `ilst` (`stco`/`co64` chunk offset recalculation + 64-bit `co64` overflow upgrade), and zero-staging `PosixFdByteSource` |
 | `core.metadata.MetadataAndLanTest` | 2 | 2 | `DefaultMetadataEngine.saveMetadata` persists staged candidate `coverRemoteUrl` cover bytes, `syncedLrc`/`plainLyrics` lyrics cache and tags on save; LAN `GET /api/metadata/candidates` and `"candidatesOnly": true` return candidates without auto-saving until `POST /api/metadata/update` |
 | `core.metadata.MetadataParsingAndM3uTest` | 5 | 5 | `SmartFilenameParser`, `ArtistSplitter` (`AC/DC` allowlist), `.lrc` parser (UTF-8/GB18030/UTF-16), and `.m3u8` `#EXT-X-MINIPLAYER-PRACTICE:1` 3-tier import/export |
-| `core.metadata.OnlineMetadataCompleterTest` | 4 | 4 | MusicBrainz `1 req/s` rate limiter, Cover Art Archive `3.0s` deadline racing to iTunes `1000x1000bb` CDN fallback + trusted `*.archive.org` HTTPS redirect upgrade, `(Backing Track)` suffix preservation, and batch `>= 85%` confidence threshold |
+| `core.metadata.OnlineMetadataCompleterTest` | 4 | 4 | MusicBrainz `1 req/s` rate limiter, Cover Art Archive `3.0s` deadline racing to iTunes `1000x1000bb` fallback + trusted `*.archive.org` HTTPS redirect upgrade, `(Backing Track)` suffix preservation, and batch `>= 85%` confidence threshold |
 | `core.update.AppUpdaterAndPracticeMathTest` | 5 | 5 | `SemanticVersion` & `Sha256SumsParser`, GitHub `/releases/latest` → `/releases` fallback, `≤ 5` HTTPS redirect hop cap, 4-stage `ApkValidator`, and `PracticeMath` |
-| `player.FormantStemDspProcessorTest` | 4 | 4 | Zero-latency identity bypass + WOLA COLA reconstruction (`≤ 2 LSB`, exact 1:1 drain frame count), `-4 st` formant-preserving STFT spectral envelope restoration vs. uncompensated formant drop, 5-stem soft-mask partition-of-unity ($\sum_s M_s \equiv 1.0$) + stereo Mid/Side vocal vs. guitar mute separation, and `64 KB` `StemNetModel` (`miniplayer-stem-net-v1.bin`) + `25 Hz` `.stm` GZIP cache round-trip |
-| `player.PracticeLoopEngineTest` | 13 | 13 | Bar-snap A-B marking/dragging/seek & `alignDownbeatToCurrentPosition`, direct `OFF ↔ BEAT_4` Count-In 1-tap toggle, `preserveFormants` & `StemMixConfig` propagation to `LoopPlayerPort`, A-B loop state machine (`NONE` → `A_SET` → `ACTIVE_LOOP` → `SUSPENDED`), `exoPlayer.repeatMode` sync, single-tap `⏮` restart-from-`A` vs. `400ms` double-tap guard, `applyAutoDetectedBpm`, `Count-In` frame pre-priming, `>80ms` adaptive video keyframe fallback, PCM RMS waveform, and `ArtworkLoader` |
-| `player.RealTimeSonicAudioProcessorTest` | 4 | 4 | Always-active `isActive() == true` across identity & non-identity states, 24 rapid multi-click pitch shifts (`-6st..+6st`, `±5c`) draining `SonicAudioProcessor` buffers with zero dropped samples, `Sonic -> Identity -> Sonic` transitions, and idempotent `queueEndOfStream` |
+| `player.HtdemucsStemSeparationTest` | 5 | 5 | Exact `4096`-pt Demucs `cac=True` STFT/iSTFT roundtrip (`< 1e-4` error, reflect padding & `out_wave` fusion), linear `BFP10` `MappedByteBuffer` `.stems` cache (`> 60 dB` SNR & `O(1)` random frame access), `14s` 3-segment triangular overlap-add + `48kHz -> 44.1kHz` streaming resampler, strict `StemModelManager` ONNX `> 20 MB` / `0x08` validation + 302 redirect streaming download + cancellation with zero fake fallback, and **real `OrtEnvironment` + `htdemucs_6s.onnx` (`110,242,365` bytes) full `343,980`-sample E2E 5-stem separation -> `BFP10` cache -> `RealTimeSonicAudioProcessor` solo/mute + `-2 st` / `0.85x` Sonic pipeline** |
+| `player.PracticeLoopEngineTest` | 13 | 13 | Bar-snap A-B marking/dragging/seek & `alignDownbeatToCurrentPosition`, direct `OFF ↔ BEAT_4` Count-In 1-tap toggle, pure Sonic pitch + `StemMixConfig` propagation to `LoopPlayerPort`, A-B loop state machine (`NONE` → `A_SET` → `ACTIVE_LOOP` → `SUSPENDED`), `exoPlayer.repeatMode` sync, single-tap `⏮` restart-from-`A` vs. `400ms` double-tap guard, `applyAutoDetectedBpm`, `Count-In` frame pre-priming, `>80ms` adaptive video keyframe fallback, PCM RMS waveform, and `ArtworkLoader` |
+| `player.RealTimeSonicAudioProcessorTest` | 7 | 7 | Always-active `isActive() == true` across identity & non-identity states, bit-exact unity passthrough, 64 rapid multi-click pitch shifts (`-6st..+6st`, `±5c`) draining `SonicAudioProcessor` buffers with zero dropped samples, `Sonic -> Identity -> Sonic` transitions, zero-latency 5-stem time-domain Mute/Solo/150% soft-clip mixing, two-stage NCC playhead alignment recovering exact frame offset from `±180 ms` drift, and `48 kHz <-> 44.1 kHz` stem resampling chained into `SonicAudioProcessor` |
 | `player.PlaybackParametersDecisionTest` | 3 | 3 | Speed/pitch clamping (`0.25f..2.0f`, `0.5f..2.0f`), ExoPlayer speed-only propagation (`pitch = 1.0f` invariant), and zero-seek pitch transitions |
 | `player.BpmDetectorTest` | 7 | 7 | `OnsetFluxAccumulator.computeBeatGrid` pickup-silence downbeat & `4/4` bar phase detection, `BeatGrid` bar snapping (`snapPointA`, `snapPointB`, `snapDraggedLoopPoints`, `countBarsBetween`) & backward-compatible cache parser, plus onset-autocorrelation accuracy across `80–160` BPM, stereo PCM, silence rejection, and octave ambiguity resolution |
 | `lan.LanStudioServerTest` | 9 | 9 | Emoji-free SPA serving, library filters (`isInPracticeFolder` & `isExcludedFromAutoGrouping` isolation), HTTP `200` + `206 Partial Content` byte-range streaming, streaming upload + `mkdir` + `folder-rule` (`isPractice` & `excludeFromGrouping`), metadata persistence, `.m3u8` round-trip, bookmark CRUD, and RFC 1918/loopback + `Host` + `Origin` + PIN security guards |
 | `lan.QrCodeGeneratorTest` | 3 | 3 | Pure-Kotlin ISO/IEC 18004 QR Version 1–10 capacity compliance, GF(256) Reed-Solomon syndrome verification, and oversized payload rejection |
 | `integration.MiniPlayerEndToEndIntegrationTest` | 6 | 6 | Full cross-module E2E verification across `core`, `player`, and `lan` (including folder `"不自动归类"` inheritance/casual-playback invariants, recursive folder-to-playlist natural sort collection, and unconditional `.nomedia` scanning) |
-| **Total** | **80** | **80** | **100% pass (`0` failures, `0` errors)** |
+| **Total** | **84** | **84** | **100% pass (`0` failures, `0` errors, `0` skipped)** |
