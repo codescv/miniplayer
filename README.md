@@ -39,6 +39,12 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 ---
 
+## What's New in `v1.0.14` (`versionCode = 10014`)
+
+1. **Unified Single-Entry Agent Feedback (`发送反馈`, `SettingsScreen.kt`, `AgentFeedbackHelper.kt`)**: `关于与自动更新` now exposes exactly **one** `发送反馈` button on the `发送反馈给 Agent` row; the redundant `Agent 反馈邮箱` text button and standalone `AgentEmailConfigDialog` were removed because the feedback bottom sheet already hosts the local-only `Agent 反馈邮箱` field with an inline `保存` action. The sheet presents 3 clearly labeled core fields — **`标题`** (becomes the `play: [v1.0.14] <标题>` subject), **`问题描述`** (multiline email body), and **`增加图片`** (Android Photo Picker → `FileProvider` `Intent.EXTRA_STREAM` attachment) — and enables `发送反馈给 Agent` only when the email is valid and at least one of the three fields is non-empty (`AgentFeedbackHelper.canSendFeedback`; image-only feedback uses the `图片反馈` subject fallback).
+
+---
+
 ## What's New in `v1.0.13` (`versionCode = 10013`)
 
 1. **BeatGrid v2 — SOTA 6-Stage Beat, Downbeat & Hypermeter Alignment Engine (`com.miniplayer.app.player.beat.*`, `BpmDetector.kt`, `WaveformExtractor.kt`)**:
@@ -155,7 +161,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.13.apk` | Signed Android Release APK (`versionCode = 10013`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.14.apk` | Signed Android Release APK (`versionCode = 10014`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `htdemucs_6s.onnx` | Meta Research `htdemucs_6s` hybrid transformer ONNX model (`105.1 MB` / `110,242,365` bytes) downloaded on-demand in-app for 5-stem offline separation (hosted on `v1.0.10` release) |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 

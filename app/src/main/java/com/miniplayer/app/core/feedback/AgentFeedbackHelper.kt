@@ -44,6 +44,8 @@ data class AgentFeedbackRequest(
     val versionName: String,
     val includeDiagnostics: Boolean = true,
     val diagnostics: FeedbackDiagnostics? = null,
+    /** `v1.0.14`: true when a `增加图片` attachment is staged (image-only feedback is allowed). */
+    val hasAttachment: Boolean = false,
 )
 
 data class AgentFeedbackPayload(
@@ -67,6 +69,9 @@ object AgentFeedbackHelper {
     const val EMAIL_PLACEHOLDER = "agent@example.com"
     const val PROJECT_ROUTING_PREFIX = "play"
     const val DEFAULT_SUMMARY = "使用反馈"
+    /** `v1.0.14`: subject/body fallback when only an image (`增加图片`) is attached without 标题/问题描述. */
+    const val ATTACHMENT_ONLY_SUMMARY = "图片反馈"
+    const val DEFAULT_VERSION_TAG = "v1.0.14"
     const val MAX_SUMMARY_LENGTH = 120
     private const val FALLBACK_SUMMARY_LENGTH = 60
 
@@ -114,10 +119,32 @@ object AgentFeedbackHelper {
         val stripped = SemanticVersion.stripDebugSuffix(versionName)
             ?: versionName?.trim().orEmpty()
         val bare = stripped.trim().removePrefix("v").removePrefix("V").trim()
-        return if (bare.isEmpty()) "v1.0.13" else "v$bare"
+        return if (bare.isEmpty()) DEFAULT_VERSION_TAG else "v$bare"
     }
 
-    fun sanitizeSummary(summary: String?, detailsFallback: String? = null): String {
+    /**
+     * `v1.0.14` unified feedback sheet: true when at least one of the 3 core fields
+     * (`标题` summary, `问题描述` details, `增加图片` attachment) carries content.
+     */
+    fun hasFeedbackContent(summary: String?, details: String?, hasAttachment: Boolean): Boolean =
+        !summary.isNullOrBlank() || !details.isNullOrBlank() || hasAttachment
+
+    /**
+     * `v1.0.14` send-button gate: the recipient email must be valid and at least one of
+     * `标题` / `问题描述` / `增加图片` must be non-empty.
+     */
+    fun canSendFeedback(
+        recipientEmail: String?,
+        summary: String?,
+        details: String?,
+        hasAttachment: Boolean,
+    ): Boolean = isValidEmail(recipientEmail) && hasFeedbackContent(summary, details, hasAttachment)
+
+    fun sanitizeSummary(
+        summary: String?,
+        detailsFallback: String? = null,
+        hasAttachment: Boolean = false,
+    ): String {
         val collapsed = collapseSingleLine(summary)
         if (collapsed.isNotEmpty()) {
             return truncateWithEllipsis(collapsed, MAX_SUMMARY_LENGTH)
@@ -130,7 +157,7 @@ object AgentFeedbackHelper {
         if (firstDetailLine.isNotEmpty()) {
             return truncateWithEllipsis(firstDetailLine, FALLBACK_SUMMARY_LENGTH)
         }
-        return DEFAULT_SUMMARY
+        return if (hasAttachment) ATTACHMENT_ONLY_SUMMARY else DEFAULT_SUMMARY
     }
 
     /** "128" for integral tempos, "120.4" / "120.39" for fractional ones. */
@@ -147,9 +174,10 @@ object AgentFeedbackHelper {
         summary: String?,
         versionName: String?,
         detailsFallback: String? = null,
+        hasAttachment: Boolean = false,
     ): String {
         val versionTag = normalizeVersionTag(versionName)
-        val cleanSummary = sanitizeSummary(summary, detailsFallback)
+        val cleanSummary = sanitizeSummary(summary, detailsFallback, hasAttachment)
         return "$PROJECT_ROUTING_PREFIX: [$versionTag] $cleanSummary"
     }
 
@@ -216,13 +244,14 @@ object AgentFeedbackHelper {
         details: String?,
         includeDiagnostics: Boolean = true,
         diagnostics: FeedbackDiagnostics? = null,
+        hasAttachment: Boolean = false,
     ): String {
         val normalizedDetails = details
             ?.replace("\r\n", "\n")
             ?.replace('\r', '\n')
             ?.trim()
             .orEmpty()
-        val mainContent = normalizedDetails.ifEmpty { sanitizeSummary(summary, null) }
+        val mainContent = normalizedDetails.ifEmpty { sanitizeSummary(summary, null, hasAttachment) }
         return if (includeDiagnostics && diagnostics != null) {
             "$mainContent\n\n${formatDiagnosticsBlock(diagnostics)}"
         } else {
@@ -283,16 +312,20 @@ object AgentFeedbackHelper {
         val normalizedEmail = normalizeEmail(request.recipientEmail)
         require(isValidEmail(normalizedEmail)) { "Invalid recipient email address" }
 
+        val hasAttachment = request.hasAttachment ||
+            !request.diagnostics?.attachmentFileName.isNullOrBlank()
         val subject = formatSubject(
             summary = request.summary,
             versionName = request.versionName,
             detailsFallback = request.details,
+            hasAttachment = hasAttachment,
         )
         val body = formatBody(
             summary = request.summary,
             details = request.details,
             includeDiagnostics = request.includeDiagnostics,
             diagnostics = request.diagnostics,
+            hasAttachment = hasAttachment,
         )
         val mailtoUri = buildMailtoUri(
             recipientEmail = normalizedEmail,
@@ -304,7 +337,7 @@ object AgentFeedbackHelper {
             subject = subject,
             body = body,
             mailtoUri = mailtoUri,
-            hasAttachment = !request.diagnostics?.attachmentFileName.isNullOrBlank(),
+            hasAttachment = hasAttachment,
         )
     }
 

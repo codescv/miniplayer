@@ -39,7 +39,8 @@ import kotlinx.coroutines.withContext
  * 1. `本地媒体库与无线连接` (PC LAN Web Studio entry, launch incremental rescan)
  * 2. `本地缓存` (local cover & waveform cache cleanup)
  * 3. `关于与自动更新` (GitHub Release checker, changelog, SHA-256 + signature verified APK updater,
- *    and local-only Agent Feedback Email & 1-click feedback sender)
+ *    and a single unified `发送反馈` entry that opens [AgentFeedbackSheet], which hosts the local-only
+ *    `Agent 反馈邮箱` input + inline `保存`, and the 3 core fields `标题` / `问题描述` / `增加图片`; `v1.0.14`)
  */
 @Composable
 fun SettingsScreen(
@@ -55,7 +56,6 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     var showLicensesDialog by remember { mutableStateOf(false) }
-    var showEmailConfigDialog by remember { mutableStateOf(false) }
     var showFeedbackSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) {
@@ -264,7 +264,7 @@ fun SettingsScreen(
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
 
-                    // Agent Feedback Email & 1-Click Send Feedback to Agent
+                    // Single unified feedback entry (v1.0.14): email config lives inside AgentFeedbackSheet
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -301,9 +301,6 @@ fun SettingsScreen(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { showEmailConfigDialog = true }) {
-                            Text("Agent 反馈邮箱")
-                        }
                         TextButton(onClick = { showLicensesDialog = true }) {
                             Text("开源许可声明")
                         }
@@ -313,23 +310,6 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(24.dp))
         }
-    }
-
-    if (showEmailConfigDialog) {
-        AgentEmailConfigDialog(
-            initialEmail = agentFeedbackEmail,
-            onSaveEmail = { newEmail ->
-                val ok = viewModel.saveAgentFeedbackEmail(newEmail)
-                if (ok) {
-                    showEmailConfigDialog = false
-                    viewModel.emitMessage(
-                        if (newEmail.isBlank()) "已清空本机 Agent 反馈邮箱" else "已保存 Agent 反馈邮箱至本机",
-                    )
-                }
-                ok
-            },
-            onDismiss = { showEmailConfigDialog = false },
-        )
     }
 
     if (showFeedbackSheet) {
@@ -356,63 +336,6 @@ fun SettingsScreen(
             },
         )
     }
-}
-
-@Composable
-private fun AgentEmailConfigDialog(
-    initialEmail: String,
-    onSaveEmail: (String) -> Boolean,
-    onDismiss: () -> Unit,
-) {
-    var emailInput by remember(initialEmail) { mutableStateOf(initialEmail) }
-    var errorText by remember { mutableStateOf<String?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Agent 反馈邮箱") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "该邮箱仅保存在当前设备的本地配置中，不会上传或内置于应用代码。留空并保存可清除配置。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedTextField(
-                    value = emailInput,
-                    onValueChange = {
-                        emailInput = it
-                        errorText = null
-                    },
-                    label = { Text("接收反馈的 Agent 邮箱") },
-                    placeholder = { Text(AgentFeedbackHelper.EMAIL_PLACEHOLDER) },
-                    singleLine = true,
-                    isError = errorText != null,
-                    supportingText = errorText?.let { err -> { Text(err) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val trimmed = AgentFeedbackHelper.normalizeEmail(emailInput)
-                    if (trimmed.isNotEmpty() && !AgentFeedbackHelper.isValidEmail(trimmed)) {
-                        errorText = "请输入有效的邮箱地址，例如 ${AgentFeedbackHelper.EMAIL_PLACEHOLDER}"
-                    } else {
-                        onSaveEmail(trimmed)
-                    }
-                },
-            ) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        },
-    )
 }
 
 @Composable
@@ -448,23 +371,34 @@ private fun AgentFeedbackSheet(
                     stagedAttachment?.file?.let { old -> runCatching { old.delete() } }
                     stagedAttachment = att
                 }.onFailure { err ->
-                    onEmitMessage("读取截图失败：${err.message ?: "请重试"}")
+                    onEmitMessage("读取图片失败：${err.message ?: "请重试"}")
                 }
             }
         }
     }
 
-    val subjectPreview = remember(summaryInput, detailsInput) {
+    val hasAttachment = stagedAttachment != null
+    val subjectPreview = remember(summaryInput, detailsInput, hasAttachment) {
         AgentFeedbackHelper.formatSubject(
             summary = summaryInput,
             versionName = BuildConfig.VERSION_NAME,
             detailsFallback = detailsInput,
+            hasAttachment = hasAttachment,
         )
     }
 
     val normalizedEmail = AgentFeedbackHelper.normalizeEmail(emailInput)
     val canSaveEmailInline = normalizedEmail != savedEmail &&
         (normalizedEmail.isEmpty() || AgentFeedbackHelper.isValidEmail(normalizedEmail))
+    val emailValid = AgentFeedbackHelper.isValidEmail(normalizedEmail)
+    val emailHint = emailError ?: if (normalizedEmail.isNotEmpty() && !emailValid) {
+        "请输入有效的邮箱地址，例如 ${AgentFeedbackHelper.EMAIL_PLACEHOLDER}"
+    } else {
+        null
+    }
+    val hasContent = AgentFeedbackHelper.hasFeedbackContent(summaryInput, detailsInput, hasAttachment)
+    val canSend = !isStagingImage &&
+        AgentFeedbackHelper.canSendFeedback(normalizedEmail, summaryInput, detailsInput, hasAttachment)
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -493,8 +427,8 @@ private fun AgentFeedbackSheet(
                 label = { Text("Agent 反馈邮箱（仅保存在本机）") },
                 placeholder = { Text(AgentFeedbackHelper.EMAIL_PLACEHOLDER) },
                 singleLine = true,
-                isError = emailError != null,
-                supportingText = emailError?.let { err -> { Text(err) } },
+                isError = emailHint != null,
+                supportingText = emailHint?.let { err -> { Text(err) } },
                 trailingIcon = if (canSaveEmailInline) {
                     {
                         TextButton(
@@ -519,7 +453,7 @@ private fun AgentFeedbackSheet(
             OutlinedTextField(
                 value = summaryInput,
                 onValueChange = { summaryInput = it },
-                label = { Text("反馈简述") },
+                label = { Text("标题") },
                 placeholder = { Text("例如：练习模式希望支持导出循环片段") },
                 singleLine = true,
                 supportingText = {
@@ -536,14 +470,14 @@ private fun AgentFeedbackSheet(
             OutlinedTextField(
                 value = detailsInput,
                 onValueChange = { detailsInput = it },
-                label = { Text("详细说明（可选）") },
+                label = { Text("问题描述") },
                 placeholder = { Text("补充使用场景、复现步骤或改进建议") },
                 minLines = 3,
                 maxLines = 6,
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // Optional Screenshot Picker Row
+            // 增加图片 (Android Photo Picker -> FileProvider EXTRA_STREAM attachment)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -567,8 +501,8 @@ private fun AgentFeedbackSheet(
                     Text(
                         when {
                             isStagingImage -> "处理中…"
-                            stagedAttachment != null -> "更换截图"
-                            else -> "添加截图（可选）"
+                            stagedAttachment != null -> "更换图片"
+                            else -> "增加图片"
                         },
                     )
                 }
@@ -599,7 +533,7 @@ private fun AgentFeedbackSheet(
                             ) {
                                 Icon(
                                     imageVector = Icons.Outlined.Close,
-                                    contentDescription = "移除截图",
+                                    contentDescription = "移除图片",
                                     modifier = Modifier.size(16.dp),
                                 )
                             }
@@ -640,6 +574,19 @@ private fun AgentFeedbackSheet(
                 }
             }
 
+            val sendBlockedHint = when {
+                normalizedEmail.isEmpty() -> "请先填写 Agent 反馈邮箱"
+                !hasContent -> "请至少填写标题、问题描述或增加图片中的一项"
+                else -> null
+            }
+            if (sendBlockedHint != null) {
+                Text(
+                    text = sendBlockedHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
@@ -658,6 +605,10 @@ private fun AgentFeedbackSheet(
                             emailError = "请先填写有效的 Agent 反馈邮箱，例如 ${AgentFeedbackHelper.EMAIL_PLACEHOLDER}"
                             return@Button
                         }
+                        if (!AgentFeedbackHelper.hasFeedbackContent(summaryInput, detailsInput, stagedAttachment != null)) {
+                            onEmitMessage("请至少填写标题、问题描述或增加图片中的一项")
+                            return@Button
+                        }
                         onSaveEmail(targetEmail)
                         val diagnostics = if (includeDiagnostics || stagedAttachment != null) {
                             onBuildDiagnostics(stagedAttachment?.displayName)
@@ -672,6 +623,7 @@ private fun AgentFeedbackSheet(
                                 versionName = BuildConfig.VERSION_NAME,
                                 includeDiagnostics = includeDiagnostics,
                                 diagnostics = diagnostics,
+                                hasAttachment = stagedAttachment != null,
                             ),
                         )
                         val launched = AgentFeedbackLauncher.launchFeedbackEmail(
@@ -685,6 +637,7 @@ private fun AgentFeedbackSheet(
                             onEmitMessage("未找到可用的邮件客户端，请先安装邮箱应用")
                         }
                     },
+                    enabled = canSend,
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
                     Text("发送反馈给 Agent")

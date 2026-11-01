@@ -68,32 +68,32 @@ class AgentFeedbackHelperTest {
     }
 
     @Test
-    fun `formatSubject enforces play routing prefix v1_0_12 tag strips debug suffix and sanitizes summary`() {
+    fun `formatSubject enforces play routing prefix v1_0_14 tag strips debug suffix and sanitizes summary`() {
         assertEquals(
-            "play: [v1.0.13] 练习模式希望支持导出循环片段",
+            "play: [v1.0.14] 练习模式希望支持导出循环片段",
             AgentFeedbackHelper.formatSubject(
                 summary = "练习模式希望支持导出循环片段",
-                versionName = "1.0.13",
+                versionName = "1.0.14",
             ),
         )
-        // Debug build suffix (-DEBUG) must normalize cleanly to [v1.0.13] and collapse newlines to single space
+        // Debug build suffix (-DEBUG) must normalize cleanly to [v1.0.14] and collapse newlines to single space
         assertEquals(
-            "play: [v1.0.13] 五轨混音 音量记忆优化",
+            "play: [v1.0.14] 五轨混音 音量记忆优化",
             AgentFeedbackHelper.formatSubject(
                 summary = "  五轨混音\n\t音量记忆优化  ",
-                versionName = "1.0.13-DEBUG",
+                versionName = "1.0.14-DEBUG",
             ),
         )
-        // Leading 'v' is not doubled and blank versionName falls back to v1.0.13
+        // Leading 'v' is not doubled and blank versionName falls back to v1.0.14
         assertEquals(
-            "play: [v1.0.13] 歌词字体大小调节",
+            "play: [v1.0.14] 歌词字体大小调节",
             AgentFeedbackHelper.formatSubject(
                 summary = "歌词字体大小调节",
-                versionName = "v1.0.13",
+                versionName = "v1.0.14",
             ),
         )
         assertEquals(
-            "play: [v1.0.13] 默认版本兜底",
+            "play: [v1.0.14] 默认版本兜底",
             AgentFeedbackHelper.formatSubject(
                 summary = "默认版本兜底",
                 versionName = "",
@@ -101,35 +101,35 @@ class AgentFeedbackHelperTest {
         )
         // Blank summary falls back to first non-empty line of details
         assertEquals(
-            "play: [v1.0.13] 第一行详细描述自动提炼为主题",
+            "play: [v1.0.14] 第一行详细描述自动提炼为主题",
             AgentFeedbackHelper.formatSubject(
                 summary = "   ",
-                versionName = "1.0.13",
+                versionName = "1.0.14",
                 detailsFallback = "\n  第一行详细描述自动提炼为主题 \n第二行补充细节",
             ),
         )
         // Both blank falls back to DEFAULT_SUMMARY
         assertEquals(
-            "play: [v1.0.13] 使用反馈",
+            "play: [v1.0.14] 使用反馈",
             AgentFeedbackHelper.formatSubject(
                 summary = "",
-                versionName = "1.0.13",
+                versionName = "1.0.14",
                 detailsFallback = "   ",
             ),
         )
         // Overly long summary is truncated safely
         val longSummary = "A".repeat(200)
-        val truncatedSubject = AgentFeedbackHelper.formatSubject(longSummary, "1.0.13")
-        assertTrue(truncatedSubject.startsWith("play: [v1.0.13] "))
+        val truncatedSubject = AgentFeedbackHelper.formatSubject(longSummary, "1.0.14")
+        assertTrue(truncatedSubject.startsWith("play: [v1.0.14] "))
         assertTrue(truncatedSubject.endsWith("…"))
-        assertTrue(truncatedSubject.length <= "play: [v1.0.13] ".length + AgentFeedbackHelper.MAX_SUMMARY_LENGTH)
+        assertTrue(truncatedSubject.length <= "play: [v1.0.14] ".length + AgentFeedbackHelper.MAX_SUMMARY_LENGTH)
     }
 
     @Test
     fun `formatBody formats practice and casual diagnostics cleanly and honors includeDiagnostics toggle`() {
         val practiceDiagnostics = FeedbackDiagnostics(
-            versionName = "1.0.13-DEBUG",
-            versionCode = 10013,
+            versionName = "1.0.14-DEBUG",
+            versionCode = 10014,
             androidVersion = "Android 15 (SDK 35)",
             deviceModel = "OnePlus 13T",
             currentTrackTitle = "Constellation Backing",
@@ -158,7 +158,7 @@ class AgentFeedbackHelperTest {
             diagnostics = practiceDiagnostics,
         )
         assertTrue(bodyWithDiag.startsWith("在 128 BPM 下希望支持半小节切换。"))
-        assertTrue(bodyWithDiag.contains("应用版本: v1.0.13 (10013)"))
+        assertTrue(bodyWithDiag.contains("应用版本: v1.0.14 (10014)"))
         assertTrue(bodyWithDiag.contains("设备环境: Android 15 (SDK 35) · OnePlus 13T"))
         assertTrue(bodyWithDiag.contains("当前媒体: Constellation Backing (音频 · 播放中 · 01:12.4 / 04:00.0)"))
         assertTrue(bodyWithDiag.contains("练习状态: 速度 0.85x · 变调 -1st-15c · BPM 128 · A 00:08.0 - B 00:16.0 (激活)"))
@@ -181,13 +181,13 @@ class AgentFeedbackHelperTest {
                 recipientEmail = "agent+triage@example.com",
                 summary = "A+B & C=1 混音反馈",
                 details = "第一行 A+B\n第二行 100% 正常",
-                versionName = "1.0.13",
+                versionName = "1.0.14",
                 includeDiagnostics = false,
             ),
         )
 
         assertEquals("agent+triage@example.com", payload.recipientEmail)
-        assertEquals("play: [v1.0.13] A+B & C=1 混音反馈", payload.subject)
+        assertEquals("play: [v1.0.14] A+B & C=1 混音反馈", payload.subject)
         assertFalse(payload.hasAttachment)
         assertTrue(payload.mailtoUri.startsWith("mailto:agent+triage@example.com?subject="))
 
@@ -200,8 +200,109 @@ class AgentFeedbackHelperTest {
             val idx = pair.indexOf('=')
             pair.substring(0, idx) to percentDecodeUtf8(pair.substring(idx + 1))
         }
-        assertEquals("play: [v1.0.13] A+B & C=1 混音反馈", params["subject"])
+        assertEquals("play: [v1.0.14] A+B & C=1 混音反馈", params["subject"])
         assertEquals("第一行 A+B\n第二行 100% 正常", params["body"])
+    }
+
+    @Test
+    fun `unified feedback sheet send gate requires valid email and at least one of title description or image`() {
+        val email = "agent@example.com"
+        // No content in any of the 3 core fields (标题 / 问题描述 / 增加图片) -> blocked
+        assertFalse(AgentFeedbackHelper.hasFeedbackContent("", "", hasAttachment = false))
+        assertFalse(AgentFeedbackHelper.hasFeedbackContent("   ", "\n\t ", hasAttachment = false))
+        assertFalse(AgentFeedbackHelper.hasFeedbackContent(null, null, hasAttachment = false))
+        assertFalse(AgentFeedbackHelper.canSendFeedback(email, "  ", "", hasAttachment = false))
+
+        // Any single field is sufficient
+        assertTrue(AgentFeedbackHelper.canSendFeedback(email, "播放卡顿", "", hasAttachment = false))
+        assertTrue(AgentFeedbackHelper.canSendFeedback(email, "", "切歌后进度条不刷新", hasAttachment = false))
+        assertTrue(AgentFeedbackHelper.canSendFeedback(email, "", "", hasAttachment = true))
+        assertTrue(AgentFeedbackHelper.canSendFeedback("  $email  ", "标题", "描述", hasAttachment = true))
+
+        // Invalid / blank email always blocks, even with full content
+        assertFalse(AgentFeedbackHelper.canSendFeedback("", "标题", "描述", hasAttachment = true))
+        assertFalse(AgentFeedbackHelper.canSendFeedback(null, "标题", "描述", hasAttachment = true))
+        assertFalse(AgentFeedbackHelper.canSendFeedback("not-an-email", "标题", "描述", hasAttachment = true))
+        assertFalse(AgentFeedbackHelper.canSendFeedback("agent@example.com\nBcc:x@example.org", "标题", "", false))
+    }
+
+    @Test
+    fun `buildPayload uses title for v1_0_14 subject description for body and supports image only feedback`() {
+        // 标题 -> subject, 问题描述 -> body
+        val full = AgentFeedbackHelper.buildPayload(
+            AgentFeedbackRequest(
+                recipientEmail = "agent@example.com",
+                summary = "歌词页闪退",
+                details = "打开歌词页后立即闪退\n复现率 100%",
+                versionName = "1.0.14-DEBUG",
+                includeDiagnostics = false,
+            ),
+        )
+        assertEquals("play: [v1.0.14] 歌词页闪退", full.subject)
+        assertEquals("打开歌词页后立即闪退\n复现率 100%", full.body)
+        assertFalse(full.hasAttachment)
+
+        // Blank versionName falls back to the current release tag
+        assertEquals("v1.0.14", AgentFeedbackHelper.normalizeVersionTag(""))
+        assertEquals("v1.0.14", AgentFeedbackHelper.normalizeVersionTag(null))
+
+        // 问题描述 only -> first line becomes subject
+        val detailsOnly = AgentFeedbackHelper.buildPayload(
+            AgentFeedbackRequest(
+                recipientEmail = "agent@example.com",
+                summary = "",
+                details = "\n  循环 A-B 点无法拖动 \n第二行",
+                versionName = "1.0.14",
+                includeDiagnostics = false,
+            ),
+        )
+        assertEquals("play: [v1.0.14] 循环 A-B 点无法拖动", detailsOnly.subject)
+
+        // 增加图片 only (no 标题 / 问题描述) -> image-only fallback subject/body, flagged as attachment
+        val imageOnly = AgentFeedbackHelper.buildPayload(
+            AgentFeedbackRequest(
+                recipientEmail = "agent@example.com",
+                summary = "  ",
+                details = "",
+                versionName = "1.0.14",
+                includeDiagnostics = false,
+                hasAttachment = true,
+            ),
+        )
+        assertEquals("play: [v1.0.14] ${AgentFeedbackHelper.ATTACHMENT_ONLY_SUMMARY}", imageOnly.subject)
+        assertEquals(AgentFeedbackHelper.ATTACHMENT_ONLY_SUMMARY, imageOnly.body)
+        assertTrue(imageOnly.hasAttachment)
+
+        // Attachment inferred from diagnostics file name stays backward compatible
+        val viaDiagnostics = AgentFeedbackHelper.buildPayload(
+            AgentFeedbackRequest(
+                recipientEmail = "agent@example.com",
+                summary = "",
+                versionName = "1.0.14",
+                includeDiagnostics = true,
+                diagnostics = FeedbackDiagnostics(versionName = "1.0.14", versionCode = 10014, attachmentFileName = "shot.png"),
+            ),
+        )
+        assertTrue(viaDiagnostics.hasAttachment)
+        assertTrue(viaDiagnostics.subject.endsWith(AgentFeedbackHelper.ATTACHMENT_ONLY_SUMMARY))
+        assertTrue(viaDiagnostics.body.contains("附加截图: shot.png"))
+    }
+
+    @Test
+    fun `settings screen exposes a single feedback entry and sheet labels title description and add image`() {
+        val repoRoot = locateRepoRoot()
+        val settings = File(repoRoot, "app/src/main/java/com/miniplayer/app/ui/SettingsScreen.kt").readText()
+        // Single entry: one 发送反馈 button, no separate email config dialog / button
+        assertFalse(settings.contains("AgentEmailConfigDialog"))
+        assertFalse(settings.contains("showEmailConfigDialog"))
+        assertFalse(settings.contains("Text(\"Agent 反馈邮箱\")"))
+        assertEquals(1, Regex("""Text\("发送反馈"\)""").findAll(settings).count())
+        // Sheet keeps inline email + 保存 and the 3 labeled core fields
+        assertTrue(settings.contains("Agent 反馈邮箱（仅保存在本机）"))
+        assertTrue(settings.contains("label = { Text(\"标题\") }"))
+        assertTrue(settings.contains("label = { Text(\"问题描述\") }"))
+        assertTrue(settings.contains("else -> \"增加图片\""))
+        assertTrue(settings.contains("AgentFeedbackHelper.canSendFeedback("))
     }
 
     @Test
