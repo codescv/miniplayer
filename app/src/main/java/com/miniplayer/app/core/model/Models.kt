@@ -323,17 +323,101 @@ data class StemMixConfig(
     }
 }
 
+/**
+ * Origin of a [BeatGrid]; stored as INTEGER in `track_practice_states.beat_grid_source`.
+ * `AUTO_LEGACY = 0` is the SQL DEFAULT so pre-v2 (v1.0.12) rows stay distinguishable and are
+ * lazily re-detected.
+ */
+enum class BeatGridSource(val dbValue: Int) {
+    AUTO_LEGACY(0),
+    AUTO_MIX(1),
+    AUTO_STEMS(2),
+    EMBEDDED_TAG(3),
+    MANUAL(4),
+    ;
+
+    val isAuto: Boolean
+        get() = this != MANUAL
+
+    companion object {
+        fun fromDbValue(value: Int?): BeatGridSource =
+            entries.firstOrNull { it.dbValue == value } ?: AUTO_LEGACY
+
+        fun fromNameOrNull(name: String?): BeatGridSource? =
+            name?.trim()?.takeIf { it.isNotEmpty() }?.let { n ->
+                entries.firstOrNull { it.name.equals(n, ignoreCase = true) }
+            }
+    }
+}
+
+/** Detector confidence for a [BeatGrid] (§3.0 of the BeatGrid v2 design). */
+data class BeatGridConfidence(
+    val tempoClarity: Float = 0f,
+    val tempoStable: Boolean = true,
+    /** Log-likelihood margin of the best bar phase vs the second-best bar phase. */
+    val downbeatMargin: Float = 0f,
+    /** True when the margin between Beat 1 and Beat 3 hypotheses is below threshold. */
+    val halfBarAmbiguous: Boolean = false,
+    val phraseMargin: Float = 0f,
+    /** Median flux-peak -> attack-start correction that was applied (ms, usually negative). */
+    val attackOffsetMs: Float = 0f,
+    /** Per-bar downbeat evidence flips along the decoded path (2/4 bar, meter change). */
+    val meterIrregular: Boolean = false,
+) {
+    companion object {
+        val UNKNOWN = BeatGridConfidence()
+    }
+}
+
+/**
+ * BeatGrid v2: fractional tempo plus an **unfolded** downbeat anchor. Bars extend in both
+ * directions from [firstDownbeatMs]; [phraseOffsetBars] marks which bar (relative to the anchor)
+ * starts a [phraseBars]-bar phrase.
+ */
+private fun safeBpmPrecise(bpm: Double): Double = PracticeMath.clampBpmPrecise(bpm)
+
 data class BeatGrid(
-    val bpm: Int,
+    val bpmPrecise: Double,
     val firstBeatMs: Long,
     val firstDownbeatMs: Long,
     val beatsPerBar: Int = 4,
+    val phraseBars: Int = 4,
+    val phraseOffsetBars: Int = 0,
+    val confidence: BeatGridConfidence = BeatGridConfidence.UNKNOWN,
+    val source: BeatGridSource = BeatGridSource.AUTO_MIX,
 ) {
+    /** Source-compatible convenience constructor for integer tempos. */
+    constructor(
+        bpm: Int,
+        firstBeatMs: Long,
+        firstDownbeatMs: Long,
+        beatsPerBar: Int = 4,
+    ) : this(
+        bpmPrecise = bpm.toDouble(),
+        firstBeatMs = firstBeatMs,
+        firstDownbeatMs = firstDownbeatMs,
+        beatsPerBar = beatsPerBar,
+    )
+
+    /** Display / backward-compat only. */
+    val bpm: Int
+        get() = bpmPrecise.coerceIn(30.0, 300.0).roundToInt()
+
     val beatDurationMs: Double
-        get() = 60_000.0 / PracticeMath.clampBpm(bpm)
+        get() = 60_000.0 / safeBpmPrecise(bpmPrecise)
 
     val barDurationMs: Double
         get() = beatDurationMs * beatsPerBar.coerceIn(2, 8)
+
+    fun isPhraseStart(barIdx: Int): Boolean =
+        Math.floorMod(barIdx - phraseOffsetBars, phraseBars.coerceAtLeast(1)) == 0
+
+    /** Bar index (relative to the anchor, may be negative) containing [positionMs]. */
+    fun barIndexAt(positionMs: Long): Int {
+        val barDur = barDurationMs
+        if (barDur <= 1.0) return 0
+        return floor((positionMs - firstDownbeatMs) / barDur + 1e-9).toInt()
+    }
 
     fun barBoundaryMs(barIndex: Int): Long =
         (firstDownbeatMs + barIndex * barDurationMs).roundToLong().coerceAtLeast(0L)
@@ -342,7 +426,7 @@ data class BeatGrid(
         if (durationMs <= 0L) return emptyList()
         val barDur = barDurationMs
         if (barDur <= 1.0) return emptyList()
-        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        val t0 = firstDownbeatMs.toDouble()
         val startIndex = -floor(t0 / barDur).toInt()
         val result = ArrayList<Long>(((durationMs / barDur).toInt() + 3).coerceAtMost(8192))
         var k = startIndex
@@ -363,7 +447,7 @@ data class BeatGrid(
         val clamped = positionMs.coerceIn(0L, maxDur)
         val barDur = barDurationMs
         if (barDur <= 1.0) return clamped
-        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        val t0 = firstDownbeatMs.toDouble()
         val minIdx = ceil((-t0 - 0.5) / barDur).toLong()
         val maxIdx = if (durationMs > 0L) {
             floor((durationMs - t0 + 0.5) / barDur).toLong()
@@ -383,7 +467,7 @@ data class BeatGrid(
         val clamped = positionMs.coerceIn(0L, maxDur)
         val barDur = barDurationMs
         if (barDur <= 1.0) return clamped
-        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        val t0 = firstDownbeatMs.toDouble()
         val rel = (clamped - t0) / barDur
         val barIdx = floor(rel).toLong()
         val phaseInBar = rel - barIdx
@@ -398,7 +482,7 @@ data class BeatGrid(
         val minB = (aMs.coerceAtLeast(0L) + minSpanMs).coerceAtMost(maxDur)
         if (barDur <= 1.0) return maxOf(positionMs, minB).coerceIn(0L, maxDur)
         val targetPos = maxOf(positionMs, minB).coerceIn(0L, maxDur)
-        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        val t0 = firstDownbeatMs.toDouble()
         val nearestIdx = ((targetPos - t0) / barDur).roundToLong()
         val minIdx = ceil((minB - t0 - 0.5) / barDur).toLong()
         val chosenIdx = maxOf(nearestIdx, minIdx)
@@ -418,7 +502,7 @@ data class BeatGrid(
             return PracticeMath.normalizeLoopPoints(aMs, bMs, durationMs)
                 ?: (0L to minOf(PracticeMath.MIN_LOOP_SPAN_MS, maxDur))
         }
-        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        val t0 = firstDownbeatMs.toDouble()
         return when (draggingHandle) {
             "A" -> {
                 val fixedB = bMs.coerceIn(minOf(minSpanMs, maxDur), maxDur)
@@ -487,7 +571,29 @@ data class PracticeState(
     val videoZoom: Float = 1.0f,
     val hudDockTop: Boolean = false,
     val videoSeekMode: VideoSeekMode = VideoSeekMode.AUTO,
+    /** Fractional tempo; `0.0` means "derive from [bpm]" (pre-v2 rows / legacy call sites). */
+    val bpmPrecise: Double = 0.0,
+    val beatsPerBar: Int = 4,
+    val phraseOffsetBars: Int = 0,
+    val beatGridSource: BeatGridSource = BeatGridSource.AUTO_LEGACY,
 ) {
+    /**
+     * The effective fractional tempo. [bpm] stays the integer mirror (`bpmPrecise.roundToInt()`);
+     * if a legacy `copy(bpm = x)` desynchronised the two, the integer wins.
+     */
+    val exactBpm: Double
+        get() = if (bpmPrecise > 0.0 && bpmPrecise.isFinite() && bpmPrecise.roundToInt() == bpm) {
+            PracticeMath.clampBpmPrecise(bpmPrecise)
+        } else {
+            PracticeMath.clampBpm(bpm).toDouble()
+        }
+
+    /** Returns a copy with [bpmPrecise] and the integer [bpm] mirror updated together. */
+    fun withBpmPrecise(value: Double): PracticeState {
+        val safe = PracticeMath.clampBpmPrecise(value)
+        return copy(bpmPrecise = safe, bpm = safe.roundToInt())
+    }
+
     val isNonDefault: Boolean
         get() = practiceSpeed != 1.0f ||
             pitchSemitones != 0 ||
@@ -496,11 +602,13 @@ data class PracticeState(
             (activeAMs != null && activeBMs != null) ||
             videoMirror
 
-    fun beatGrid(beatsPerBar: Int = 4): BeatGrid = BeatGrid(
-        bpm = bpm,
-        firstBeatMs = firstDownbeatMs.coerceAtLeast(0L),
-        firstDownbeatMs = firstDownbeatMs.coerceAtLeast(0L),
-        beatsPerBar = beatsPerBar,
+    fun beatGrid(beatsPerBar: Int = this.beatsPerBar): BeatGrid = BeatGrid(
+        bpmPrecise = exactBpm,
+        firstBeatMs = firstDownbeatMs,
+        firstDownbeatMs = firstDownbeatMs,
+        beatsPerBar = beatsPerBar.coerceIn(2, 8),
+        phraseOffsetBars = phraseOffsetBars,
+        source = beatGridSource,
     )
 }
 
@@ -646,6 +754,9 @@ object PracticeMath {
     }
 
     fun clampBpm(bpm: Int): Int = bpm.coerceIn(30, 300)
+
+    fun clampBpmPrecise(bpm: Double): Double =
+        if (bpm.isFinite()) bpm.coerceIn(30.0, 300.0) else 120.0
 
     fun computePitchFactor(semitones: Int, cents: Int): Float {
         val st = semitones.coerceIn(-6, 6)
