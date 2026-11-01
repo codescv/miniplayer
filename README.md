@@ -39,6 +39,12 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 ---
 
+## What's New in `v1.0.11` (`versionCode = 10011`)
+
+1. **Local-Only Agent Feedback Email & 1-Click Send Feedback (`Agent 反馈邮箱` / `发送反馈给 Agent`, `AgentFeedbackHelper.kt`, `AgentFeedbackLauncher.kt`, `MiniPlayerViewModel.kt`, `SettingsScreen.kt`)**: Added a zero-leakage local Agent Feedback configuration (`SharedPreferences` key `agent_feedback_email`, default `""`, placeholder `agent@example.com`) and an in-app Material 3 feedback composer sheet under `关于与自动更新`. Pre-fills email subjects as **`play: [v1.0.11] <summary>`** (RFC 6068 `%20` percent-encoded `mailto:` / `FileProvider` `Intent.ACTION_SEND`), supports optional Android Photo Picker screenshot attachments (`PickVisualMedia`) and optional playback/practice state diagnostics without exposing local folder paths.
+
+---
+
 ## What's New in `v1.0.10` (`versionCode = 10010`)
 
 1. **Pure Time-Domain Sonic Pitch Shifting (`PracticeDeck.kt`, `RealTimeSonicAudioProcessor.kt`, `PracticeLoopEngine.kt`)**: Removed the `保持人声音色 (共振峰保护)` switch from `PitchShiftInlinePanel` and deleted the real-time WOLA STFT formant-preservation DSP path (`FormantStemDspProcessor.kt`) so semitone (`-6 .. +6 st`) and fine cents (`-50 .. +50 ct`) adjustments run exclusively through crisp, phase-coherent time-domain `SonicAudioProcessor` with zero STFT latency or spectral-envelope artifacts.

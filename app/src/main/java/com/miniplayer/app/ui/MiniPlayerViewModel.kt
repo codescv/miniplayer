@@ -1,14 +1,19 @@
 package com.miniplayer.app.ui
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.miniplayer.app.BuildConfig
 import com.miniplayer.app.core.CoreRegistry
 import com.miniplayer.app.core.MiniPlayerCoreProvider
 import com.miniplayer.app.core.db.MediaRepository
+import com.miniplayer.app.core.feedback.AgentFeedbackHelper
+import com.miniplayer.app.core.feedback.FeedbackDiagnostics
 import com.miniplayer.app.core.metadata.DefaultMetadataEngine
 import com.miniplayer.app.core.metadata.SmartFilenameParser
 import com.miniplayer.app.core.model.*
@@ -190,6 +195,12 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _updateState = MutableStateFlow<UiUpdateState>(UiUpdateState.Idle)
     val updateState: StateFlow<UiUpdateState> = _updateState.asStateFlow()
+
+    private val feedbackStore = SharedPreferencesFeedbackStore(
+        application.getSharedPreferences(AgentFeedbackHelper.PREFS_NAME, Context.MODE_PRIVATE),
+    )
+    private val _agentFeedbackEmail = MutableStateFlow(AgentFeedbackHelper.loadAgentEmail(feedbackStore))
+    val agentFeedbackEmail: StateFlow<String> = _agentFeedbackEmail.asStateFlow()
 
     private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
@@ -856,24 +867,62 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             val waveformsBytes = File(app.cacheDir, "waveforms").walkTopDown().filter { it.isFile }.sumOf { it.length() }
             val stemsBytes = File(app.cacheDir, "stems").walkTopDown().filter { it.isFile }.sumOf { it.length() }
             val thumbsBytes = File(app.cacheDir, "thumbs").walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val feedbackBytes = File(app.cacheDir, "feedback").walkTopDown().filter { it.isFile }.sumOf { it.length() }
             val coversBytes = File(app.filesDir, "covers").walkTopDown().filter { it.isFile }.sumOf { it.length() }
-            _cacheSizeBytes.value = waveformsBytes + stemsBytes + thumbsBytes + coversBytes
+            _cacheSizeBytes.value = waveformsBytes + stemsBytes + thumbsBytes + feedbackBytes + coversBytes
         }
     }
 
     fun clearLocalCaches() {
         viewModelScope.launch {
-            val thumbsFreed = withContext(Dispatchers.IO) {
+            val extraFreed = withContext(Dispatchers.IO) {
                 val app = getApplication<Application>()
                 val thumbsDir = File(app.cacheDir, "thumbs")
-                val bytes = thumbsDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                val feedbackDir = File(app.cacheDir, "feedback")
+                val bytes = thumbsDir.walkTopDown().filter { it.isFile }.sumOf { it.length() } +
+                    feedbackDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
                 thumbsDir.deleteRecursively()
+                feedbackDir.deleteRecursively()
                 bytes
             }
-            val cleared = core.library.clearCaches() + thumbsFreed
+            val cleared = core.library.clearCaches() + extraFreed
             refreshCacheSize()
             emitMessage("已清理本地封面与波形缓存" + if (cleared > 0) "（释放 ${formatByteSize(cleared)}）" else "")
         }
+    }
+
+    fun saveAgentFeedbackEmail(rawEmail: String): Boolean {
+        val normalized = AgentFeedbackHelper.normalizeEmail(rawEmail)
+        if (normalized.isNotEmpty() && !AgentFeedbackHelper.isValidEmail(normalized)) {
+            return false
+        }
+        AgentFeedbackHelper.saveAgentEmail(feedbackStore, normalized)
+        _agentFeedbackEmail.value = normalized
+        return true
+    }
+
+    fun buildFeedbackDiagnostics(attachmentFileName: String? = null): FeedbackDiagnostics {
+        val snap = playbackSnapshot.value
+        val current = snap.currentItem
+        val practiceActive = isPracticeModeActive.value
+        val modelDesc = listOfNotNull(
+            Build.MANUFACTURER?.trim()?.takeIf { it.isNotEmpty() },
+            Build.MODEL?.trim()?.takeIf { it.isNotEmpty() },
+        ).distinct().joinToString(" ").ifBlank { null }
+        return FeedbackDiagnostics(
+            versionName = BuildConfig.VERSION_NAME,
+            versionCode = BuildConfig.VERSION_CODE,
+            androidVersion = "Android ${Build.VERSION.RELEASE ?: "?"} (SDK ${Build.VERSION.SDK_INT})",
+            deviceModel = modelDesc,
+            currentTrackTitle = current?.title,
+            isVideo = current?.isVideo ?: false,
+            isPlaying = snap.isPlaying,
+            positionMs = snap.positionMs,
+            durationMs = snap.durationMs,
+            isPracticeMode = practiceActive,
+            practiceState = if (practiceActive) practiceState.value else null,
+            attachmentFileName = attachmentFileName,
+        )
     }
 
     fun checkForAppUpdates() {
