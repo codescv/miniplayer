@@ -516,11 +516,9 @@ tr:hover td { background: var(--hover); }
                   </div>
                 </div>
                 <div class="form-field full">
-                  <label>循环前预备倒计时 (Count-In)</label>
+                  <label>循环前预备拍 (Count-In)</label>
                   <select id="practice-countin-select">
                     <option value="OFF">关闭（无缝连续循环）</option>
-                    <option value="SEC_1">1 秒倒计时</option>
-                    <option value="SEC_2">2 秒倒计时</option>
                     <option value="BEAT_4">4 拍木鱼节拍倒计时（随 BPM×倍速自动缩放）</option>
                   </select>
                 </div>

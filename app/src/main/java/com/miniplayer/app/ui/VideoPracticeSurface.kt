@@ -534,6 +534,12 @@ fun LandscapeVideoPlayerView(
                                     bumpInteraction()
                                     loopEngine.setLoopPointsFromDrag(a, b, commit)
                                 },
+                                beatGrid = practiceState.beatGrid(),
+                                barSnapEnabled = practiceState.barSnapEnabled,
+                                onDragLoopPointsWithHandle = { a, b, commit, handle ->
+                                    bumpInteraction()
+                                    loopEngine.setLoopPointsFromDrag(a, b, commit, handle)
+                                },
                             )
 
                             LazyRow(
@@ -566,7 +572,12 @@ fun LandscapeVideoPlayerView(
                                             val bMs = practiceState.activeBMs
                                             val pos = snapshot.positionMs
                                             if (aMs != null && bMs != null && pos <= bMs - PracticeMath.MIN_LOOP_SPAN_MS) {
-                                                loopEngine.setLoopPointsFromDrag(pos.coerceAtLeast(0L), bMs, true)
+                                                loopEngine.setLoopPointsFromDrag(
+                                                    aMs = pos.coerceAtLeast(0L),
+                                                    bMs = bMs,
+                                                    commitPersist = true,
+                                                    draggingHandle = "A",
+                                                )
                                             } else {
                                                 loopEngine.markPointA(pos)
                                             }
@@ -577,7 +588,12 @@ fun LandscapeVideoPlayerView(
                                             val bMs = practiceState.activeBMs
                                             val pos = snapshot.positionMs
                                             if (aMs != null && bMs != null && pos >= aMs + PracticeMath.MIN_LOOP_SPAN_MS) {
-                                                loopEngine.setLoopPointsFromDrag(aMs, pos, true)
+                                                loopEngine.setLoopPointsFromDrag(
+                                                    aMs = aMs,
+                                                    bMs = pos,
+                                                    commitPersist = true,
+                                                    draggingHandle = "B",
+                                                )
                                             } else {
                                                 loopEngine.markPointBAndLoop(pos)
                                             }
@@ -612,17 +628,12 @@ fun LandscapeVideoPlayerView(
                                     }
                                 }
                                 item {
-                                    val countInBadge = when (practiceState.countInMode) {
-                                        CountInMode.OFF -> null
-                                        CountInMode.SEC_1 -> "1s"
-                                        CountInMode.SEC_2 -> "2s"
-                                        CountInMode.BEAT_4 -> "4"
-                                    }
+                                    val countInActive = practiceState.countInMode != CountInMode.OFF
                                     DeckIconToggleButton(
                                         icon = Icons.Outlined.Timer,
-                                        contentDescription = "预备倒计时（长按展开 BPM 面板）",
-                                        highlighted = practiceState.countInMode != CountInMode.OFF,
-                                        badgeText = countInBadge,
+                                        contentDescription = if (countInActive) "预备拍：4拍（已开启）" else "预备拍：已关闭",
+                                        highlighted = countInActive,
+                                        badgeText = if (countInActive) "4拍" else null,
                                         onClick = { bumpInteraction(); loopEngine.cycleCountInMode() },
                                         onLongClick = { bumpInteraction(); showBpmDrawer = !showBpmDrawer },
                                         modifier = Modifier.size(44.dp),
@@ -631,7 +642,7 @@ fun LandscapeVideoPlayerView(
                                 item {
                                     BpmCompactChipButton(
                                         bpm = practiceState.bpm,
-                                        highlighted = practiceState.countInMode == CountInMode.BEAT_4 || showBpmDrawer,
+                                        highlighted = showBpmDrawer,
                                         onClick = { bumpInteraction(); showBpmDrawer = !showBpmDrawer },
                                         modifier = Modifier.height(44.dp),
                                     )
@@ -655,12 +666,14 @@ fun LandscapeVideoPlayerView(
                                 }
                             }
 
-                            AnimatedVisibility(visible = practiceState.countInMode == CountInMode.BEAT_4 || showBpmDrawer) {
+                            AnimatedVisibility(visible = showBpmDrawer) {
                                 BpmQuickBar(
                                     bpm = practiceState.bpm,
                                     practiceSpeed = practiceState.practiceSpeed,
                                     detectedBpm = detectedBpm,
                                     isDetectingBpm = isDetectingBpm,
+                                    barSnapEnabled = practiceState.barSnapEnabled,
+                                    firstDownbeatMs = practiceState.firstDownbeatMs,
                                     onAdjustBpm = { delta ->
                                         bumpInteraction()
                                         loopEngine.setBpm(practiceState.bpm + delta)
@@ -672,6 +685,14 @@ fun LandscapeVideoPlayerView(
                                     onAutoDetectBpm = {
                                         bumpInteraction()
                                         onAutoDetectBpm()
+                                    },
+                                    onToggleBarSnap = {
+                                        bumpInteraction()
+                                        loopEngine.toggleBarSnap()
+                                    },
+                                    onAlignDownbeat = {
+                                        bumpInteraction()
+                                        loopEngine.alignDownbeatToCurrentPosition(snapshot.positionMs)
                                     },
                                 )
                             }
@@ -741,10 +762,8 @@ fun CountInOverlayBadge(
             )
             Column {
                 val headline = when (progress.mode) {
-                    CountInMode.BEAT_4 -> "预备拍 ${progress.currentBeat} / 4"
-                    CountInMode.SEC_1, CountInMode.SEC_2 ->
-                        String.format("预备 %.1fs", progress.remainingMs / 1000f)
                     CountInMode.OFF -> ""
+                    else -> "预备拍 ${progress.currentBeat.coerceAtLeast(1)} / 4"
                 }
                 Text(
                     text = headline,
@@ -763,7 +782,5 @@ fun CountInOverlayBadge(
 
 internal fun countInLabel(mode: CountInMode): String = when (mode) {
     CountInMode.OFF -> "关"
-    CountInMode.SEC_1 -> "1s"
-    CountInMode.SEC_2 -> "2s"
-    CountInMode.BEAT_4 -> "4拍"
+    else -> "4拍"
 }

@@ -1,8 +1,8 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.8 (`versionCode = 10008`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.9 (`versionCode = 10009`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
-> **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · SQLite (`SQLiteOpenHelper` + Kotlin `StateFlow`)
+> **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · SQLite (`SQLiteOpenHelper` `DATABASE_VERSION = 3` + Kotlin `StateFlow`)
 
 ---
 
@@ -15,7 +15,7 @@ flowchart TD
     subgraph UI_Player["feat/ui-player (@coder-ui)"]
         UI["com.miniplayer.app.ui.*\nM3 Screens · GuitarIcon · PracticeDeck · VideoPracticeSurface\nMetadataEditorSheet · SettingsScreen"]
         VM["MiniPlayerViewModel"]
-        PL["com.miniplayer.app.player.*\nPlaybackService · RealTimeSonicAudioProcessor · PlayerController\nPracticeLoopEngine · CountInMetronome · WaveformExtractor · BpmDetector"]
+        PL["com.miniplayer.app.player.*\nPlaybackService · RealTimeSonicAudioProcessor · FormantStemDspProcessor\nStemSeparationEngine · PlayerController · PracticeLoopEngine\nCountInMetronome · WaveformExtractor · BpmDetector"]
     end
 
     subgraph LAN_Studio["feat/lan-studio (@coder-lan)"]
@@ -165,16 +165,20 @@ CREATE TABLE playlist_items (
 );
 CREATE INDEX idx_playlist_sort ON playlist_items(playlist_id, sort_order);
 
--- 7. 单曲练习状态记忆表
+-- 7. 单曲练习状态记忆表 (DATABASE_VERSION = 3; onUpgrade/onOpen 幂等迁移新增列，旧 SEC_1/SEC_2 自动归一为 BEAT_4)
 CREATE TABLE track_practice_states (
     item_id INTEGER PRIMARY KEY REFERENCES media_items(item_id) ON DELETE CASCADE,
     practice_speed REAL NOT NULL DEFAULT 1.0,
     pitch_semitones INTEGER NOT NULL DEFAULT 0,
     pitch_cents INTEGER NOT NULL DEFAULT 0,
+    preserve_formants INTEGER NOT NULL DEFAULT 1, -- 1 开启零相位 STFT 共振峰保护 (保持人声音色)
     bpm INTEGER NOT NULL DEFAULT 120,
-    count_in_mode TEXT NOT NULL DEFAULT 'OFF', -- OFF | SEC_1 | SEC_2 | BEAT_4
+    count_in_mode TEXT NOT NULL DEFAULT 'OFF',    -- OFF | BEAT_4 (读取旧库 SEC_1/SEC_2 自动映射为 BEAT_4)
     pre_roll_enabled INTEGER NOT NULL DEFAULT 0,
     loop_enabled INTEGER NOT NULL DEFAULT 0,
+    bar_snap_enabled INTEGER NOT NULL DEFAULT 1,  -- 1 开启 A-B 循环与标尺小节边界自动吸附
+    first_downbeat_ms INTEGER NOT NULL DEFAULT 0, -- 第 1 小节重拍起点相位 (ms)
+    stem_mix TEXT NOT NULL DEFAULT '',            -- 5 轨混音紧凑编码 (vocals,guitar,bass,drums,other|muted|solo)
     active_a_ms INTEGER,
     active_b_ms INTEGER,
     video_mirror INTEGER NOT NULL DEFAULT 0,
@@ -263,13 +267,16 @@ CREATE TABLE app_settings (
 1. **`PlaybackService.kt` (`MediaSessionService`) & `RealTimeSonicAudioProcessor.kt` (`v1.0.2`)**：
    - Manifest 声明 `android:foregroundServiceType="mediaPlayback"` 与 `androidx.media3.session.MediaSessionService` Intent Filter。
    - `ExoPlayer.Builder(this)` 配置 `AudioAttributes` (`USAGE_MEDIA`, `AUDIO_CONTENT_TYPE_MUSIC`)、`handleAudioFocus = true`、**`setHandleAudioBecomingNoisy(true)`**。
-   - **零寻址实时变调管线 (`RealTimeSonicAudioProcessor` + `RealTimeAudioProcessorChain`)**：`DefaultAudioSink` 关闭浮点输出与硬件 `AudioTrack` 倍速参数，注入常驻激活（`isActive() == true`）的 `RealTimeSonicAudioProcessor`。连续点击升降调时，处理器在 `queueInput` 内将旧 `SonicAudioProcessor` 残余采样排空拼接至直接内存 `stagingBuffer` 并原地切换参数，`PlayerController` 绝不调用 `exoPlayer.seekTo`、亦不在 `exoPlayer.playbackParameters` 上变动 `pitch`，从而避免 `AudioTrack` 重建与解码器冲洗。
+   - **零寻址实时变调与零相位 STFT 共振峰保护 / 5 轨软掩码混音管线 (`RealTimeSonicAudioProcessor` + `FormantStemDspProcessor`, `v1.0.2` / `v1.0.9`)**：`DefaultAudioSink` 关闭浮点输出与硬件 `AudioTrack` 倍速参数，注入常驻激活（`isActive() == true`）的 `RealTimeSonicAudioProcessor`。连续点击升降调时，处理器在 `queueInput` 内将旧 `SonicAudioProcessor` 残余采样排空拼接至直接内存 `stagingBuffer` 并原地切换参数。当 `(preserveFormants && |pitch - 1.0| >= 0.005) || !stemMix.isUnity` 时，`Sonic` 输出紧接进入 **`FormantStemDspProcessor`**（`N = 1024`, `hop = 256`, `75%` 重叠周期 Hann 分析+合成窗，COLA 归一化系数 `1 / 1.5`）：
+     1. **共振峰频谱包络校正 (`preserveFormants = true`)**：对每帧幅度谱求对数幅度 $L[k] = \ln(|X[k]| + 10^{-7})$，利用前缀和滑动均值（半宽 $W = \max(6, \text{round}(320\text{ Hz}\cdot N/f_s))$）提取平滑共振峰包络 $E_{\text{shifted}}[k]$，按变调比逆映射插值恢复原声道包络 $E_{\text{orig}}[k] = E_{\text{shifted}}[\text{clamp}(k \cdot p, 0, N/2)]$，乘以人声共振峰频带余弦权重 $\alpha(k)$（`130–220 Hz` 渐入、`220–4500 Hz` 为 `1.0`、`4500–6200 Hz` 渐出）、限幅 $[-2.2, +2.2]$ 并做帧间指数平滑（`0.65` / `0.35`），施加**纯实数零相位增益**并匹配补偿前帧 RMS 能量——既消除变调导致的男女声异化/花栗鼠效应，又 100% 保留 `Sonic` 的相位一致性与鼓/拨弦瞬态冲击力。
+     2. **端侧 AI + 实时 STFT 5 轨软掩码混音 (`StemModelManager` + `StemSeparationEngine` + `FormantStemDspProcessor`)**：`StemModelManager` 管理 `filesDir/models/miniplayer-stem-net-v1.bin`（`64 KB` 量化双层 16-Bark 频带 + Mid/Side + HPSS 神经掩码网络权重，支持从 GitHub Release `v1.0.9` 按需下载并内置 APK 资源/确定性权重离线兜底）；`StemSeparationEngine` 以 `25 Hz`（`40 ms` 帧移）解码全曲生成 `stem_<id>_<mtime>.stm` GZIP 软掩码缓存（单曲约 `30–90 KB`）。实时混音对每个频点合成严格满足单位分解 $\sum_{s \in \{\text{vocals,guitar,bass,drums,other}\}} M_s[k] \equiv 1.0$ 的软掩码，并分别作用于立体声 Mid 与 Side 分量（$G_M[k], G_S[k]$），在全 `100%` 增益时严格恒等透传。
    - 视频熄屏续播：当 Activity 进入后台/熄屏时仅调用 `exoPlayer.clearVideoTextureView(surface)` 而不调用 `pause()`，使视频音轨在后台零中断继续播放；Activity 回到前台时重新绑定 `TextureView`。
-2. **`PracticeLoopEngine.kt`、`WaveformLoopRuler` & `BpmDetector.kt` (`v1.0.2`)**：
+2. **`PracticeLoopEngine.kt`、`WaveformLoopRuler`、`BeatGrid` & `BpmDetector.kt` (`v1.0.2` / `v1.0.9`)**：
    - 所有 `ExoPlayer` API 调用严格运行在主线程 (`exoPlayer.applicationLooper`)。
    - A-B 循环边界通过 `exoPlayer.createMessage { _, _ -> handleLoopWrap() }.setLooper(exoPlayer.applicationLooper).setPosition(bMs).setDeleteAfterDelivery(false).send()` 注册；任何修改 `aMs`/`bMs`、挂起循环、切换曲目或手动 `seekTo` 前必须先执行 `activeMessage?.cancel()`。
-   - **1:1 浮点手柄拖拽 (`WaveformLoopRuler`)**：`.pointerInput(safeDuration)` 严格仅以 `safeDuration` 为 Key，内部通过 `rememberUpdatedState` 读取实时 `activeAMs`/`activeBMs` 并记录手指抓取偏移 `dragGrabOffsetPx`，拖拽中调用 `setLoopPointsFromDrag(..., commitPersist = false)` 实时移动标尺，松手时 `commitPersist = true` 落库并重排 `PlayerMessage`。
-   - **自动 BPM 检测 (`BpmDetector` + `WaveformExtractor.loadOrDetectBpm`)**：优先命中 `cacheDir/waveforms/bpm_<id>_<mtime>.dat` 缓存或内嵌 `TBPM` 标签；否则利用 `MediaExtractor` + `MediaCodec` 跳过前奏截取最多约 20 秒 16-bit PCM 送入 `OnsetFluxAccumulator`（`100 Hz` 能量差分包络 + `45–220 BPM` 自相关与倍频谐波加权），当曲目处于默认 `120 BPM` 时自动回填，并支持 UI 随时展开 `BpmQuickBar` 一键点击 `"自动"` 重测。
+   - **1:1 浮点手柄拖拽与小节刻度吸附 (`WaveformLoopRuler` + `BeatGrid`)**：`.pointerInput(safeDuration)` 严格仅以 `safeDuration` 为 Key；开启 `barSnapEnabled`（默认 `true`）时，`markOrUpdateA`、`markOrUpdateB`、`setLoopPointsFromDrag` 及循环态标尺点击寻址统一经 `BeatGrid` 吸附至最近小节边界（保证 `B >= A + 1 bar`），标尺画布渲染每小节/每 4 小节竖向刻度并在顶部显示 `A mm:ss.d ━━● N小节 ●━━ B mm:ss.d`，`BpmQuickBar` 支持一键切换 `小节对齐` 及 `对齐第1拍`（`alignDownbeatToCurrentPosition`）。
+   - **自动 BPM 与小节重拍网格检测 (`BpmDetector.computeBeatGrid` + `WaveformExtractor.loadOrDetectBeatGrid`)**：优先命中向后兼容的 `cacheDir/waveforms/bpm_<id>_<mtime>.dat` 缓存（`bpm,firstBeatMs,firstDownbeatMs,beatsPerBar`）；否则通过 `100 Hz` 起始通量包络自相关求 `bpm`，再经节拍相位网格搜索定位 `firstBeatMs`，并对 4 个候选小节重拍相位结合低频重拍强调评分确定 `firstDownbeatMs`。
+   - **一键 `关 ↔ 4拍` 纯节拍预备拍 (`CountInMode` & `CountInMetronome`, `v1.0.9`)**：`PracticeLoopEngine.cycleCountInMode()` 直接在 `OFF` 与 `BEAT_4` 间一键切换，所有非 `OFF` 状态统一执行 `runFourBeatCountdown`（第 1 拍重音木鱼 + 第 2–4 拍轻击，拍距 `60000 / (bpm * speed)`），且切换预备拍不再强制弹出 `BpmQuickBar`。
    - 视频连续循环（`countInMode == OFF`）：记录 `seekStartRealtimeMs` 至 `Player.Listener.onRenderedFirstFrame`（或 `onPlaybackStateChanged(STATE_READY)`）耗时；若 `> 80 ms` 且 `videoSeekMode == AUTO`，自动将 `exoPlayer.setSeekParameters(SeekParameters(1_500_000L, 0L))` 应用于后续循环绕回。
 3. **练习模式确定性状态机与专属视觉标识 (`MiniPlayerViewModel.kt` & `GuitarIcon.kt`)**：
    - 全应用（日常播放页、练习顶栏、横屏视频 HUD、曲库/列表菜单）统一采用自绘矢量吉他图标 **`GuitarIcon`** 标识练习模式，屏幕常亮采用纯图标切换按钮（`DeckIconToggleButton` + `Icons.Outlined.LightMode`）。

@@ -13,6 +13,7 @@ import com.miniplayer.app.core.metadata.DefaultMetadataEngine
 import com.miniplayer.app.core.metadata.SmartFilenameParser
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.player.PlayerController
+import com.miniplayer.app.player.StemAnalysisState
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -80,7 +81,9 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     val countInProgress = playerController.metronome.progress
     val waveformBars = playerController.waveformBars
     val detectedBpm: StateFlow<Int?> = playerController.detectedBpm
+    val detectedBeatGrid: StateFlow<BeatGrid?> = playerController.detectedBeatGrid
     val isDetectingBpm: StateFlow<Boolean> = playerController.isDetectingBpm
+    val stemAnalysisState: StateFlow<StemAnalysisState> = playerController.stemAnalysisState
     val hapticTicks = playerController.hapticTicks
 
     // Navigation & View States
@@ -637,6 +640,14 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         playerController.autoDetectBpm()
     }
 
+    fun downloadStemModelAndAnalyze() {
+        playerController.downloadStemModelAndAnalyzeCurrentTrack()
+    }
+
+    fun analyzeCurrentTrackStems() {
+        playerController.analyzeCurrentTrackStems()
+    }
+
     fun fetchLyricsOnlineIfNeeded() {
         val item = playbackSnapshot.value.currentItem ?: return
         if (_isLoadingLyrics.value) return
@@ -839,9 +850,10 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
             val waveformsBytes = File(app.cacheDir, "waveforms").walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val stemsBytes = File(app.cacheDir, "stems").walkTopDown().filter { it.isFile }.sumOf { it.length() }
             val thumbsBytes = File(app.cacheDir, "thumbs").walkTopDown().filter { it.isFile }.sumOf { it.length() }
             val coversBytes = File(app.filesDir, "covers").walkTopDown().filter { it.isFile }.sumOf { it.length() }
-            _cacheSizeBytes.value = waveformsBytes + thumbsBytes + coversBytes
+            _cacheSizeBytes.value = waveformsBytes + stemsBytes + thumbsBytes + coversBytes
         }
     }
 

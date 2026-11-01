@@ -70,6 +70,7 @@ fun NowPlayingSheet(
     val isLoadingLyrics by viewModel.isLoadingLyrics.collectAsState()
     val detectedBpm by viewModel.detectedBpm.collectAsStateWithLifecycle()
     val isDetectingBpm by viewModel.isDetectingBpm.collectAsStateWithLifecycle()
+    val stemAnalysisState by viewModel.stemAnalysisState.collectAsStateWithLifecycle()
 
     val playerController = viewModel.playerController
     val loopEngine = playerController.loopEngine
@@ -583,7 +584,7 @@ fun NowPlayingSheet(
                                 }
                             }
 
-                            // 44dp Waveform + Precision A-B Waterdrop Handles
+                            // 44dp Waveform + Precision A-B Waterdrop Handles + Bar Tick Grid
                             WaveformLoopRuler(
                                 waveformBars = waveformBars,
                                 positionMs = snapshot.positionMs,
@@ -594,6 +595,11 @@ fun NowPlayingSheet(
                                 onSeek = { playerController.seekTo(it) },
                                 onDragLoopPoints = { a, b, commit ->
                                     loopEngine.setLoopPointsFromDrag(a, b, commit)
+                                },
+                                beatGrid = practiceState.beatGrid(),
+                                barSnapEnabled = practiceState.barSnapEnabled,
+                                onDragLoopPointsWithHandle = { a, b, commit, handle ->
+                                    loopEngine.setLoopPointsFromDrag(a, b, commit, handle)
                                 },
                             )
 
@@ -640,7 +646,10 @@ fun NowPlayingSheet(
                                 isVideo = item.isVideo,
                                 detectedBpm = detectedBpm,
                                 isDetectingBpm = isDetectingBpm,
+                                stemAnalysisState = stemAnalysisState,
                                 onAutoDetectBpm = viewModel::autoDetectBpm,
+                                onDownloadStemModel = viewModel::downloadStemModelAndAnalyze,
+                                onAnalyzeTrackStems = viewModel::analyzeCurrentTrackStems,
                                 onToggleKeepScreenOn = {
                                     viewModel.setKeepScreenOnInPractice(!settings.keepScreenOnInPractice)
                                 },

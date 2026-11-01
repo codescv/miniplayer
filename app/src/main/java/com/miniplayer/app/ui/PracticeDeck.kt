@@ -7,6 +7,7 @@ package com.miniplayer.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -37,11 +38,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.player.AbLoopUiState
 import com.miniplayer.app.player.PracticeLoopEngine
+import com.miniplayer.app.player.StemAnalysisState
 import com.miniplayer.app.ui.theme.tnum
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -61,6 +64,9 @@ fun WaveformLoopRuler(
     onSeek: (Long) -> Unit,
     onDragLoopPoints: (aMs: Long, bMs: Long, commitPersist: Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    beatGrid: BeatGrid? = null,
+    barSnapEnabled: Boolean = false,
+    onDragLoopPointsWithHandle: ((aMs: Long, bMs: Long, commitPersist: Boolean, draggingHandle: String?) -> Unit)? = null,
 ) {
     val safeDuration = durationMs.coerceAtLeast(1L)
     var widthPx by remember { mutableFloatStateOf(1f) }
@@ -71,8 +77,19 @@ fun WaveformLoopRuler(
 
     val currentActiveAMs by rememberUpdatedState(activeAMs)
     val currentActiveBMs by rememberUpdatedState(activeBMs)
+    val currentBeatGrid by rememberUpdatedState(beatGrid)
+    val currentBarSnapEnabled by rememberUpdatedState(barSnapEnabled)
     val currentOnDragLoopPoints by rememberUpdatedState(onDragLoopPoints)
+    val currentOnDragLoopPointsWithHandle by rememberUpdatedState(onDragLoopPointsWithHandle)
     val currentOnSeek by rememberUpdatedState(onSeek)
+
+    val barBoundaries = remember(beatGrid, safeDuration) {
+        if (beatGrid != null && durationMs > 0L) {
+            beatGrid.generateBarBoundaries(safeDuration)
+        } else {
+            emptyList()
+        }
+    }
 
     LaunchedEffect(activeAMs, activeBMs, draggingHandle) {
         if (draggingHandle == null) {
@@ -85,6 +102,7 @@ fun WaveformLoopRuler(
     val shownBMs = if (draggingHandle != null && activeBMs != null) dragTempBMs else activeBMs
 
     val primaryColor = MaterialTheme.colorScheme.primary
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
     val inactiveBarColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.30f)
     val loopFillColor = if (loopEnabled) {
         MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.65f)
@@ -125,7 +143,16 @@ fun WaveformLoopRuler(
                 val loopLabel = buildString {
                     append("A ${PracticeMath.formatTimeMs(shownAMs, includeTenths = true)}")
                     if (shownBMs != null) {
-                        append(if (loopEnabled) " ━━●━━ " else " ╌╌○╌╌ ")
+                        if (barSnapEnabled && beatGrid != null) {
+                            val barCountInLoop = beatGrid.countBarsBetween(shownAMs, shownBMs)
+                            if (loopEnabled) {
+                                append(" ━━● ${barCountInLoop}小节 ●━━ ")
+                            } else {
+                                append(" ╌╌○ ${barCountInLoop}小节 ○╌╌ ")
+                            }
+                        } else {
+                            append(if (loopEnabled) " ━━●━━ " else " ╌╌○╌╌ ")
+                        }
                         append("B ${PracticeMath.formatTimeMs(shownBMs, includeTenths = true)}")
                     } else {
                         append(" · 待设 B 点")
@@ -136,6 +163,8 @@ fun WaveformLoopRuler(
                     style = MaterialTheme.typography.labelMedium.tnum(),
                     fontWeight = FontWeight.SemiBold,
                     color = if (loopEnabled) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
             Text(
@@ -205,18 +234,34 @@ fun WaveformLoopRuler(
                                 change.consume()
                                 val targetX = (change.position.x - dragGrabOffsetPx).coerceIn(0f, widthPx)
                                 val fingerMs = ((targetX / widthPx) * safeDuration).toLong()
+                                val grid = currentBeatGrid
                                 if (handle == "A") {
-                                    dragTempAMs = fingerMs.coerceIn(
+                                    val rawA = fingerMs.coerceIn(
                                         0L,
                                         (dragTempBMs - PracticeMath.MIN_LOOP_SPAN_MS).coerceAtLeast(0L),
                                     )
+                                    if (currentBarSnapEnabled && grid != null) {
+                                        val snapped = grid.snapDraggedLoopPoints(rawA, dragTempBMs, "A", safeDuration)
+                                        dragTempAMs = snapped.first
+                                        dragTempBMs = snapped.second
+                                    } else {
+                                        dragTempAMs = rawA
+                                    }
                                 } else if (handle == "B") {
-                                    dragTempBMs = fingerMs.coerceIn(
+                                    val rawB = fingerMs.coerceIn(
                                         (dragTempAMs + PracticeMath.MIN_LOOP_SPAN_MS).coerceAtMost(safeDuration),
                                         safeDuration,
                                     )
+                                    if (currentBarSnapEnabled && grid != null) {
+                                        val snapped = grid.snapDraggedLoopPoints(dragTempAMs, rawB, "B", safeDuration)
+                                        dragTempAMs = snapped.first
+                                        dragTempBMs = snapped.second
+                                    } else {
+                                        dragTempBMs = rawB
+                                    }
                                 }
-                                currentOnDragLoopPoints(dragTempAMs, dragTempBMs, false)
+                                currentOnDragLoopPointsWithHandle?.invoke(dragTempAMs, dragTempBMs, false, handle)
+                                    ?: currentOnDragLoopPoints(dragTempAMs, dragTempBMs, false)
                             } else {
                                 change.consume()
                                 val frac = (change.position.x / widthPx).coerceIn(0f, 1f)
@@ -224,14 +269,18 @@ fun WaveformLoopRuler(
                             }
                         },
                         onDragEnd = {
-                            if (draggingHandle != null) {
-                                currentOnDragLoopPoints(dragTempAMs, dragTempBMs, true)
+                            val handle = draggingHandle
+                            if (handle != null) {
+                                currentOnDragLoopPointsWithHandle?.invoke(dragTempAMs, dragTempBMs, true, handle)
+                                    ?: currentOnDragLoopPoints(dragTempAMs, dragTempBMs, true)
                                 draggingHandle = null
                             }
                         },
                         onDragCancel = {
-                            if (draggingHandle != null) {
-                                currentOnDragLoopPoints(dragTempAMs, dragTempBMs, true)
+                            val handle = draggingHandle
+                            if (handle != null) {
+                                currentOnDragLoopPointsWithHandle?.invoke(dragTempAMs, dragTempBMs, true, handle)
+                                    ?: currentOnDragLoopPoints(dragTempAMs, dragTempBMs, true)
                                 draggingHandle = null
                             }
                         },
@@ -253,6 +302,26 @@ fun WaveformLoopRuler(
                     size = Size((bX - aX).coerceAtLeast(2f), waveHeight),
                     cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx()),
                 )
+            }
+
+            // 1b. Measure / bar vertical tick lines (every 4th bar taller/brighter, every 1st bar subtle)
+            if (barBoundaries.isNotEmpty()) {
+                val stride = if (barBoundaries.size > 480) 4 else 1
+                val majorColor = onSurfaceColor.copy(alpha = if (barSnapEnabled) 0.30f else 0.16f)
+                val minorColor = onSurfaceColor.copy(alpha = if (barSnapEnabled) 0.14f else 0.08f)
+                val majorStroke = 1.2.dp.toPx()
+                val minorStroke = 0.85.dp.toPx()
+                for (barIdx in barBoundaries.indices step stride) {
+                    val tMs = barBoundaries[barIdx]
+                    val tickX = ((tMs.toFloat() / safeDuration) * w).coerceIn(0f, w)
+                    val isPhraseBar = (barIdx % 4 == 0)
+                    drawLine(
+                        color = if (isPhraseBar) majorColor else minorColor,
+                        start = Offset(tickX, if (isPhraseBar) 1.dp.toPx() else waveHeight * 0.14f),
+                        end = Offset(tickX, if (isPhraseBar) waveHeight - 1.dp.toPx() else waveHeight * 0.86f),
+                        strokeWidth = if (isPhraseBar) majorStroke else minorStroke,
+                    )
+                }
             }
 
             // 2. 240 RMS Waveform Envelope Bars
@@ -608,12 +677,14 @@ internal fun BookmarkPresetSaveSheet(
 private enum class ExpandedDeckDrawer {
     NONE,
     PITCH_SHIFT,
+    STEM_MIXER,
 }
 
 /**
  * Compact 2-Row `练习工作台 (Practice Deck)` (`surfaceContainer`, `24dp` corners):
  * - Row 1: Unified A-B Loop strip (`[A]`, `[B]`, Loop toggle, Clear loop, Save Bookmark).
- * - Row 2: `[-5%] [1.00x] [+5%]` speed stepper + Pitch Shift, Count-In, BPM drawer chip, icon-only Keep-Screen-On toggle, and Video Mirror.
+ * - Row 2: `[-5%] [1.00x] [+5%]` speed stepper + Pitch Shift, 5-Stem Mixer, Beat-Only Count-In (`4拍`),
+ *   BPM & Bar-Snap drawer chip, icon-only Keep-Screen-On toggle, and Video Mirror.
  */
 @Composable
 fun PracticeDeck(
@@ -624,7 +695,10 @@ fun PracticeDeck(
     isVideo: Boolean = false,
     detectedBpm: Int? = null,
     isDetectingBpm: Boolean = false,
+    stemAnalysisState: StemAnalysisState = StemAnalysisState.Idle,
     onAutoDetectBpm: () -> Unit = {},
+    onDownloadStemModel: () -> Unit = {},
+    onAnalyzeTrackStems: () -> Unit = {},
     onToggleKeepScreenOn: () -> Unit = {},
     onSaveNewBookmark: (label: String) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -633,7 +707,7 @@ fun PracticeDeck(
     var showBpmDrawer by remember { mutableStateOf(false) }
     var showPresetSaveSheet by remember { mutableStateOf(false) }
 
-    val bpmBarVisible = practiceState.countInMode == CountInMode.BEAT_4 || showBpmDrawer
+    val bpmBarVisible = showBpmDrawer
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -658,7 +732,12 @@ fun PracticeDeck(
                     val aMs = practiceState.activeAMs
                     val bMs = practiceState.activeBMs
                     if (aMs != null && bMs != null && currentPositionMs <= bMs - PracticeMath.MIN_LOOP_SPAN_MS) {
-                        loopEngine.setLoopPointsFromDrag(currentPositionMs.coerceAtLeast(0L), bMs, true)
+                        loopEngine.setLoopPointsFromDrag(
+                            aMs = currentPositionMs.coerceAtLeast(0L),
+                            bMs = bMs,
+                            commitPersist = true,
+                            draggingHandle = "A",
+                        )
                     } else {
                         loopEngine.markPointA(currentPositionMs)
                     }
@@ -667,7 +746,12 @@ fun PracticeDeck(
                     val aMs = practiceState.activeAMs
                     val bMs = practiceState.activeBMs
                     if (aMs != null && bMs != null && currentPositionMs >= aMs + PracticeMath.MIN_LOOP_SPAN_MS) {
-                        loopEngine.setLoopPointsFromDrag(aMs, currentPositionMs, true)
+                        loopEngine.setLoopPointsFromDrag(
+                            aMs = aMs,
+                            bMs = currentPositionMs,
+                            commitPersist = true,
+                            draggingHandle = "B",
+                        )
                     } else {
                         loopEngine.markPointBAndLoop(currentPositionMs)
                     }
@@ -683,6 +767,7 @@ fun PracticeDeck(
                 keepScreenOn = keepScreenOn,
                 isVideo = isVideo,
                 pitchDrawerOpen = expandedDrawer == ExpandedDeckDrawer.PITCH_SHIFT,
+                stemDrawerOpen = expandedDrawer == ExpandedDeckDrawer.STEM_MIXER,
                 bpmDrawerOpen = bpmBarVisible,
                 onStepSpeed = { loopEngine.stepPracticeSpeed(it) },
                 onResetSpeed = { loopEngine.setPracticeSpeed(1.0f) },
@@ -693,31 +778,61 @@ fun PracticeDeck(
                         ExpandedDeckDrawer.PITCH_SHIFT
                     }
                 },
+                onToggleStemDrawer = {
+                    expandedDrawer = if (expandedDrawer == ExpandedDeckDrawer.STEM_MIXER) {
+                        ExpandedDeckDrawer.NONE
+                    } else {
+                        ExpandedDeckDrawer.STEM_MIXER
+                    }
+                },
                 onCycleCountIn = { loopEngine.cycleCountInMode() },
                 onToggleBpmDrawer = { showBpmDrawer = !showBpmDrawer },
                 onToggleKeepScreenOn = onToggleKeepScreenOn,
                 onToggleVideoMirror = { loopEngine.toggleVideoMirror() },
             )
 
-            // Inline BPM, Tap Tempo & Auto-Detect Bar (shown in 4-beat count-in or when toggled via BPM chip)
+            // Inline BPM, Tap Tempo, Auto-Detect & Bar-Snap Calibration Bar
             AnimatedVisibility(visible = bpmBarVisible) {
                 BpmQuickBar(
                     bpm = practiceState.bpm,
                     practiceSpeed = practiceState.practiceSpeed,
                     detectedBpm = detectedBpm,
                     isDetectingBpm = isDetectingBpm,
+                    barSnapEnabled = practiceState.barSnapEnabled,
+                    firstDownbeatMs = practiceState.firstDownbeatMs,
                     onAdjustBpm = { delta -> loopEngine.setBpm(practiceState.bpm + delta) },
                     onTapTempo = { loopEngine.tapTempo() },
                     onAutoDetectBpm = onAutoDetectBpm,
+                    onToggleBarSnap = { loopEngine.toggleBarSnap() },
+                    onAlignDownbeat = { loopEngine.alignDownbeatToCurrentPosition(currentPositionMs) },
                 )
             }
 
-            // Inline Semitone & Cents Pitch Shift Panel
+            // Inline Semitone, Cents & Formant Preservation Pitch Shift Panel
             AnimatedVisibility(visible = expandedDrawer == ExpandedDeckDrawer.PITCH_SHIFT) {
                 PitchShiftInlinePanel(
                     semitones = practiceState.pitchSemitones,
                     cents = practiceState.pitchCents,
+                    preserveFormants = practiceState.preserveFormants,
                     onUpdatePitch = { st, ct -> loopEngine.setPitchShift(st, ct) },
+                    onTogglePreserveFormants = { enabled -> loopEngine.setPreserveFormants(enabled) },
+                )
+            }
+
+            // Inline 5-Stem Separation & Independent Instrument Volume Mixer Panel
+            AnimatedVisibility(visible = expandedDrawer == ExpandedDeckDrawer.STEM_MIXER) {
+                StemMixerInlinePanel(
+                    itemId = practiceState.itemId,
+                    stemMix = practiceState.stemMix,
+                    stemAnalysisState = stemAnalysisState,
+                    onDownloadStemModel = onDownloadStemModel,
+                    onAnalyzeTrackStems = onAnalyzeTrackStems,
+                    onStemVolumeChange = { stem, gain, commit ->
+                        loopEngine.setStemVolume(stem, gain, commitPersist = commit)
+                    },
+                    onToggleStemMute = { stem -> loopEngine.toggleStemMute(stem) },
+                    onToggleStemSolo = { stem -> loopEngine.toggleStemSolo(stem) },
+                    onResetStemMix = { loopEngine.resetStemMix() },
                 )
             }
         }
@@ -938,17 +1053,24 @@ private fun SpeedAndSecondaryStrip(
     keepScreenOn: Boolean,
     isVideo: Boolean,
     pitchDrawerOpen: Boolean,
+    stemDrawerOpen: Boolean,
     bpmDrawerOpen: Boolean,
     onStepSpeed: (Float) -> Unit,
     onResetSpeed: () -> Unit,
     onTogglePitchDrawer: () -> Unit,
+    onToggleStemDrawer: () -> Unit,
     onCycleCountIn: () -> Unit,
     onToggleBpmDrawer: () -> Unit,
     onToggleKeepScreenOn: () -> Unit,
     onToggleVideoMirror: () -> Unit,
 ) {
-    val toggleWidth = if (isVideo) 36.dp else 40.dp
-    val spacing = if (isVideo) 4.dp else 5.dp
+    val toggleWidth = if (isVideo) 32.dp else 36.dp
+    val spacing = if (isVideo) 3.dp else 4.dp
+    val stepperTextStyle = MaterialTheme.typography.labelMedium.tnum().copy(
+        fontSize = 11.sp,
+        lineHeight = 13.sp,
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+    )
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -959,7 +1081,7 @@ private fun SpeedAndSecondaryStrip(
         val speedModified = abs(practiceState.practiceSpeed - 1.0f) >= 0.005f
         Row(
             modifier = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (isVideo) 2.dp else 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Surface(
@@ -973,7 +1095,7 @@ private fun SpeedAndSecondaryStrip(
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = "-5%",
-                        style = MaterialTheme.typography.labelMedium.tnum(),
+                        style = stepperTextStyle,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         softWrap = false,
@@ -990,7 +1112,7 @@ private fun SpeedAndSecondaryStrip(
                     MaterialTheme.colorScheme.surfaceContainerHigh
                 },
                 modifier = Modifier
-                    .weight(1.2f)
+                    .weight(1.22f)
                     .height(44.dp)
                     .semantics {
                         contentDescription = "当前练习倍速 ${String.format("%.2f", practiceState.practiceSpeed)} 倍，点击恢复 1.0 倍原速"
@@ -999,7 +1121,7 @@ private fun SpeedAndSecondaryStrip(
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = String.format("%.2fx", practiceState.practiceSpeed),
-                        style = MaterialTheme.typography.labelMedium.tnum(),
+                        style = stepperTextStyle,
                         fontWeight = FontWeight.SemiBold,
                         color = if (speedModified) {
                             MaterialTheme.colorScheme.onTertiaryContainer
@@ -1023,7 +1145,7 @@ private fun SpeedAndSecondaryStrip(
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = "+5%",
-                        style = MaterialTheme.typography.labelMedium.tnum(),
+                        style = stepperTextStyle,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         softWrap = false,
@@ -1032,7 +1154,7 @@ private fun SpeedAndSecondaryStrip(
             }
         }
 
-        // Right: Pitch, Count-In, BPM, icon-only Keep Screen On, and optional Video Mirror
+        // Right: Pitch, 5-Stem Mixer, Beat-Only Count-In (`4拍`), BPM, Keep Screen On, and optional Video Mirror
         Row(
             horizontalArrangement = Arrangement.spacedBy(spacing),
             verticalAlignment = Alignment.CenterVertically,
@@ -1046,18 +1168,20 @@ private fun SpeedAndSecondaryStrip(
                 modifier = Modifier.size(width = toggleWidth, height = 44.dp),
             )
 
+            DeckIconToggleButton(
+                icon = Icons.Outlined.Tune,
+                contentDescription = "分轨乐器音量 (人声/吉他/Bass/鼓/其他)",
+                highlighted = !practiceState.stemMix.isUnity || stemDrawerOpen,
+                onClick = onToggleStemDrawer,
+                modifier = Modifier.size(width = toggleWidth, height = 44.dp),
+            )
+
             val countInActive = practiceState.countInMode != CountInMode.OFF
-            val countInBadge = when (practiceState.countInMode) {
-                CountInMode.OFF -> null
-                CountInMode.SEC_1 -> "1s"
-                CountInMode.SEC_2 -> "2s"
-                CountInMode.BEAT_4 -> "4"
-            }
             DeckIconToggleButton(
                 icon = Icons.Outlined.Timer,
-                contentDescription = "预备倒计时（长按展开 BPM 面板）",
+                contentDescription = if (countInActive) "预备拍：4拍（已开启）" else "预备拍：已关闭",
                 highlighted = countInActive,
-                badgeText = countInBadge,
+                badgeText = if (countInActive) "4拍" else null,
                 onClick = onCycleCountIn,
                 onLongClick = onToggleBpmDrawer,
                 modifier = Modifier.size(width = toggleWidth, height = 44.dp),
@@ -1113,14 +1237,14 @@ internal fun BpmCompactChipButton(
         shape = RoundedCornerShape(12.dp),
         color = containerColor,
         modifier = modifier
-            .defaultMinSize(minWidth = 40.dp, minHeight = 44.dp)
+            .defaultMinSize(minWidth = 36.dp, minHeight = 44.dp)
             .semantics {
                 role = Role.Button
                 contentDescription = "BPM 速度 $bpm，点击展开或收起 BPM 与自动测速栏"
             },
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
@@ -1158,9 +1282,13 @@ internal fun BpmQuickBar(
     practiceSpeed: Float,
     detectedBpm: Int?,
     isDetectingBpm: Boolean,
+    barSnapEnabled: Boolean = true,
+    firstDownbeatMs: Long = 0L,
     onAdjustBpm: (Int) -> Unit,
     onTapTempo: () -> Unit,
     onAutoDetectBpm: () -> Unit,
+    onToggleBarSnap: () -> Unit = {},
+    onAlignDownbeat: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -1168,72 +1296,122 @@ internal fun BpmQuickBar(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = modifier.fillMaxWidth(),
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            val effectiveBpm = (bpm * practiceSpeed).roundToInt()
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "$bpm BPM",
-                    style = MaterialTheme.typography.labelLarge.tnum(),
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
-                Text(
-                    text = buildString {
-                        append("慢放 ≈ $effectiveBpm")
-                        if (detectedBpm != null && detectedBpm != bpm) {
-                            append(" · 测得 $detectedBpm")
-                        }
-                    },
-                    style = MaterialTheme.typography.labelSmall.tnum(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
             Row(
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                OutlinedIconButton(
-                    onClick = { onAdjustBpm(-1) },
-                    modifier = Modifier.size(38.dp),
-                ) {
-                    Icon(Icons.Outlined.Remove, contentDescription = "BPM 减 1", modifier = Modifier.size(18.dp))
+                val effectiveBpm = (bpm * practiceSpeed).roundToInt()
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "$bpm BPM",
+                        style = MaterialTheme.typography.labelLarge.tnum(),
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = buildString {
+                            append("慢放 ≈ $effectiveBpm")
+                            if (detectedBpm != null && detectedBpm != bpm) {
+                                append(" · 测得 $detectedBpm")
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall.tnum(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
                 }
-                OutlinedIconButton(
-                    onClick = { onAdjustBpm(1) },
-                    modifier = Modifier.size(38.dp),
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Outlined.Add, contentDescription = "BPM 加 1", modifier = Modifier.size(18.dp))
+                    OutlinedIconButton(
+                        onClick = { onAdjustBpm(-1) },
+                        modifier = Modifier.size(38.dp),
+                    ) {
+                        Icon(Icons.Outlined.Remove, contentDescription = "BPM 减 1", modifier = Modifier.size(18.dp))
+                    }
+                    OutlinedIconButton(
+                        onClick = { onAdjustBpm(1) },
+                        modifier = Modifier.size(38.dp),
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = "BPM 加 1", modifier = Modifier.size(18.dp))
+                    }
+                    FilledTonalButton(
+                        onClick = onTapTempo,
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                        modifier = Modifier.height(38.dp),
+                    ) {
+                        Text("Tap", maxLines = 1, softWrap = false)
+                    }
+                    FilledTonalButton(
+                        onClick = onAutoDetectBpm,
+                        enabled = !isDetectingBpm,
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                        modifier = Modifier.height(38.dp),
+                    ) {
+                        Text(
+                            text = if (isDetectingBpm) "检测中…" else "自动",
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
                 }
+            }
+
+            // Measure / Bar-Snap & First-Downbeat Calibration Strip
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(
+                    selected = barSnapEnabled,
+                    onClick = onToggleBarSnap,
+                    label = {
+                        Text(
+                            text = "小节对齐",
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    },
+                    modifier = Modifier.height(34.dp),
+                )
                 FilledTonalButton(
-                    onClick = onTapTempo,
+                    onClick = onAlignDownbeat,
                     contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(38.dp),
-                ) {
-                    Text("Tap", maxLines = 1, softWrap = false)
-                }
-                FilledTonalButton(
-                    onClick = onAutoDetectBpm,
-                    enabled = !isDetectingBpm,
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                    ),
-                    contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(38.dp),
+                    modifier = Modifier
+                        .height(34.dp)
+                        .semantics {
+                            contentDescription = "将当前播放位置校准为小节第1拍起点"
+                        },
                 ) {
                     Text(
-                        text = if (isDetectingBpm) "检测中…" else "自动",
+                        text = "对齐第1拍",
+                        style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
                         softWrap = false,
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = "首拍 ${PracticeMath.formatTimeMs(firstDownbeatMs, includeTenths = true)}",
+                    style = MaterialTheme.typography.labelSmall.tnum(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
+                )
             }
         }
     }
@@ -1314,21 +1492,25 @@ private fun DeckIconBadgeContent(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = contentColor,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier
+                .size(if (badgeText != null) 18.dp else 20.dp)
+                .offset(y = if (badgeText != null) (-2).dp else 0.dp),
         )
         if (badgeText != null) {
             Text(
                 text = badgeText,
                 style = MaterialTheme.typography.labelSmall.tnum().copy(
-                    fontSize = 9.sp,
-                    lineHeight = 9.sp,
+                    fontSize = 8.sp,
+                    lineHeight = 8.sp,
                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                 ),
                 fontWeight = FontWeight.Bold,
                 color = contentColor,
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 3.dp, bottom = 3.dp),
+                    .padding(end = 2.dp, bottom = 2.dp),
             )
         }
     }
@@ -1338,7 +1520,9 @@ private fun DeckIconBadgeContent(
 private fun PitchShiftInlinePanel(
     semitones: Int,
     cents: Int,
+    preserveFormants: Boolean,
     onUpdatePitch: (Int, Int) -> Unit,
+    onTogglePreserveFormants: (Boolean) -> Unit,
 ) {
     Surface(
         shape = RoundedCornerShape(16.dp),
@@ -1411,6 +1595,310 @@ private fun PitchShiftInlinePanel(
                     modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 ) {
                     Text("+5c", style = MaterialTheme.typography.labelMedium.tnum())
+                }
+            }
+
+            // Formant-Preserving Spectral Envelope Toggle (`保持人声音色 / 共振峰保护`)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onTogglePreserveFormants(!preserveFormants) },
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text(
+                            text = "保持人声音色 (共振峰保护)",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "升降调时校正声道共振峰包络，避免女声变男声或卡通音",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = preserveFormants,
+                        onCheckedChange = onTogglePreserveFormants,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StemMixerInlinePanel(
+    itemId: Long,
+    stemMix: StemMixConfig,
+    stemAnalysisState: StemAnalysisState,
+    onDownloadStemModel: () -> Unit,
+    onAnalyzeTrackStems: () -> Unit,
+    onStemVolumeChange: (StemType, Float, Boolean) -> Unit,
+    onToggleStemMute: (StemType) -> Unit,
+    onToggleStemSolo: (StemType) -> Unit,
+    onResetStemMix: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            // Header Row: On-Demand AI Model / Per-Track Separation Status + Reset
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                when (stemAnalysisState) {
+                    is StemAnalysisState.ModelNotInstalled -> {
+                        FilledTonalButton(
+                            onClick = onDownloadStemModel,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier.height(34.dp),
+                        ) {
+                            Text(
+                                text = "下载 AI 分轨模型 (首次按需)",
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        }
+                    }
+
+                    is StemAnalysisState.DownloadingModel -> {
+                        val pct = (stemAnalysisState.progress * 100f).roundToInt().coerceIn(0, 100)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Text(
+                                text = "AI 模型准备中 $pct%...",
+                                style = MaterialTheme.typography.labelMedium.tnum(),
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+
+                    is StemAnalysisState.AnalyzingTrack -> {
+                        val pct = (stemAnalysisState.progress * 100f).roundToInt().coerceIn(0, 100)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Text(
+                                text = "AI 分轨分析中 $pct%...",
+                                style = MaterialTheme.typography.labelMedium.tnum(),
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+
+                    is StemAnalysisState.Ready -> {
+                        if (itemId <= 0L || stemAnalysisState.itemId == itemId) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                            ) {
+                                Text(
+                                    text = "AI 分轨已就绪",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                )
+                            }
+                        } else {
+                            FilledTonalButton(
+                                onClick = onAnalyzeTrackStems,
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.height(34.dp),
+                            ) {
+                                Text(
+                                    text = "AI 深度分轨识别",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
+                            }
+                        }
+                    }
+
+                    is StemAnalysisState.Idle -> {
+                        FilledTonalButton(
+                            onClick = onAnalyzeTrackStems,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier.height(34.dp),
+                        ) {
+                            Text(
+                                text = "AI 深度分轨识别",
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        }
+                    }
+                }
+
+                TextButton(
+                    onClick = onResetStemMix,
+                    enabled = !stemMix.isUnity,
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier.height(34.dp),
+                ) {
+                    Text(
+                        text = "重置",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+
+            // 5 Independent Stem Rows: 人声 / 吉他 / Bass / 鼓 / 其他 (0%–150%, Mute M, Solo S)
+            StemType.entries.forEach { stem ->
+                val sliderGain = stemMix.sliderGain(stem)
+                val effectiveGain = stemMix.effectiveGain(stem)
+                val isMuted = stem in stemMix.mutedStems
+                val isSolo = stemMix.soloStem == stem
+                val isAudible = effectiveGain > 0.001f
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(38.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = stem.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isSolo || abs(sliderGain - 1.0f) >= 0.01f) {
+                            FontWeight.SemiBold
+                        } else {
+                            FontWeight.Normal
+                        },
+                        color = if (isAudible) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        },
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.width(34.dp),
+                    )
+
+                    Slider(
+                        value = sliderGain,
+                        onValueChange = { next ->
+                            onStemVolumeChange(stem, next.coerceIn(0f, 1.5f), false)
+                        },
+                        onValueChangeFinished = {
+                            onStemVolumeChange(stem, stemMix.sliderGain(stem), true)
+                        },
+                        valueRange = 0f..1.5f,
+                        modifier = Modifier
+                            .weight(1f)
+                            .semantics {
+                                contentDescription = "${stem.label} 音量 ${(sliderGain * 100f).roundToInt()}%"
+                            },
+                    )
+
+                    Text(
+                        text = "${(effectiveGain * 100f).roundToInt()}%",
+                        style = MaterialTheme.typography.labelSmall.tnum(),
+                        color = if (isAudible) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        textAlign = TextAlign.End,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.width(38.dp),
+                    )
+
+                    // Mute (`M`) pill button
+                    Surface(
+                        onClick = { onToggleStemMute(stem) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isMuted) {
+                            MaterialTheme.colorScheme.errorContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainer
+                        },
+                        modifier = Modifier
+                            .size(width = 30.dp, height = 30.dp)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = if (isMuted) "${stem.label} 取消静音" else "${stem.label} 静音"
+                            },
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "M",
+                                style = MaterialTheme.typography.labelSmall.tnum(),
+                                fontWeight = FontWeight.Bold,
+                                color = if (isMuted) {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
+
+                    // Solo (`S`) pill button
+                    Surface(
+                        onClick = { onToggleStemSolo(stem) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSolo) {
+                            MaterialTheme.colorScheme.tertiaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainer
+                        },
+                        modifier = Modifier
+                            .size(width = 30.dp, height = 30.dp)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = if (isSolo) "${stem.label} 取消独奏" else "${stem.label} 独奏"
+                            },
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "S",
+                                style = MaterialTheme.typography.labelSmall.tnum(),
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSolo) {
+                                    MaterialTheme.colorScheme.onTertiaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }

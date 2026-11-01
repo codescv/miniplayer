@@ -7,11 +7,14 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import com.miniplayer.app.core.model.BeatGrid
 import com.miniplayer.app.core.model.MediaItem
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
+import kotlin.math.floor
+import kotlin.math.roundToLong
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
@@ -55,15 +58,23 @@ class WaveformExtractor(private val context: Context) {
         extracted ?: buildFallbackPreview(item)
     }
 
-    suspend fun loadOrDetectBpm(item: MediaItem): Int? = withContext(Dispatchers.IO) {
+    suspend fun loadOrDetectBpm(item: MediaItem): Int? =
+        loadOrDetectBeatGrid(item)?.bpm
+
+    suspend fun loadOrDetectBeatGrid(item: MediaItem): BeatGrid? = withContext(Dispatchers.IO) {
         val cacheFile = bpmCacheFileFor(item)
-        readCachedBpm(cacheFile)?.let { return@withContext it }
+        readCachedBeatGrid(cacheFile)?.let { cached ->
+            // Upgrade legacy single-int BPM cache only if absent; return immediately when cached
+            return@withContext cached
+        }
 
         decodeSemaphore.withPermit {
-            readCachedBpm(cacheFile)?.let { return@withPermit it }
-            val detected = extractEmbeddedBpm(item) ?: decodeAndDetectBpm(item)
+            readCachedBeatGrid(cacheFile)?.let { return@withPermit it }
+            val embeddedBpm = extractEmbeddedBpm(item)
+            val detected = decodeAndDetectBeatGrid(item, overrideBpm = embeddedBpm)
+                ?: embeddedBpm?.let { BeatGrid(bpm = it, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = 4) }
             if (detected != null) {
-                writeCachedBpm(cacheFile, detected)
+                writeCachedBeatGrid(cacheFile, detected)
             }
             detected
         }
@@ -85,21 +96,25 @@ class WaveformExtractor(private val context: Context) {
         return File(dir, "bpm_${item.itemId}_${item.lastModified}.dat")
     }
 
-    private fun readCachedBpm(file: File): Int? {
-        if (!file.isFile || file.length() !in 1L..16L) return null
+    private fun readCachedBeatGrid(file: File): BeatGrid? {
+        if (!file.isFile || file.length() !in 1L..96L) return null
         return try {
-            file.readText(Charsets.UTF_8).trim().toIntOrNull()?.takeIf { it in 30..300 }
+            parseCachedBeatGrid(file.readText(Charsets.UTF_8))
         } catch (_: Throwable) {
             null
         }
     }
 
-    private fun writeCachedBpm(file: File, bpm: Int) {
-        if (bpm !in 30..300) return
+    private fun writeCachedBeatGrid(file: File, grid: BeatGrid) {
+        if (grid.bpm !in 30..300) return
         try {
             val tmp = File(file.parentFile, "${file.name}.tmp")
-            tmp.writeText(bpm.toString(), Charsets.UTF_8)
-            tmp.renameTo(file)
+            tmp.writeText(formatCachedBeatGrid(grid), Charsets.UTF_8)
+            if (file.exists()) file.delete()
+            if (!tmp.renameTo(file)) {
+                file.writeText(formatCachedBeatGrid(grid), Charsets.UTF_8)
+                tmp.delete()
+            }
         } catch (_: Throwable) {
         }
     }
@@ -147,7 +162,7 @@ class WaveformExtractor(private val context: Context) {
         return null
     }
 
-    private fun decodeAndDetectBpm(item: MediaItem): Int? {
+    private fun decodeAndDetectBeatGrid(item: MediaItem, overrideBpm: Int? = null): BeatGrid? {
         val uri = try {
             Uri.parse(item.documentUri)
         } catch (_: Throwable) {
@@ -162,6 +177,7 @@ class WaveformExtractor(private val context: Context) {
 
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
+        var knownBpm: Int? = overrideBpm
         try {
             extractor.setDataSource(pfd.fileDescriptor)
             var audioTrackIndex = -1
@@ -178,12 +194,18 @@ class WaveformExtractor(private val context: Context) {
             if (audioTrackIndex < 0 || audioFormat == null) return null
 
             // Check container MediaFormat for embedded bpm/tempo metadata before decoding PCM
-            for (key in listOf("bpm", "tempo", "tbpm")) {
-                if (audioFormat.containsKey(key)) {
-                    val strVal = runCatching { audioFormat.getString(key) }.getOrNull()
-                    BpmDetector.parseBpmTagString(strVal)?.let { return it }
-                    val intVal = runCatching { audioFormat.getInteger(key) }.getOrNull()
-                    if (intVal != null && intVal in 30..300) return intVal
+            if (knownBpm == null) {
+                for (key in listOf("bpm", "tempo", "tbpm")) {
+                    if (audioFormat.containsKey(key)) {
+                        val strVal = runCatching { audioFormat.getString(key) }.getOrNull()
+                        knownBpm = BpmDetector.parseBpmTagString(strVal)
+                        if (knownBpm != null) break
+                        val intVal = runCatching { audioFormat.getInteger(key) }.getOrNull()
+                        if (intVal != null && intVal in 30..300) {
+                            knownBpm = intVal
+                            break
+                        }
+                    }
                 }
             }
 
@@ -196,11 +218,7 @@ class WaveformExtractor(private val context: Context) {
                 else -> 0L
             }
 
-            if (durationUs > 30_000_000L) {
-                val seekStartUs = minOf(durationUs / 4L, 15_000_000L)
-                extractor.seekTo(seekStartUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
-            }
-
+            // Decode from 0:00 first so firstBeatMs and firstDownbeatMs reflect exact track start phase
             audioFormat.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
             codec = MediaCodec.createDecoderByType(mime)
             codec.configure(audioFormat, null, null, 0)
@@ -210,62 +228,93 @@ class WaveformExtractor(private val context: Context) {
                 .getOrDefault(44_100)
             val initialChannels = runCatching { audioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }
                 .getOrDefault(2)
-            var accumulator = OnsetFluxAccumulator(initialSampleRate, initialChannels)
-            var outputPcmEncoding = readPcmEncodingOrDefault(codec.outputFormat)
 
-            val bufferInfo = MediaCodec.BufferInfo()
-            var inputDone = false
-            var outputDone = false
-            var safetyLoops = 0
-            while (!outputDone && accumulator.accumulatedSeconds < BPM_DECODE_WINDOW_SECONDS && safetyLoops < 8_000) {
-                safetyLoops++
-                if (!inputDone) {
-                    val inIdx = codec.dequeueInputBuffer(4_000L)
-                    if (inIdx >= 0) {
-                        val inBuf = codec.getInputBuffer(inIdx)
-                        val read = if (inBuf != null) extractor.readSampleData(inBuf, 0) else -1
-                        if (read < 0) {
-                            codec.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                            inputDone = true
-                        } else {
-                            val pts = extractor.sampleTime.coerceAtLeast(0L)
-                            codec.queueInputBuffer(inIdx, 0, read, pts, 0)
-                            extractor.advance()
+            fun runWindowDecode(seekStartUs: Long): BeatGrid? {
+                if (seekStartUs > 0L) {
+                    extractor.seekTo(seekStartUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                    codec.flush()
+                }
+                var accumulator = OnsetFluxAccumulator(initialSampleRate, initialChannels)
+                var outputPcmEncoding = readPcmEncodingOrDefault(codec.outputFormat)
+                var firstPtsUs: Long? = null
+
+                val bufferInfo = MediaCodec.BufferInfo()
+                var inputDone = false
+                var outputDone = false
+                var safetyLoops = 0
+                while (!outputDone && accumulator.accumulatedSeconds < BPM_DECODE_WINDOW_SECONDS && safetyLoops < 10_000) {
+                    safetyLoops++
+                    if (!inputDone) {
+                        val inIdx = codec.dequeueInputBuffer(4_000L)
+                        if (inIdx >= 0) {
+                            val inBuf = codec.getInputBuffer(inIdx)
+                            val read = if (inBuf != null) extractor.readSampleData(inBuf, 0) else -1
+                            if (read < 0) {
+                                codec.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                inputDone = true
+                            } else {
+                                val pts = extractor.sampleTime.coerceAtLeast(0L)
+                                codec.queueInputBuffer(inIdx, 0, read, pts, 0)
+                                extractor.advance()
+                            }
                         }
                     }
-                }
-                val outIdx = codec.dequeueOutputBuffer(bufferInfo, 4_000L)
-                if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    val outFmt = codec.outputFormat
-                    outputPcmEncoding = readPcmEncodingOrDefault(outFmt)
-                    if (accumulator.accumulatedHopCount == 0) {
-                        val realSr = runCatching { outFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) }
-                            .getOrDefault(initialSampleRate)
-                        val realCh = runCatching { outFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }
-                            .getOrDefault(initialChannels)
-                        if (realSr != accumulator.safeSampleRate || realCh != accumulator.safeChannelCount) {
-                            accumulator = OnsetFluxAccumulator(realSr, realCh)
+                    val outIdx = codec.dequeueOutputBuffer(bufferInfo, 4_000L)
+                    if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        val outFmt = codec.outputFormat
+                        outputPcmEncoding = readPcmEncodingOrDefault(outFmt)
+                        if (accumulator.accumulatedHopCount == 0) {
+                            val realSr = runCatching { outFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) }
+                                .getOrDefault(initialSampleRate)
+                            val realCh = runCatching { outFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) }
+                                .getOrDefault(initialChannels)
+                            if (realSr != accumulator.safeSampleRate || realCh != accumulator.safeChannelCount) {
+                                accumulator = OnsetFluxAccumulator(realSr, realCh)
+                            }
                         }
+                    } else if (outIdx >= 0) {
+                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            outputDone = true
+                        }
+                        val outBuf = codec.getOutputBuffer(outIdx)
+                        if (outBuf != null && bufferInfo.size > 0) {
+                            if (firstPtsUs == null) {
+                                firstPtsUs = bufferInfo.presentationTimeUs.coerceAtLeast(0L)
+                            }
+                            accumulator.feedPcmByteBuffer(
+                                buffer = outBuf,
+                                offset = bufferInfo.offset,
+                                size = bufferInfo.size,
+                                pcmEncoding = outputPcmEncoding,
+                            )
+                        }
+                        codec.releaseOutputBuffer(outIdx, false)
                     }
-                } else if (outIdx >= 0) {
-                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                        outputDone = true
-                    }
-                    val outBuf = codec.getOutputBuffer(outIdx)
-                    if (outBuf != null && bufferInfo.size > 0) {
-                        accumulator.feedPcmByteBuffer(
-                            buffer = outBuf,
-                            offset = bufferInfo.offset,
-                            size = bufferInfo.size,
-                            pcmEncoding = outputPcmEncoding,
-                        )
-                    }
-                    codec.releaseOutputBuffer(outIdx, false)
                 }
+                val rawGrid = accumulator.computeBeatGrid(overrideBpm = knownBpm) ?: return null
+                val offsetMs = ((firstPtsUs ?: seekStartUs) / 1000L).coerceAtLeast(0L)
+                if (offsetMs == 0L) return rawGrid
+                val absDownbeat = rawGrid.firstDownbeatMs + offsetMs
+                val barDur = rawGrid.barDurationMs
+                val foldedDownbeat = if (barDur > 1.0 && absDownbeat >= barDur) {
+                    (absDownbeat - floor(absDownbeat / barDur) * barDur).roundToLong().coerceAtLeast(0L)
+                } else {
+                    absDownbeat
+                }
+                return rawGrid.copy(
+                    firstBeatMs = rawGrid.firstBeatMs + offsetMs,
+                    firstDownbeatMs = foldedDownbeat,
+                )
             }
-            return accumulator.computeBpm()
+
+            return runWindowDecode(0L)
+                ?: if (durationUs > 35_000_000L) {
+                    runWindowDecode(minOf(durationUs / 4L, 15_000_000L))
+                } else {
+                    null
+                }
         } catch (_: Throwable) {
-            return null
+            return knownBpm?.let { BeatGrid(bpm = it, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = 4) }
         } finally {
             try {
                 codec?.stop()
@@ -511,7 +560,30 @@ class WaveformExtractor(private val context: Context) {
     companion object {
         const val BAR_COUNT = 240
         const val MIN_BAR_HEIGHT = 0.08f
-        private const val BPM_DECODE_WINDOW_SECONDS = 20.0
+        private const val BPM_DECODE_WINDOW_SECONDS = 24.0
+
+        internal fun parseCachedBeatGrid(raw: String?): BeatGrid? {
+            val trimmed = raw?.trim().orEmpty()
+            if (trimmed.isEmpty()) return null
+            if (',' !in trimmed) {
+                val bpm = trimmed.toIntOrNull()?.takeIf { it in 30..300 } ?: return null
+                return BeatGrid(bpm = bpm, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = 4)
+            }
+            val parts = trimmed.split(',')
+            val bpm = parts.getOrNull(0)?.trim()?.toIntOrNull()?.takeIf { it in 30..300 } ?: return null
+            val firstBeatMs = parts.getOrNull(1)?.trim()?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+            val firstDownbeatMs = parts.getOrNull(2)?.trim()?.toLongOrNull()?.coerceAtLeast(0L) ?: firstBeatMs
+            val beatsPerBar = parts.getOrNull(3)?.trim()?.toIntOrNull()?.coerceIn(2, 8) ?: 4
+            return BeatGrid(
+                bpm = bpm,
+                firstBeatMs = firstBeatMs,
+                firstDownbeatMs = firstDownbeatMs,
+                beatsPerBar = beatsPerBar,
+            )
+        }
+
+        internal fun formatCachedBeatGrid(grid: BeatGrid): String =
+            "${grid.bpm},${grid.firstBeatMs.coerceAtLeast(0L)},${grid.firstDownbeatMs.coerceAtLeast(0L)},${grid.beatsPerBar.coerceIn(2, 8)}"
 
         private val VENDOR_METADATA_KEY_BPM: Int? by lazy {
             runCatching {

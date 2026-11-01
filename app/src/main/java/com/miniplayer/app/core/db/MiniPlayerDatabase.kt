@@ -12,6 +12,7 @@ import com.miniplayer.app.core.model.LyricsSource
 import com.miniplayer.app.core.model.MountState
 import com.miniplayer.app.core.model.PracticeBookmark
 import com.miniplayer.app.core.model.PracticeState
+import com.miniplayer.app.core.model.StemMixConfig
 import com.miniplayer.app.core.model.VideoSeekMode
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
@@ -278,7 +279,7 @@ class MiniPlayerDatabase(
 
     companion object {
         const val DATABASE_NAME = "miniplayer.db"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
 
         val SCHEMA_STATEMENTS: List<String> = listOf(
             """
@@ -395,12 +396,16 @@ class MiniPlayerDatabase(
                 practice_speed REAL NOT NULL DEFAULT 1.0,
                 pitch_semitones INTEGER NOT NULL DEFAULT 0,
                 pitch_cents INTEGER NOT NULL DEFAULT 0,
+                preserve_formants INTEGER NOT NULL DEFAULT 1,
                 bpm INTEGER NOT NULL DEFAULT 120,
                 count_in_mode TEXT NOT NULL DEFAULT 'OFF',
                 pre_roll_enabled INTEGER NOT NULL DEFAULT 0,
                 loop_enabled INTEGER NOT NULL DEFAULT 0,
                 active_a_ms INTEGER,
                 active_b_ms INTEGER,
+                bar_snap_enabled INTEGER NOT NULL DEFAULT 1,
+                first_downbeat_ms INTEGER NOT NULL DEFAULT 0,
+                stem_mix TEXT NOT NULL DEFAULT '',
                 video_mirror INTEGER NOT NULL DEFAULT 0,
                 video_zoom REAL NOT NULL DEFAULT 1.0,
                 hud_dock_top INTEGER NOT NULL DEFAULT 0,
@@ -461,31 +466,61 @@ class MiniPlayerDatabase(
                 db.execSQL("ALTER TABLE folder_rules ADD COLUMN exclude_from_grouping INTEGER NOT NULL DEFAULT 0")
             }
         }
+        if (oldVersion < 3) {
+            ensurePracticeStateV3Columns(db)
+        }
     }
 
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
         if (!db.isReadOnly) {
-            val hasExcludeCol = runCatching {
-                db.rawQuery("PRAGMA table_info(folder_rules)", null).use { c ->
-                    val nameIdx = c.getColumnIndex("name")
-                    var found = false
-                    while (c.moveToNext()) {
-                        if (nameIdx >= 0 && c.getString(nameIdx) == "exclude_from_grouping") {
-                            found = true
-                            break
-                        }
-                    }
-                    found
-                }
-            }.getOrDefault(true)
+            val hasExcludeCol = hasColumn(db, "folder_rules", "exclude_from_grouping")
             if (!hasExcludeCol) {
                 runCatching {
                     db.execSQL("ALTER TABLE folder_rules ADD COLUMN exclude_from_grouping INTEGER NOT NULL DEFAULT 0")
                 }
             }
+            ensurePracticeStateV3Columns(db)
         }
     }
+
+    private fun ensurePracticeStateV3Columns(db: SQLiteDatabase) {
+        val existingCols = listColumns(db, "track_practice_states") ?: return
+        if ("preserve_formants" !in existingCols) {
+            runCatching {
+                db.execSQL("ALTER TABLE track_practice_states ADD COLUMN preserve_formants INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+        if ("bar_snap_enabled" !in existingCols) {
+            runCatching {
+                db.execSQL("ALTER TABLE track_practice_states ADD COLUMN bar_snap_enabled INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+        if ("first_downbeat_ms" !in existingCols) {
+            runCatching {
+                db.execSQL("ALTER TABLE track_practice_states ADD COLUMN first_downbeat_ms INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        if ("stem_mix" !in existingCols) {
+            runCatching {
+                db.execSQL("ALTER TABLE track_practice_states ADD COLUMN stem_mix TEXT NOT NULL DEFAULT ''")
+            }
+        }
+    }
+
+    private fun hasColumn(db: SQLiteDatabase, table: String, column: String): Boolean =
+        listColumns(db, table)?.contains(column) ?: true
+
+    private fun listColumns(db: SQLiteDatabase, table: String): Set<String>? = runCatching {
+        db.rawQuery("PRAGMA table_info($table)", null).use { c ->
+            val nameIdx = c.getColumnIndex("name")
+            val cols = HashSet<String>()
+            while (c.moveToNext()) {
+                if (nameIdx >= 0) cols.add(c.getString(nameIdx))
+            }
+            cols
+        }
+    }.getOrNull()
 
     fun openBackend(): MediaStoreBackend {
         val sqliteDb = runCatching { writableDatabase }.getOrNull()
@@ -1207,12 +1242,16 @@ class SqliteMediaStoreBackend(
             put("practice_speed", state.practiceSpeed.toDouble())
             put("pitch_semitones", state.pitchSemitones)
             put("pitch_cents", state.pitchCents)
+            put("preserve_formants", if (state.preserveFormants) 1 else 0)
             put("bpm", state.bpm)
-            put("count_in_mode", state.countInMode.name)
+            put("count_in_mode", state.countInMode.normalizeBeatOnly().name)
             put("pre_roll_enabled", if (state.preRollEnabled) 1 else 0)
             put("loop_enabled", if (state.loopEnabled) 1 else 0)
             if (state.activeAMs != null) put("active_a_ms", state.activeAMs) else putNull("active_a_ms")
             if (state.activeBMs != null) put("active_b_ms", state.activeBMs) else putNull("active_b_ms")
+            put("bar_snap_enabled", if (state.barSnapEnabled) 1 else 0)
+            put("first_downbeat_ms", state.firstDownbeatMs.coerceAtLeast(0L))
+            put("stem_mix", state.stemMix.toStorageString())
             put("video_mirror", if (state.videoMirror) 1 else 0)
             put("video_zoom", state.videoZoom.toDouble())
             put("hud_dock_top", if (state.hudDockTop) 1 else 0)
@@ -1617,22 +1656,32 @@ class SqliteMediaStoreBackend(
         syncedToFile = c.getInt(c.getColumnIndexOrThrow("synced_to_file")) != 0,
     )
 
-    private fun readPracticeStateCursor(c: Cursor): PracticeState = PracticeState(
-        itemId = c.getLong(c.getColumnIndexOrThrow("item_id")),
-        practiceSpeed = c.getDouble(c.getColumnIndexOrThrow("practice_speed")).toFloat(),
-        pitchSemitones = c.getInt(c.getColumnIndexOrThrow("pitch_semitones")),
-        pitchCents = c.getInt(c.getColumnIndexOrThrow("pitch_cents")),
-        bpm = c.getInt(c.getColumnIndexOrThrow("bpm")),
-        countInMode = runCatching { CountInMode.valueOf(c.getString(c.getColumnIndexOrThrow("count_in_mode"))) }.getOrDefault(CountInMode.OFF),
-        preRollEnabled = c.getInt(c.getColumnIndexOrThrow("pre_roll_enabled")) != 0,
-        loopEnabled = c.getInt(c.getColumnIndexOrThrow("loop_enabled")) != 0,
-        activeAMs = c.optLong("active_a_ms"),
-        activeBMs = c.optLong("active_b_ms"),
-        videoMirror = c.getInt(c.getColumnIndexOrThrow("video_mirror")) != 0,
-        videoZoom = c.getDouble(c.getColumnIndexOrThrow("video_zoom")).toFloat(),
-        hudDockTop = c.getInt(c.getColumnIndexOrThrow("hud_dock_top")) != 0,
-        videoSeekMode = runCatching { VideoSeekMode.valueOf(c.getString(c.getColumnIndexOrThrow("video_seek_mode"))) }.getOrDefault(VideoSeekMode.AUTO),
-    )
+    internal fun readPracticeStateCursor(c: Cursor): PracticeState {
+        val preserveIdx = c.getColumnIndex("preserve_formants")
+        val barSnapIdx = c.getColumnIndex("bar_snap_enabled")
+        val downbeatIdx = c.getColumnIndex("first_downbeat_ms")
+        val stemMixIdx = c.getColumnIndex("stem_mix")
+        return PracticeState(
+            itemId = c.getLong(c.getColumnIndexOrThrow("item_id")),
+            practiceSpeed = c.getDouble(c.getColumnIndexOrThrow("practice_speed")).toFloat(),
+            pitchSemitones = c.getInt(c.getColumnIndexOrThrow("pitch_semitones")),
+            pitchCents = c.getInt(c.getColumnIndexOrThrow("pitch_cents")),
+            preserveFormants = if (preserveIdx >= 0 && !c.isNull(preserveIdx)) c.getInt(preserveIdx) != 0 else true,
+            bpm = c.getInt(c.getColumnIndexOrThrow("bpm")),
+            countInMode = CountInMode.fromStoredValue(c.getString(c.getColumnIndexOrThrow("count_in_mode"))),
+            preRollEnabled = c.getInt(c.getColumnIndexOrThrow("pre_roll_enabled")) != 0,
+            loopEnabled = c.getInt(c.getColumnIndexOrThrow("loop_enabled")) != 0,
+            activeAMs = c.optLong("active_a_ms"),
+            activeBMs = c.optLong("active_b_ms"),
+            barSnapEnabled = if (barSnapIdx >= 0 && !c.isNull(barSnapIdx)) c.getInt(barSnapIdx) != 0 else true,
+            firstDownbeatMs = if (downbeatIdx >= 0 && !c.isNull(downbeatIdx)) c.getLong(downbeatIdx).coerceAtLeast(0L) else 0L,
+            stemMix = if (stemMixIdx >= 0 && !c.isNull(stemMixIdx)) StemMixConfig.fromStorageString(c.getString(stemMixIdx)) else StemMixConfig(),
+            videoMirror = c.getInt(c.getColumnIndexOrThrow("video_mirror")) != 0,
+            videoZoom = c.getDouble(c.getColumnIndexOrThrow("video_zoom")).toFloat(),
+            hudDockTop = c.getInt(c.getColumnIndexOrThrow("hud_dock_top")) != 0,
+            videoSeekMode = runCatching { VideoSeekMode.valueOf(c.getString(c.getColumnIndexOrThrow("video_seek_mode"))) }.getOrDefault(VideoSeekMode.AUTO),
+        )
+    }
 
     private fun readBookmarkCursor(c: Cursor): PracticeBookmark {
         val speedIdx = c.getColumnIndexOrThrow("saved_speed")
@@ -2084,12 +2133,23 @@ internal class InMemoryMediaStoreBackend : MediaStoreBackend {
     }
 
     override fun getPracticeState(itemId: Long): PracticeState = synchronized(lock) {
-        practiceStates[itemId] ?: PracticeState(itemId = itemId)
+        val s = practiceStates[itemId] ?: return@synchronized PracticeState(itemId = itemId)
+        s.copy(
+            countInMode = s.countInMode.normalizeBeatOnly(),
+            firstDownbeatMs = s.firstDownbeatMs.coerceAtLeast(0L),
+            stemMix = s.stemMix.sanitized(),
+        )
     }
 
     override fun upsertPracticeState(state: PracticeState, nowMs: Long) = synchronized(lock) {
         if (state.itemId in items) {
-            practiceStates[state.itemId] = state
+            // Round-trip through storage encoding to match SqliteMediaStoreBackend behavior identically
+            val roundTrippedStem = StemMixConfig.fromStorageString(state.stemMix.toStorageString())
+            practiceStates[state.itemId] = state.copy(
+                countInMode = state.countInMode.normalizeBeatOnly(),
+                firstDownbeatMs = state.firstDownbeatMs.coerceAtLeast(0L),
+                stemMix = roundTrippedStem,
+            )
         }
     }
 

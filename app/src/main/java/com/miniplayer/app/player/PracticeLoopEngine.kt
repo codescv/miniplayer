@@ -1,12 +1,16 @@
 package com.miniplayer.app.player
 
-import android.os.SystemClock
+import com.miniplayer.app.core.model.BeatGrid
 import com.miniplayer.app.core.model.CountInMode
 import com.miniplayer.app.core.model.PracticeBookmark
 import com.miniplayer.app.core.model.PracticeMath
 import com.miniplayer.app.core.model.PracticeState
 import com.miniplayer.app.core.model.SpeedTrainerConfig
+import com.miniplayer.app.core.model.StemMixConfig
+import com.miniplayer.app.core.model.StemType
 import com.miniplayer.app.core.model.VideoSeekMode
+import kotlin.math.floor
+import kotlin.math.roundToLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,6 +35,7 @@ interface LoopPlayerPort {
     fun scheduleBoundaryMessage(positionMs: Long, onReached: () -> Unit)
     fun cancelBoundaryMessage()
     fun applyPlaybackParameters(speed: Float, pitch: Float)
+    fun applyDspParameters(preserveFormants: Boolean, stemMix: StemMixConfig) {}
     fun configureExactSeek()
     fun configureFastVideoKeyframeSeek()
     fun seekToPosition(positionMs: Long)
@@ -40,15 +45,17 @@ interface LoopPlayerPort {
 }
 
 /**
- * Sample-accurate A-B practice loop state machine, adaptive GOP seek coordinator, and progressive
- * Speed Trainer engine. All player interactions go through [LoopPlayerPort], which executes
- * strictly on `exoPlayer.applicationLooper`.
+ * Sample-accurate A-B practice loop state machine, bar-boundary snap coordinator, formant & 5-stem
+ * DSP parameter controller, adaptive GOP seek coordinator, and progressive Speed Trainer engine.
+ * All player interactions go through [LoopPlayerPort], which executes strictly on
+ * `exoPlayer.applicationLooper`.
  */
 class PracticeLoopEngine(
     private val port: LoopPlayerPort,
     private val metronome: CountInMetronome,
     private val onStatePersisted: (PracticeState) -> Unit = {},
     private val onHapticEvent: () -> Unit = {},
+    private val onStemSliderActivated: () -> Unit = {},
 ) {
     private val _practiceState = MutableStateFlow(PracticeState(itemId = -1L))
     val practiceState: StateFlow<PracticeState> = _practiceState.asStateFlow()
@@ -157,6 +164,7 @@ class PracticeLoopEngine(
         if (!active) {
             port.cancelBoundaryMessage()
             port.configureExactSeek()
+            port.applyDspParameters(preserveFormants = true, stemMix = StemMixConfig())
             port.applyPlaybackParameters(1.0f, 1.0f)
             _speedTrainer.update { it.copy(currentLoopInStep = 0) }
         } else {
@@ -169,7 +177,13 @@ class PracticeLoopEngine(
     fun markPointA(atMs: Long = port.currentPositionMs) {
         metronome.cancel()
         _activeBookmarkId.value = null
-        val safeA = atMs.coerceAtLeast(0L)
+        val current = _practiceState.value
+        val rawA = atMs.coerceAtLeast(0L)
+        val safeA = if (_isPracticeModeActive.value && current.barSnapEnabled) {
+            current.beatGrid().snapPointA(rawA, port.durationMs)
+        } else {
+            rawA
+        }
         updatePracticeState {
             it.copy(
                 activeAMs = safeA,
@@ -183,7 +197,20 @@ class PracticeLoopEngine(
     fun markPointBAndLoop(atMs: Long = port.currentPositionMs) {
         val current = _practiceState.value
         val rawA = current.activeAMs ?: 0L
-        val normalized = PracticeMath.normalizeLoopPoints(rawA, atMs, port.durationMs) ?: return
+        val dur = port.durationMs
+        val (candA, candB) = if (_isPracticeModeActive.value && current.barSnapEnabled) {
+            val grid = current.beatGrid()
+            if (atMs < rawA) {
+                val snappedLo = grid.snapPointA(atMs.coerceAtLeast(0L), dur)
+                val snappedHi = grid.snapPointB(snappedLo, rawA, dur)
+                snappedLo to snappedHi
+            } else {
+                rawA to grid.snapPointB(rawA, atMs, dur)
+            }
+        } else {
+            rawA to atMs
+        }
+        val normalized = PracticeMath.normalizeLoopPoints(candA, candB, dur) ?: return
         metronome.cancel()
         _activeBookmarkId.value = null
         _completedLoopCount.value = 0
@@ -199,18 +226,32 @@ class PracticeLoopEngine(
         triggerJumpToA(autoPlay = true)
     }
 
-    fun setLoopPointsFromDrag(aMs: Long, bMs: Long, commitPersist: Boolean) {
-        val normalized = PracticeMath.normalizeLoopPoints(aMs, bMs, port.durationMs) ?: return
+    fun setLoopPointsFromDrag(
+        aMs: Long,
+        bMs: Long,
+        commitPersist: Boolean,
+        draggingHandle: String? = null,
+    ) {
+        val current = _practiceState.value
+        val dur = port.durationMs
+        val (candA, candB) = if (_isPracticeModeActive.value && current.barSnapEnabled) {
+            current.beatGrid().snapDraggedLoopPoints(aMs, bMs, draggingHandle, dur)
+        } else {
+            aMs to bMs
+        }
+        val normalized = PracticeMath.normalizeLoopPoints(candA, candB, dur) ?: return
         metronome.cancel()
         _activeBookmarkId.value = null
-        val next = _practiceState.value.copy(
+        val next = current.copy(
             activeAMs = normalized.first,
             activeBMs = normalized.second,
             loopEnabled = true,
         )
         _practiceState.value = next
         if (commitPersist) {
-            onStatePersisted(next)
+            if (next.itemId > 0L) {
+                onStatePersisted(next)
+            }
             syncLoopBoundaryMessage()
             if (port.currentPositionMs >= normalized.second && _isPracticeModeActive.value) {
                 triggerJumpToA(autoPlay = port.isPlaying)
@@ -382,12 +423,62 @@ class PracticeLoopEngine(
         syncSonicParameters()
     }
 
+    fun setPreserveFormants(enabled: Boolean) {
+        updatePracticeState { it.copy(preserveFormants = enabled) }
+        syncSonicParameters()
+    }
+
+    fun setStemMix(stemMix: StemMixConfig) {
+        val clean = stemMix.sanitized()
+        updatePracticeState { it.copy(stemMix = clean) }
+        syncSonicParameters()
+        if (!clean.isUnity) {
+            onStemSliderActivated()
+        }
+    }
+
+    fun setStemVolume(stem: StemType, gain: Float, commitPersist: Boolean = true) {
+        val updatedMix = _practiceState.value.stemMix.withSliderGain(stem, gain)
+        val next = _practiceState.value.copy(stemMix = updatedMix)
+        _practiceState.value = next
+        syncSonicParameters()
+        if (commitPersist && next.itemId > 0L) {
+            onStatePersisted(next)
+        }
+        if (!updatedMix.isUnity) {
+            onStemSliderActivated()
+        }
+    }
+
+    fun toggleStemMute(stem: StemType) {
+        val cur = _practiceState.value.stemMix
+        val nextMuted = if (stem in cur.mutedStems) cur.mutedStems - stem else cur.mutedStems + stem
+        val nextSolo = if (cur.soloStem == stem && stem in nextMuted) null else cur.soloStem
+        setStemMix(cur.copy(mutedStems = nextMuted, soloStem = nextSolo))
+        onHapticEvent()
+    }
+
+    fun toggleStemSolo(stem: StemType) {
+        val cur = _practiceState.value.stemMix
+        val nextSolo = if (cur.soloStem == stem) null else stem
+        val nextMuted = if (nextSolo != null) cur.mutedStems - nextSolo else cur.mutedStems
+        setStemMix(cur.copy(mutedStems = nextMuted, soloStem = nextSolo))
+        onHapticEvent()
+    }
+
+    fun resetStemMix() {
+        setStemMix(StemMixConfig())
+        onHapticEvent()
+    }
+
+    /**
+     * Beat-only 1-tap toggle (`OFF <-> BEAT_4`).
+     */
     fun cycleCountInMode() {
-        val next = when (_practiceState.value.countInMode) {
-            CountInMode.OFF -> CountInMode.SEC_1
-            CountInMode.SEC_1 -> CountInMode.SEC_2
-            CountInMode.SEC_2 -> CountInMode.BEAT_4
-            CountInMode.BEAT_4 -> CountInMode.OFF
+        val next = if (_practiceState.value.countInMode == CountInMode.OFF) {
+            CountInMode.BEAT_4
+        } else {
+            CountInMode.OFF
         }
         metronome.cancel()
         updatePracticeState { it.copy(countInMode = next) }
@@ -395,11 +486,84 @@ class PracticeLoopEngine(
 
     fun setCountInMode(mode: CountInMode) {
         metronome.cancel()
-        updatePracticeState { it.copy(countInMode = mode) }
+        updatePracticeState { it.copy(countInMode = mode.normalizeBeatOnly()) }
     }
 
     fun togglePreRoll() {
         updatePracticeState { it.copy(preRollEnabled = !it.preRollEnabled) }
+    }
+
+    fun toggleBarSnap() {
+        setBarSnapEnabled(!_practiceState.value.barSnapEnabled)
+    }
+
+    fun setBarSnapEnabled(enabled: Boolean) {
+        updatePracticeState { state ->
+            if (enabled && state.activeAMs != null && state.activeBMs != null) {
+                val snapped = state.beatGrid().snapDraggedLoopPoints(
+                    aMs = state.activeAMs,
+                    bMs = state.activeBMs,
+                    draggingHandle = null,
+                    durationMs = port.durationMs,
+                )
+                val normalized = PracticeMath.normalizeLoopPoints(snapped.first, snapped.second, port.durationMs)
+                if (normalized != null) {
+                    state.copy(
+                        barSnapEnabled = true,
+                        activeAMs = normalized.first,
+                        activeBMs = normalized.second,
+                    )
+                } else {
+                    state.copy(barSnapEnabled = true)
+                }
+            } else {
+                state.copy(barSnapEnabled = enabled)
+            }
+        }
+        syncLoopBoundaryMessage()
+        onHapticEvent()
+    }
+
+    fun alignDownbeatToCurrentPosition(posMs: Long = port.currentPositionMs) {
+        val dur = port.durationMs
+        updatePracticeState { state ->
+            val barDur = state.beatGrid().barDurationMs
+            val safePos = posMs.coerceAtLeast(0L)
+            val newDownbeat = if (barDur > 1.0) {
+                (safePos - floor(safePos / barDur) * barDur).roundToLong().coerceAtLeast(0L)
+            } else {
+                0L
+            }
+            val updatedGrid = BeatGrid(
+                bpm = state.bpm,
+                firstBeatMs = newDownbeat,
+                firstDownbeatMs = newDownbeat,
+                beatsPerBar = 4,
+            )
+            if (state.barSnapEnabled && state.activeAMs != null && state.activeBMs != null) {
+                val snapped = updatedGrid.snapDraggedLoopPoints(
+                    aMs = state.activeAMs,
+                    bMs = state.activeBMs,
+                    draggingHandle = null,
+                    durationMs = dur,
+                )
+                val normalized = PracticeMath.normalizeLoopPoints(snapped.first, snapped.second, dur)
+                state.copy(
+                    firstDownbeatMs = newDownbeat,
+                    activeAMs = normalized?.first ?: state.activeAMs,
+                    activeBMs = normalized?.second ?: state.activeBMs,
+                )
+            } else if (state.barSnapEnabled && state.activeAMs != null) {
+                state.copy(
+                    firstDownbeatMs = newDownbeat,
+                    activeAMs = updatedGrid.snapPointA(state.activeAMs, dur),
+                )
+            } else {
+                state.copy(firstDownbeatMs = newDownbeat)
+            }
+        }
+        syncLoopBoundaryMessage()
+        onHapticEvent()
     }
 
     fun setBpm(bpm: Int) {
@@ -410,6 +574,20 @@ class PracticeLoopEngine(
     fun applyAutoDetectedBpm(bpm: Int) {
         val safe = PracticeMath.clampBpm(bpm)
         updatePracticeState { it.copy(bpm = safe) }
+    }
+
+    fun applyAutoDetectedBeatGrid(grid: BeatGrid, overwriteCustomBpm: Boolean = false) {
+        val safeBpm = PracticeMath.clampBpm(grid.bpm)
+        val safeDownbeat = grid.firstDownbeatMs.coerceAtLeast(0L)
+        updatePracticeState { state ->
+            val nextBpm = if (overwriteCustomBpm || state.bpm == 120) safeBpm else state.bpm
+            val nextDownbeat = if (overwriteCustomBpm || state.firstDownbeatMs == 0L) {
+                safeDownbeat
+            } else {
+                state.firstDownbeatMs
+            }
+            state.copy(bpm = nextBpm, firstDownbeatMs = nextDownbeat)
+        }
     }
 
     fun tapTempo(nowElapsedMs: Long = CountInMetronome.monotonicNowMs()): Int {
@@ -448,7 +626,7 @@ class PracticeLoopEngine(
         val clamped = zoom.coerceIn(1.0f, 4.0f)
         val next = _practiceState.value.copy(videoZoom = clamped)
         _practiceState.value = next
-        if (persist) {
+        if (persist && next.itemId > 0L) {
             onStatePersisted(next)
         }
     }
@@ -473,7 +651,13 @@ class PracticeLoopEngine(
     fun onUserManualSeek(targetMs: Long) {
         metronome.cancel()
         pendingLoopSeekStartElapsedMs = null
-        port.seekToPosition(targetMs.coerceAtLeast(0L))
+        val safeTarget = targetMs.coerceAtLeast(0L)
+        val finalTarget = if (abLoopOwnsRepeat && _practiceState.value.barSnapEnabled) {
+            _practiceState.value.beatGrid().snapToNearestBar(safeTarget, port.durationMs)
+        } else {
+            safeTarget
+        }
+        port.seekToPosition(finalTarget)
         syncLoopBoundaryMessage()
     }
 
@@ -584,8 +768,10 @@ class PracticeLoopEngine(
             val s = _practiceState.value
             val speed = PracticeMath.clampSpeed(s.practiceSpeed)
             val pitch = PracticeMath.computePitchFactor(s.pitchSemitones, s.pitchCents)
+            port.applyDspParameters(preserveFormants = s.preserveFormants, stemMix = s.stemMix)
             port.applyPlaybackParameters(speed, pitch)
         } else {
+            port.applyDspParameters(preserveFormants = true, stemMix = StemMixConfig())
             port.applyPlaybackParameters(1.0f, 1.0f)
         }
     }

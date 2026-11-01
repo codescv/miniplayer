@@ -16,6 +16,8 @@ import com.miniplayer.app.core.model.MetadataField
 import com.miniplayer.app.core.model.MetadataSaveOutcome
 import com.miniplayer.app.core.model.MountState
 import com.miniplayer.app.core.model.PracticeState
+import com.miniplayer.app.core.model.StemMixConfig
+import com.miniplayer.app.core.model.StemType
 import com.miniplayer.app.core.scanner.ExtractedMediaProbe
 import com.miniplayer.app.core.scanner.SafChildEntry
 import com.miniplayer.app.core.scanner.SafFolderScanner
@@ -1237,5 +1239,87 @@ class DatabaseAndScannerTest {
         assertEquals("Rock", updatedRoot.displayName)
         assertEquals("primary:Rock", updatedRoot.treeDocId)
         assertEquals("Re-adding case-renamed root must update existing root instead of duplicating", 2, repo.safRoots.value.size)
+    }
+
+    @Test
+    fun `database v3 schema and repository persist preserveFormants barSnap firstDownbeatMs stemMix and legacy countIn`() = runBlocking {
+        // 1. Verify MiniPlayerDatabase.SCHEMA_STATEMENTS v3 columns on real sqlite3 engine
+        val sqliteBin = File("/usr/bin/sqlite3")
+        if (sqliteBin.canExecute()) {
+            val stemEncoded = StemMixConfig(
+                vocals = 0.30f,
+                guitar = 1.35f,
+                bass = 1.0f,
+                drums = 0.85f,
+                other = 1.0f,
+                mutedStems = setOf(StemType.VOCALS),
+                soloStem = StemType.GUITAR,
+            ).toStorageString()
+            val sql = buildString {
+                appendLine("PRAGMA foreign_keys = ON;")
+                for (stmt in MiniPlayerDatabase.SCHEMA_STATEMENTS) {
+                    appendLine("$stmt;")
+                }
+                appendLine("INSERT INTO saf_roots (root_id, tree_uri, tree_doc_id, display_name, is_writable, mount_state, last_scan_at) VALUES (1, 'content://saf/1', 'primary:Music', 'Music', 1, 'MOUNTED', 100);")
+                appendLine("INSERT INTO media_items (item_id, document_uri, root_id, parent_rel_path, file_name, mime_type, is_video, size_bytes, last_modified, duration_ms, parsed_title, fingerprint_key) VALUES (10, 'content://saf/1/doc/a', 1, 'Rock', '01.mp3', 'audio/mpeg', 0, 1024, 200, 180000, 'Track', '01.mp3|1024|180000');")
+                appendLine("INSERT INTO media_items (item_id, document_uri, root_id, parent_rel_path, file_name, mime_type, is_video, size_bytes, last_modified, duration_ms, parsed_title, fingerprint_key) VALUES (11, 'content://saf/1/doc/b', 1, 'Rock', '02.mp3', 'audio/mpeg', 0, 1024, 200, 180000, 'Track2', '02.mp3|1024|180000');")
+                // Item 10 uses v3 defaults
+                appendLine("INSERT INTO track_practice_states (item_id, updated_at) VALUES (10, 500);")
+                // Item 11 stores explicit v3 custom fields
+                appendLine("INSERT INTO track_practice_states (item_id, preserve_formants, bar_snap_enabled, first_downbeat_ms, stem_mix, count_in_mode, updated_at) VALUES (11, 0, 0, 340, '$stemEncoded', 'SEC_2', 600);")
+                appendLine("SELECT 'DEFAULTS', preserve_formants, bar_snap_enabled, first_downbeat_ms, stem_mix FROM track_practice_states WHERE item_id = 10;")
+                appendLine("SELECT 'CUSTOM', preserve_formants, bar_snap_enabled, first_downbeat_ms, stem_mix, count_in_mode FROM track_practice_states WHERE item_id = 11;")
+            }
+            val proc = ProcessBuilder(sqliteBin.absolutePath, ":memory:")
+                .redirectErrorStream(true)
+                .start()
+            proc.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(sql) }
+            val out = proc.inputStream.bufferedReader(Charsets.UTF_8).readText().trim()
+            assertEquals("SQLite v3 DDL failed: $out", 0, proc.waitFor())
+            assertTrue("Expected v3 defaults (1|1|0|), got: $out", out.contains("DEFAULTS|1|1|0|"))
+            assertTrue("Expected v3 custom fields persisted, got: $out", out.contains("CUSTOM|0|0|340|$stemEncoded|SEC_2"))
+        }
+
+        // 2. Verify MediaRepository round-trip & isNonDefault detection for stemMix / preserveFormants / barSnap
+        val backend = InMemoryMediaStoreBackend()
+        val repo = MediaRepository(backend = backend, ioDispatcher = Dispatchers.Unconfined)
+        val ds = FakeSafTreeDataSource()
+        val scanner = SafFolderScanner(repository = repo, dataSource = ds, ioDispatcher = Dispatchers.Unconfined)
+        val treeUri = "content://${FakeSafTreeDataSource.AUTHORITY}/tree/primary%3AMusic"
+        ds.childrenByDirDocId["primary:Music"] = mutableListOf(
+            SafChildEntry("primary:Music/Song.flac", "", "Song.flac", "audio/flac", 5_000_000L, 123L),
+        )
+        ds.probesByUri["primary:Music/Song.flac"] = ExtractedMediaProbe(durationMs = 200_000L, rawTitle = "Song", rawArtist = "Artist")
+        scanner.addSafRootFromGrant(SafGrantInfo(treeUri, FakeSafTreeDataSource.AUTHORITY, "primary:Music", "Music", isWritable = true))
+        val item = repo.allMediaItems.value.single()
+
+        val customMix = StemMixConfig(
+            vocals = 0.0f,
+            guitar = 1.40f,
+            bass = 1.10f,
+            drums = 0.90f,
+            other = 1.0f,
+            mutedStems = setOf(StemType.VOCALS),
+            soloStem = null,
+        )
+        val saved = PracticeState(
+            itemId = item.itemId,
+            pitchSemitones = -2,
+            preserveFormants = false,
+            barSnapEnabled = false,
+            firstDownbeatMs = 420L,
+            stemMix = customMix,
+            countInMode = CountInMode.fromStoredValue("SEC_1"),
+        )
+        assertEquals(CountInMode.BEAT_4, saved.countInMode)
+        repo.savePracticeState(saved)
+
+        val loaded = repo.getPracticeState(item.itemId)
+        assertFalse(loaded.preserveFormants)
+        assertFalse(loaded.barSnapEnabled)
+        assertEquals(420L, loaded.firstDownbeatMs)
+        assertEquals(customMix, loaded.stemMix)
+        assertEquals(CountInMode.BEAT_4, loaded.countInMode)
+        assertTrue(repo.allMediaItems.value.single().hasPracticeRecord)
     }
 }

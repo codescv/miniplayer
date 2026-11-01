@@ -398,6 +398,9 @@ class MediaRepository(
             pitchSemitones = state.pitchSemitones.coerceIn(-6, 6),
             pitchCents = state.pitchCents.coerceIn(-50, 50),
             bpm = state.bpm.coerceIn(30, 300),
+            countInMode = state.countInMode.normalizeBeatOnly(),
+            firstDownbeatMs = state.firstDownbeatMs.coerceAtLeast(0L),
+            stemMix = state.stemMix.sanitized(),
             videoZoom = state.videoZoom.coerceIn(1.0f, 4.0f),
         )
         backend.upsertPracticeState(clamped, System.currentTimeMillis())
@@ -453,9 +456,9 @@ class MediaRepository(
 
     override suspend fun clearCaches(): Long = withContext(ioDispatcher) {
         var freedBytes = 0L
-        // 1. Clear waveform cache & temporary staging/update dirs in cacheDir
+        // 1. Clear waveform/stem cache & temporary staging/update dirs in cacheDir
         cacheRootDir?.let { cache ->
-            for (subName in listOf("waveforms", "tag_stage", "updates")) {
+            for (subName in listOf("waveforms", "stems", "tag_stage", "updates")) {
                 freedBytes += deleteDirContents(File(cache, subName))
             }
         }

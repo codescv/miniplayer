@@ -2111,8 +2111,11 @@ class LanStudioServer(
         val newCents = (json.intOrNull("pitchCents") ?: existing.pitchCents).coerceIn(-50, 50)
         val newBpm = (json.intOrNull("bpm") ?: existing.bpm).coerceIn(30, 300)
         val newCountIn = json.str("countInMode")?.let {
-            runCatching { CountInMode.valueOf(it.uppercase(Locale.ROOT)) }.getOrNull()
-        } ?: existing.countInMode
+            CountInMode.fromStoredValue(it.uppercase(Locale.ROOT))
+        } ?: existing.countInMode.normalizeBeatOnly()
+        val newPreserveFormants = json.boolOrNull("preserveFormants") ?: existing.preserveFormants
+        val newBarSnap = json.boolOrNull("barSnapEnabled") ?: existing.barSnapEnabled
+        val newFirstDownbeat = (json.longOrNull("firstDownbeatMs") ?: existing.firstDownbeatMs).coerceAtLeast(0L)
         val newPreRoll = json.boolOrNull("preRollEnabled") ?: existing.preRollEnabled
         val newLoopEnabled = json.boolOrNull("loopEnabled") ?: existing.loopEnabled
         val newVideoMirror = json.boolOrNull("videoMirror") ?: existing.videoMirror
@@ -2139,12 +2142,15 @@ class LanStudioServer(
             practiceSpeed = newSpeed,
             pitchSemitones = newSemitones,
             pitchCents = newCents,
+            preserveFormants = newPreserveFormants,
             bpm = newBpm,
             countInMode = newCountIn,
             preRollEnabled = newPreRoll,
             loopEnabled = newLoopEnabled && normalizedPair != null,
             activeAMs = normalizedPair?.first ?: rawA,
             activeBMs = normalizedPair?.second ?: rawB,
+            barSnapEnabled = newBarSnap,
+            firstDownbeatMs = newFirstDownbeat,
             videoMirror = newVideoMirror,
             videoZoom = newVideoZoom,
         )
@@ -2873,12 +2879,15 @@ class LanStudioServer(
             "practiceSpeed" to JsonValue.Num(s.practiceSpeed),
             "pitchSemitones" to JsonValue.Num(s.pitchSemitones),
             "pitchCents" to JsonValue.Num(s.pitchCents),
+            "preserveFormants" to JsonValue.Bool(s.preserveFormants),
             "bpm" to JsonValue.Num(s.bpm),
-            "countInMode" to JsonValue.Str(s.countInMode.name),
+            "countInMode" to JsonValue.Str(s.countInMode.normalizeBeatOnly().name),
             "preRollEnabled" to JsonValue.Bool(s.preRollEnabled),
             "loopEnabled" to JsonValue.Bool(s.loopEnabled),
             "activeAMs" to LanJson.numOrNull(s.activeAMs),
             "activeBMs" to LanJson.numOrNull(s.activeBMs),
+            "barSnapEnabled" to JsonValue.Bool(s.barSnapEnabled),
+            "firstDownbeatMs" to JsonValue.Num(s.firstDownbeatMs),
             "videoMirror" to JsonValue.Bool(s.videoMirror),
             "videoZoom" to JsonValue.Num(s.videoZoom),
             "hudDockTop" to JsonValue.Bool(s.hudDockTop),

@@ -1,6 +1,7 @@
 package com.miniplayer.app.player
 
 import android.media.AudioFormat
+import com.miniplayer.app.core.model.BeatGrid
 import com.miniplayer.app.core.model.PracticeMath
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -14,6 +15,7 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
  * Streaming 100 Hz onset-energy accumulator and autocorrelation tempo estimator optimized for
@@ -330,6 +332,172 @@ class OnsetFluxAccumulator(
 
         return PracticeMath.clampBpm(detectedBpm.roundToInt())
     }
+
+    /**
+     * Detects full [BeatGrid] (`bpm`, `firstBeatMs`, `firstDownbeatMs`, `beatsPerBar = 4`)
+     * via 64-phase fractional comb-filter correlation against smoothed onset flux $O[k]$ plus
+     * 4-phase downbeat / backbeat bar accent scoring.
+     */
+    fun computeBeatGrid(overrideBpm: Int? = null, beatsPerBar: Int = 4): BeatGrid? {
+        val bpm = overrideBpm?.let(PracticeMath::clampBpm) ?: computeBpm() ?: return null
+        val safeBeatsPerBar = beatsPerBar.coerceIn(2, 8)
+        val n = energyCount
+        if (n < 16) {
+            return BeatGrid(bpm = bpm, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = safeBeatsPerBar)
+        }
+
+        var peakEnergy = 0f
+        for (i in 0 until n) {
+            if (energyFrames[i] > peakEnergy) peakEnergy = energyFrames[i]
+        }
+        if (peakEnergy < BpmDetector.SILENCE_ENERGY_FLOOR) {
+            return BeatGrid(bpm = bpm, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = safeBeatsPerBar)
+        }
+
+        val rawOnset = FloatArray(n)
+        var peakOnset = 0f
+        for (k in 1 until n) {
+            val diff = max(0f, energyFrames[k] - energyFrames[k - 1])
+            rawOnset[k] = diff
+            if (diff > peakOnset) peakOnset = diff
+        }
+
+        val smoothed = FloatArray(n)
+        if (n >= 2) {
+            smoothed[0] = 0.50f * rawOnset[0] + 0.50f * rawOnset[1]
+            for (k in 1 until n - 1) {
+                smoothed[k] = 0.25f * rawOnset[k - 1] + 0.50f * rawOnset[k] + 0.25f * rawOnset[k + 1]
+            }
+            smoothed[n - 1] = 0.50f * rawOnset[n - 2] + 0.50f * rawOnset[n - 1]
+        }
+
+        val tauBeat = (60.0 * envelopeRateHz) / bpm.toDouble()
+        if (tauBeat < 2.0) {
+            return BeatGrid(bpm = bpm, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = safeBeatsPerBar)
+        }
+
+        // 1. Search 64 fractional phase offsets phi in [0, tauBeat) maximizing comb-filter correlation
+        val phaseSteps = 64
+        var bestPhi = 0.0
+        var bestCombScore = Double.NEGATIVE_INFINITY
+        for (p in 0 until phaseSteps) {
+            val phi = (p.toDouble() / phaseSteps.toDouble()) * tauBeat
+            var sum = 0.0
+            var count = 0
+            var m = 0
+            while (true) {
+                val hopIdx = (phi + m * tauBeat).roundToInt()
+                if (hopIdx >= n) break
+                val prev = smoothed[(hopIdx - 1).coerceAtLeast(0)]
+                val cur = smoothed[hopIdx]
+                val next = smoothed[(hopIdx + 1).coerceAtMost(n - 1)]
+                sum += 0.60 * cur + 0.20 * (prev + next)
+                count++
+                m++
+            }
+            val avgScore = if (count > 0) sum / count else 0.0
+            if (avgScore > bestCombScore) {
+                bestCombScore = avgScore
+                bestPhi = phi
+            }
+        }
+
+        // 2. Locate first musical onset hop k_onset where E[k] >= 0.12 * E_peak and O[k] >= 0.15 * O_peak
+        val energyThresh = 0.12f * peakEnergy
+        val onsetThresh = 0.15f * peakOnset
+        var kOnset = -1
+        for (k in 0 until n) {
+            if (energyFrames[k] >= energyThresh && smoothed[k] >= onsetThresh) {
+                kOnset = k
+                break
+            }
+        }
+        if (kOnset < 0) {
+            for (k in 0 until n) {
+                if (energyFrames[k] >= 0.10f * peakEnergy) {
+                    kOnset = k
+                    break
+                }
+            }
+        }
+        if (kOnset < 0) kOnset = 0
+
+        // 3. Find first beat index m0 >= 0 aligned with or immediately near kOnset
+        val rawM0 = ((kOnset.toDouble() - bestPhi) / tauBeat).roundToInt().coerceAtLeast(0)
+        val m0 = if (bestPhi + rawM0 * tauBeat < kOnset - 0.38 * tauBeat) {
+            rawM0 + 1
+        } else {
+            rawM0
+        }
+
+        // 4. Evaluate candidate downbeat phases b in 0 until beatsPerBar (Beat 1 + Backbeat Beat 3 + entrance prior)
+        fun beatPulseStrength(beatIdx: Int): Double {
+            val center = (bestPhi + beatIdx * tauBeat).roundToInt()
+            if (center !in 0 until n) return 0.0
+            val lo = (center - 2).coerceAtLeast(0)
+            val hi = (center + 2).coerceAtMost(n - 1)
+            var maxO = 0f
+            var maxE = 0f
+            for (i in lo..hi) {
+                if (smoothed[i] > maxO) maxO = smoothed[i]
+                if (energyFrames[i] > maxE) maxE = energyFrames[i]
+            }
+            val normO = if (peakOnset > 1e-6f) (maxO / peakOnset).toDouble() else 0.0
+            val normE = if (peakEnergy > 1e-6f) (maxE / peakEnergy).toDouble() else 0.0
+            return 0.72 * normO + 0.28 * normE
+        }
+
+        val totalBeats = floor((n - 1 - bestPhi) / tauBeat).toInt() + 1
+        var bestPhaseB = 0
+        var bestDownbeatScore = Double.NEGATIVE_INFINITY
+
+        for (b in 0 until safeBeatsPerBar) {
+            val startBeat = m0 + b
+            if (startBeat >= totalBeats) continue
+            var barSum = 0.0
+            var barCount = 0
+            var bar = 0
+            while (startBeat + bar * safeBeatsPerBar < totalBeats) {
+                val base = startBeat + bar * safeBeatsPerBar
+                val s1 = beatPulseStrength(base)
+                val s3 = if (safeBeatsPerBar >= 4 && base + 2 < totalBeats) beatPulseStrength(base + 2) else 0.0
+                val s2 = if (base + 1 < totalBeats) beatPulseStrength(base + 1) else 0.0
+                val s4 = if (safeBeatsPerBar >= 4 && base + 3 < totalBeats) beatPulseStrength(base + 3) else 0.0
+                barSum += 1.35 * s1 + 0.75 * s3 - 0.25 * (s2 + s4)
+                barCount++
+                bar++
+            }
+            val avgBar = if (barCount > 0) barSum / barCount else 0.0
+            // Strong prior for b == 0 (first musical entrance beat) unless a clear anacrusis precedes a much stronger Beat 1
+            val entrancePrior = if (b == 0) 1.18 else 1.0
+            val totalScore = avgBar * entrancePrior
+            if (totalScore > bestDownbeatScore) {
+                bestDownbeatScore = totalScore
+                bestPhaseB = b
+            }
+        }
+
+        val firstBeatHop = (bestPhi + m0 * tauBeat).coerceAtLeast(0.0)
+        val firstDownbeatHop = (bestPhi + (m0 + bestPhaseB) * tauBeat).coerceAtLeast(0.0)
+
+        val firstBeatMs = ((firstBeatHop * 1000.0) / envelopeRateHz).roundToLong().coerceAtLeast(0L)
+        val rawDownbeatMs = ((firstDownbeatHop * 1000.0) / envelopeRateHz).roundToLong().coerceAtLeast(0L)
+        val barDurationMs = (60_000.0 / bpm) * safeBeatsPerBar
+        val foldedDownbeatMs = if (barDurationMs > 1.0 && rawDownbeatMs >= barDurationMs) {
+            (rawDownbeatMs - floor(rawDownbeatMs / barDurationMs) * barDurationMs)
+                .roundToLong()
+                .coerceAtLeast(0L)
+        } else {
+            rawDownbeatMs
+        }
+
+        return BeatGrid(
+            bpm = bpm,
+            firstBeatMs = firstBeatMs,
+            firstDownbeatMs = foldedDownbeatMs,
+            beatsPerBar = safeBeatsPerBar,
+        )
+    }
 }
 
 object BpmDetector {
@@ -365,6 +533,27 @@ object BpmDetector {
         val accumulator = OnsetFluxAccumulator(sampleRate = sampleRate, channelCount = channelCount)
         accumulator.feedInterleavedPcm(pcmInterleaved, frameCount = safeFrames, sampleOffset = 0)
         return accumulator.computeBpm()
+    }
+
+    /**
+     * Pure-JVM helper for detecting full [BeatGrid] (`bpm`, `firstBeatMs`, `firstDownbeatMs`)
+     * directly from interleaved 16-bit PCM frames.
+     */
+    fun detectBeatGridFromPcm(
+        pcmInterleaved: ShortArray,
+        frameCount: Int = pcmInterleaved.size / 1,
+        sampleRate: Int,
+        channelCount: Int,
+        beatsPerBar: Int = 4,
+    ): BeatGrid? {
+        if (sampleRate <= 0 || channelCount <= 0 || frameCount <= 0 || pcmInterleaved.isEmpty()) {
+            return null
+        }
+        val safeFrames = minOf(frameCount, pcmInterleaved.size / channelCount)
+        if (safeFrames <= 0) return null
+        val accumulator = OnsetFluxAccumulator(sampleRate = sampleRate, channelCount = channelCount)
+        accumulator.feedInterleavedPcm(pcmInterleaved, frameCount = safeFrames, sampleOffset = 0)
+        return accumulator.computeBeatGrid(beatsPerBar = beatsPerBar)
     }
 
     /**

@@ -1,5 +1,9 @@
 package com.miniplayer.app.core.model
 
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -210,6 +214,247 @@ enum class CountInMode {
     SEC_1,
     SEC_2,
     BEAT_4,
+    ;
+
+    fun normalizeBeatOnly(): CountInMode = if (this == OFF) OFF else BEAT_4
+
+    companion object {
+        fun fromStoredValue(raw: String?): CountInMode = when (raw?.trim()) {
+            "SEC_1", "SEC_2", "BEAT_4" -> BEAT_4
+            else -> OFF
+        }
+    }
+}
+
+enum class StemType(val label: String) {
+    VOCALS("人声"),
+    GUITAR("吉他"),
+    BASS("Bass"),
+    DRUMS("鼓"),
+    OTHER("其他"),
+}
+
+data class StemMixConfig(
+    val vocals: Float = 1.0f,
+    val guitar: Float = 1.0f,
+    val bass: Float = 1.0f,
+    val drums: Float = 1.0f,
+    val other: Float = 1.0f,
+    val mutedStems: Set<StemType> = emptySet(),
+    val soloStem: StemType? = null,
+) {
+    fun sliderGain(stem: StemType): Float = when (stem) {
+        StemType.VOCALS -> vocals
+        StemType.GUITAR -> guitar
+        StemType.BASS -> bass
+        StemType.DRUMS -> drums
+        StemType.OTHER -> other
+    }.coerceIn(0f, 1.5f)
+
+    fun withSliderGain(stem: StemType, gain: Float): StemMixConfig {
+        val clamped = gain.coerceIn(0f, 1.5f)
+        return when (stem) {
+            StemType.VOCALS -> copy(vocals = clamped)
+            StemType.GUITAR -> copy(guitar = clamped)
+            StemType.BASS -> copy(bass = clamped)
+            StemType.DRUMS -> copy(drums = clamped)
+            StemType.OTHER -> copy(other = clamped)
+        }
+    }
+
+    fun effectiveGain(stem: StemType): Float {
+        if (soloStem != null) {
+            return if (stem == soloStem) sliderGain(stem) else 0f
+        }
+        if (stem in mutedStems) return 0f
+        return sliderGain(stem)
+    }
+
+    val isUnity: Boolean
+        get() = StemType.entries.all { abs(effectiveGain(it) - 1.0f) < 1e-4f }
+
+    fun sanitized(): StemMixConfig = copy(
+        vocals = vocals.coerceIn(0f, 1.5f),
+        guitar = guitar.coerceIn(0f, 1.5f),
+        bass = bass.coerceIn(0f, 1.5f),
+        drums = drums.coerceIn(0f, 1.5f),
+        other = other.coerceIn(0f, 1.5f),
+    )
+
+    fun toStorageString(): String {
+        val clean = sanitized()
+        if (clean == StemMixConfig()) return ""
+        val gains = listOf(clean.vocals, clean.guitar, clean.bass, clean.drums, clean.other)
+            .joinToString(",") { String.format(Locale.US, "%.4f", it) }
+        val muted = clean.mutedStems.sortedBy { it.ordinal }.joinToString(",") { it.name }
+        val solo = clean.soloStem?.name.orEmpty()
+        return "$gains|$muted|$solo"
+    }
+
+    companion object {
+        fun fromStorageString(raw: String?): StemMixConfig {
+            val trimmed = raw?.trim().orEmpty()
+            if (trimmed.isEmpty()) return StemMixConfig()
+            val sections = trimmed.split('|')
+            val gainParts = sections.getOrNull(0)?.split(',').orEmpty()
+            fun parseGain(index: Int): Float =
+                gainParts.getOrNull(index)?.toFloatOrNull()?.coerceIn(0f, 1.5f) ?: 1.0f
+            val muted = sections.getOrNull(1).orEmpty()
+                .split(',')
+                .mapNotNull { token ->
+                    token.trim().takeIf { it.isNotEmpty() }?.let {
+                        runCatching { StemType.valueOf(it) }.getOrNull()
+                    }
+                }
+                .toSet()
+            val solo = sections.getOrNull(2)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                runCatching { StemType.valueOf(it) }.getOrNull()
+            }
+            return StemMixConfig(
+                vocals = parseGain(0),
+                guitar = parseGain(1),
+                bass = parseGain(2),
+                drums = parseGain(3),
+                other = parseGain(4),
+                mutedStems = muted,
+                soloStem = solo,
+            )
+        }
+    }
+}
+
+data class BeatGrid(
+    val bpm: Int,
+    val firstBeatMs: Long,
+    val firstDownbeatMs: Long,
+    val beatsPerBar: Int = 4,
+) {
+    val beatDurationMs: Double
+        get() = 60_000.0 / PracticeMath.clampBpm(bpm)
+
+    val barDurationMs: Double
+        get() = beatDurationMs * beatsPerBar.coerceIn(2, 8)
+
+    fun barBoundaryMs(barIndex: Int): Long =
+        (firstDownbeatMs + barIndex * barDurationMs).roundToLong().coerceAtLeast(0L)
+
+    fun generateBarBoundaries(durationMs: Long): List<Long> {
+        if (durationMs <= 0L) return emptyList()
+        val barDur = barDurationMs
+        if (barDur <= 1.0) return emptyList()
+        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        val startIndex = -floor(t0 / barDur).toInt()
+        val result = ArrayList<Long>(((durationMs / barDur).toInt() + 3).coerceAtMost(8192))
+        var k = startIndex
+        while (true) {
+            val t = (t0 + k * barDur).roundToLong()
+            if (t > durationMs) break
+            if (t >= 0L && (result.isEmpty() || result.last() != t)) {
+                result.add(t)
+            }
+            k++
+            if (result.size >= 16_384) break
+        }
+        return result
+    }
+
+    fun snapToNearestBar(positionMs: Long, durationMs: Long): Long {
+        val maxDur = if (durationMs > 0L) durationMs else Long.MAX_VALUE
+        val clamped = positionMs.coerceIn(0L, maxDur)
+        val barDur = barDurationMs
+        if (barDur <= 1.0) return clamped
+        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        val minIdx = ceil((-t0 - 0.5) / barDur).toLong()
+        val maxIdx = if (durationMs > 0L) {
+            floor((durationMs - t0 + 0.5) / barDur).toLong()
+        } else {
+            Long.MAX_VALUE / 4L
+        }
+        val rawIdx = ((clamped - t0) / barDur).roundToLong()
+        return if (minIdx <= maxIdx) {
+            (t0 + rawIdx.coerceIn(minIdx, maxIdx) * barDur).roundToLong().coerceIn(0L, maxDur)
+        } else {
+            clamped
+        }
+    }
+
+    fun snapPointA(positionMs: Long, durationMs: Long): Long {
+        val maxDur = if (durationMs > 0L) durationMs else Long.MAX_VALUE
+        val clamped = positionMs.coerceIn(0L, maxDur)
+        val barDur = barDurationMs
+        if (barDur <= 1.0) return clamped
+        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        val rel = (clamped - t0) / barDur
+        val barIdx = floor(rel).toLong()
+        val phaseInBar = rel - barIdx
+        val chosenIdx = if (phaseInBar < 0.75) barIdx else (barIdx + 1L)
+        return (t0 + chosenIdx * barDur).roundToLong().coerceIn(0L, maxDur)
+    }
+
+    fun snapPointB(aMs: Long, positionMs: Long, durationMs: Long): Long {
+        val maxDur = if (durationMs > 0L) durationMs else Long.MAX_VALUE
+        val barDur = barDurationMs
+        val minSpanMs = maxOf(PracticeMath.MIN_LOOP_SPAN_MS, barDur.roundToLong())
+        val minB = (aMs.coerceAtLeast(0L) + minSpanMs).coerceAtMost(maxDur)
+        if (barDur <= 1.0) return maxOf(positionMs, minB).coerceIn(0L, maxDur)
+        val targetPos = maxOf(positionMs, minB).coerceIn(0L, maxDur)
+        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        val nearestIdx = ((targetPos - t0) / barDur).roundToLong()
+        val minIdx = ceil((minB - t0 - 0.5) / barDur).toLong()
+        val chosenIdx = maxOf(nearestIdx, minIdx)
+        return (t0 + chosenIdx * barDur).roundToLong().coerceIn(minB, maxDur)
+    }
+
+    fun snapDraggedLoopPoints(
+        aMs: Long,
+        bMs: Long,
+        draggingHandle: String?,
+        durationMs: Long,
+    ): Pair<Long, Long> {
+        val maxDur = if (durationMs > 0L) durationMs else Long.MAX_VALUE
+        val barDur = barDurationMs
+        val minSpanMs = maxOf(PracticeMath.MIN_LOOP_SPAN_MS, barDur.roundToLong())
+        if (barDur <= 1.0) {
+            return PracticeMath.normalizeLoopPoints(aMs, bMs, durationMs)
+                ?: (0L to minOf(PracticeMath.MIN_LOOP_SPAN_MS, maxDur))
+        }
+        val t0 = firstDownbeatMs.coerceAtLeast(0L).toDouble()
+        return when (draggingHandle) {
+            "A" -> {
+                val fixedB = bMs.coerceIn(minOf(minSpanMs, maxDur), maxDur)
+                val maxA = (fixedB - minSpanMs).coerceAtLeast(0L)
+                val clampedA = aMs.coerceIn(0L, maxA)
+                val minIdx = ceil((-t0 - 0.5) / barDur).toLong()
+                val maxIdx = floor((maxA - t0 + 0.5) / barDur).toLong()
+                val rawIdx = ((clampedA - t0) / barDur).roundToLong()
+                val snappedA = if (minIdx <= maxIdx) {
+                    (t0 + rawIdx.coerceIn(minIdx, maxIdx) * barDur).roundToLong().coerceIn(0L, maxA)
+                } else {
+                    clampedA
+                }
+                snappedA to fixedB
+            }
+            "B" -> {
+                val maxAllowedA = (maxDur - minSpanMs).coerceAtLeast(0L)
+                val fixedA = aMs.coerceIn(0L, maxAllowedA)
+                val snappedB = snapPointB(fixedA, bMs, durationMs)
+                fixedA to snappedB
+            }
+            else -> {
+                val lo = minOf(aMs, bMs)
+                val hi = maxOf(aMs, bMs)
+                val maxAllowedA = (maxDur - minSpanMs).coerceAtLeast(0L)
+                val snappedA = snapToNearestBar(lo, durationMs).coerceIn(0L, maxAllowedA)
+                val snappedB = snapPointB(snappedA, hi, durationMs)
+                snappedA to snappedB
+            }
+        }
+    }
+
+    fun countBarsBetween(aMs: Long, bMs: Long): Int {
+        val span = (bMs - aMs).coerceAtLeast(0L)
+        return (span / barDurationMs).roundToInt().coerceAtLeast(1)
+    }
 }
 
 enum class VideoSeekMode {
@@ -228,12 +473,16 @@ data class PracticeState(
     val practiceSpeed: Float = 1.0f,
     val pitchSemitones: Int = 0,
     val pitchCents: Int = 0,
+    val preserveFormants: Boolean = true,
     val bpm: Int = 120,
     val countInMode: CountInMode = CountInMode.OFF,
     val preRollEnabled: Boolean = false,
     val loopEnabled: Boolean = false,
     val activeAMs: Long? = null,
     val activeBMs: Long? = null,
+    val barSnapEnabled: Boolean = true,
+    val firstDownbeatMs: Long = 0L,
+    val stemMix: StemMixConfig = StemMixConfig(),
     val videoMirror: Boolean = false,
     val videoZoom: Float = 1.0f,
     val hudDockTop: Boolean = false,
@@ -243,8 +492,16 @@ data class PracticeState(
         get() = practiceSpeed != 1.0f ||
             pitchSemitones != 0 ||
             pitchCents != 0 ||
+            !stemMix.isUnity ||
             (activeAMs != null && activeBMs != null) ||
             videoMirror
+
+    fun beatGrid(beatsPerBar: Int = 4): BeatGrid = BeatGrid(
+        bpm = bpm,
+        firstBeatMs = firstDownbeatMs.coerceAtLeast(0L),
+        firstDownbeatMs = firstDownbeatMs.coerceAtLeast(0L),
+        beatsPerBar = beatsPerBar,
+    )
 }
 
 data class PracticeBookmark(

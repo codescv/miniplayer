@@ -18,6 +18,7 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.miniplayer.app.MainActivity
+import com.miniplayer.app.core.model.StemMixConfig
 
 /**
  * Process-scoped holder ensuring a single main-thread [ExoPlayer] instance is shared cleanly
@@ -35,6 +36,18 @@ internal object SharedExoPlayerHolder {
 
     fun updateSpeedAndPitch(speed: Float, pitch: Float) {
         realTimeSonicProcessor.setTargetSpeedAndPitch(speed, pitch)
+    }
+
+    fun updateDspParameters(preserveFormants: Boolean, stemMix: StemMixConfig) {
+        realTimeSonicProcessor.setPreserveFormants(preserveFormants)
+        realTimeSonicProcessor.setStemMix(stemMix)
+    }
+
+    fun updateStemMaskContext(
+        maskGrid: StemTrackMaskGrid?,
+        positionMsSupplier: (() -> Long)? = null,
+    ) {
+        realTimeSonicProcessor.setStemMaskContext(maskGrid, positionMsSupplier)
     }
 
     fun getOrCreate(context: Context): ExoPlayer {

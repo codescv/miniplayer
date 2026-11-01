@@ -1,15 +1,40 @@
-# MiniPlayer v1.0.8 — Verification, Security Audit & Release Report
+# MiniPlayer v1.0.9 — Verification, Security Audit & Release Report
 
-**Version:** `1.0.8` (`versionCode = 10008`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
+**Version:** `1.0.9` (`versionCode = 10009`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch Verified (`v1.0.8`):** `wt/tester-10` (stacked on `wt/coder-10` @ `f4d2d7e` → `v1.0.7` @ `a926ce3`; `71/71` unit tests, `0` lint errors, release APK signed offline)  
-**Release APK (`v1.0.8`):** `MiniPlayer-v1.0.8.apk` — **`14,274,675` bytes**, SHA-256 **`bcbb1dba7abbb5dbe6447d3b1122a0cb72ea238e8bcf0951a5d2cdcd39c762e8`**  
-**Previous Release APK (`v1.0.7`):** `MiniPlayer-v1.0.7.apk` — `14,274,563` bytes, SHA-256 `5bd30fbac643f5741ac920380e2a6b0f9bf025902f92fa7fa6d01a594505d4f2`  
-**Previous Release APK (`v1.0.6`):** `MiniPlayer-v1.0.6.apk` — `14,295,186` bytes, SHA-256 `5a30f654c1767f66880ccd854d6d32f8e6b65812002905b08dbcf569fe390e52`
+**Branch Verified (`v1.0.9`):** `wt/coder-11` (stacked on `v1.0.8` @ `496f20d`; **`80/80` unit & cross-module integration tests across `14` suites**, `0` failures, `0` errors)  
+**Pretrained AI Stem Model Asset (`v1.0.9`):** `miniplayer-stem-net-v1.bin` — **`65,536` bytes (`64 KB`)**, SHA-256 **`ad8c3019c7161093fab1fb72d66dc999460392f9ed1cec06f71b912d747d930a`** (bundled at `app/src/main/assets/miniplayer-stem-net-v1.bin` and staged at root `miniplayer-stem-net-v1.bin` for GitHub Release `v1.0.9`)  
+**Previous Release APK (`v1.0.8`):** `MiniPlayer-v1.0.8.apk` — `14,274,675` bytes, SHA-256 `bcbb1dba7abbb5dbe6447d3b1122a0cb72ea238e8bcf0951a5d2cdcd39c762e8`  
+**Previous Release APK (`v1.0.7`):** `MiniPlayer-v1.0.7.apk` — `14,274,563` bytes, SHA-256 `5bd30fbac643f5741ac920380e2a6b0f9bf025902f92fa7fa6d01a594505d4f2`
 
 ---
 
-## 0. `v1.0.8` Build, Lint, Release-Signing & Launcher-Icon Resource Verification
+## 0. `v1.0.9` Build, DSP/UI Unit Tests & Asset Verification
+
+Run on `wt/coder-11` (stacked on `496f20d`) with `ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`, Build-Tools `35.0.0`, **100% offline**.
+
+| Check | Details / Result | Status |
+|---|---|---|
+| **Offline Verification Command (`v1.0.9`)** | `./gradlew --offline testDebugUnitTest assembleDebug lintDebug` — `BUILD SUCCESSFUL` | **PASS** |
+| **Unit & Cross-Module Integration Tests** | `app/build/test-results/testDebugUnitTest/*.xml`: **`80/80`** tests across **`14`** suites (`+9` new `v1.0.9` tests), `0` failures, `0` errors, `0` skipped | **PASS** |
+| **Android Lint (`lintDebug`)** | **0** errors, `37` warnings (`app/build/reports/lint-results-debug.{html,xml}`) | **PASS** |
+| **Debug APK (`v1.0.9`)** | `app/build/outputs/apk/debug/app-debug.apk`; `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10009' versionName='1.0.9-DEBUG'`, `compileSdkVersion='35'`, `targetSdkVersion:'35'`, `application-label:'Play'` | **PASS** |
+| **Bundled `miniplayer-stem-net-v1.bin` Asset** | `unzip -l app/build/outputs/apk/debug/app-debug.apk` confirms `assets/miniplayer-stem-net-v1.bin` (`65,536` bytes, SHA-256 `ad8c3019c7161093fab1fb72d66dc999460392f9ed1cec06f71b912d747d930a`) byte-identical to root `miniplayer-stem-net-v1.bin` | **PASS** |
+| **Terminology & Emoji Hygiene** | **0** `练琴` strings in `app/src/main/**`; **0** new emojis in Compose UI (`PracticeDeck.kt`, `NowPlayingSheet.kt`, `VideoPracticeSurface.kt`) or `LanStudioWebApp.kt` | **PASS** |
+
+### `v1.0.9` Requirement Verification Matrix
+
+| # | Requirement | Verified Implementation & Files | Status |
+|---:|---|---|---|
+| **1** | **Formant-Preserving Pitch Shifting (`保持人声音色 / 共振峰保护`, `preserveFormants: Boolean = true`)** | `FormantStemDspProcessor.kt` + `RealTimeSonicAudioProcessor.kt`: real-time Zero-Phase Overlap-Add STFT spectral-envelope formant corrector (`N = 1024`, `hop = 256`, periodic Hann `75%` overlap, COLA `1/1.5`, prefix-sum moving average `W = max(6, round(320 Hz * N / fs))`, inverse pitch lookup `E_orig[k] = E_shifted[clamp(k * p, 0, N/2)]`, raised-cosine `130..6200 Hz` vocal band weight, `[-2.2, +2.2]` log-gain clamp, `0.65/0.35` temporal smoothing, RMS frame energy normalization). Persisted in SQLite `DATABASE_VERSION = 3` (`preserve_formants`) and exposed via **`保持人声音色 (共振峰保护)`** switch in `PitchShiftInlinePanel` (`PracticeDeck.kt`). Verified in `FormantStemDspProcessorTest` (`-4 st` vocal formant centroid preserved vs uncompensated drop, and `<= 2 LSB` WOLA identity + zero-latency bypass at `0 st`). | **PASS** |
+| **2** | **On-Device AI / Hybrid 5-Stem Separation & Independent Volume Mixer (`人声 / 吉他 / Bass / 鼓 / 其他`)** | `Models.kt` (`StemType`, `StemMixConfig` with `0%–150%`, `M` Mute, `S` Solo, `effectiveGain`, `isUnity`), `StemSeparationEngine.kt` (`StemModelManager` + `64 KB` quantized `miniplayer-stem-net-v1.bin` downloadable from GitHub Releases `v1.0.9` with bundled/offline fallback + `25 Hz` 16-Bark-band `.stm` GZIP cache in `cacheDir/stems/`), `FormantStemDspProcessor.kt` (5-stem soft Wiener masks $\sum_s M_s[k] \equiv 1.0$ + separate Mid/Side gains `G_M[k]` & `G_S[k]`), and `PracticeDeck.kt` (`Icons.Outlined.Tune` button in Row 2 + `StemMixerInlinePanel`). Verified in `FormantStemDspProcessorTest` & `PracticeLoopEngineTest`. | **PASS** |
+| **3** | **Automatic Bar / Downbeat Detection & Bar-Snap A-B Loop (`识别小节起止位置 + 自动按小节对齐`)** | `Models.kt` (`BeatGrid` snapping & bar counting), `BpmDetector.kt` (`OnsetFluxAccumulator.computeBeatGrid`), `WaveformExtractor.kt` (`loadOrDetectBeatGrid` + backward-compatible `bpm,firstBeatMs,firstDownbeatMs,beatsPerBar` cache), `PracticeLoopEngine.kt` (`markPointA`, `markPointBAndLoop`, `setLoopPointsFromDrag`, loop-mode `onUserManualSeek`, `toggleBarSnap`, `alignDownbeatToCurrentPosition`), and `PracticeDeck.kt` (`WaveformLoopRuler` vertical bar/4-bar tick lines + `A mm:ss.d ━━● N小节 ●━━ B mm:ss.d` header + `BpmQuickBar` `小节对齐` & `对齐第1拍`). Verified in `BpmDetectorTest` & `PracticeLoopEngineTest`. | **PASS** |
+| **4** | **Beat-Only Count-In (`关 ↔ 4拍` 1-tap toggle)** | `PracticeLoopEngine.cycleCountInMode()` toggles directly `OFF <-> BEAT_4`; `MiniPlayerDatabase.readPracticeStateCursor` & `CountInMode.fromStoredValue` normalize legacy `"SEC_1"` / `"SEC_2"` to `BEAT_4`; `CountInMetronome.start()` runs `runFourBeatCountdown` for any non-`OFF` mode; `PracticeDeck.kt` & `VideoPracticeSurface.kt` show `"4拍"` badge with `"预备拍：4拍（已开启）"` / `"预备拍：已关闭"` and `val bpmBarVisible = showBpmDrawer`. Verified in `PracticeLoopEngineTest` & `DatabaseAndScannerTest`. | **PASS** |
+| **5** | **SQLite DB `v3` Persistence & Version Bump (`10009` / `1.0.9`)** | `MiniPlayerDatabase.kt` bumped to `DATABASE_VERSION = 3` (`preserve_formants`, `bar_snap_enabled`, `first_downbeat_ms`, `stem_mix` DDL + idempotent `ALTER TABLE` in `onUpgrade`/`onOpen`); `app/build.gradle.kts` (`versionCode = 10009`, `versionName = "1.0.9"`). Verified against `/usr/bin/sqlite3 :memory:` in `DatabaseAndScannerTest`. | **PASS** |
+
+---
+
+## 0b. `v1.0.8` Build, Lint, Release-Signing & Launcher-Icon Resource Verification (previous)
 
 Run on `wt/tester-10` (`wt/coder-10` @ `f4d2d7e`) with `ANDROID_HOME=~/Android/Sdk`, `JAVA_HOME=~/.jdks/jdk21`, Build-Tools `35.0.0`, **100% offline**.
 
@@ -83,21 +108,22 @@ All Android builds and pure-JVM unit/integration tests succeeded **100% offline*
 
 ### 3.1 Offline JVM Test Summary (`./gradlew --offline testDebugUnitTest`)
 
-**Summary:** `13` test suites, **`71/71` tests passed (`0` failures, `0` errors, `0` skipped)**.
+**Summary:** `14` test suites, **`80/80` tests passed (`0` failures, `0` errors, `0` skipped)**.
 
 | Test Suite | Tests | Passed | Coverage Scope |
 |---|---:|---:|---|
-| `core.db.DatabaseAndScannerTest` | 9 | 9 | Subfolder rename dedup (`rock` → `Rock` with identical and changed SAF document URIs plus `folder_rules` migration; `rock` → `metal` and SAF root case-rename), 10-table SQLite DDL (`DATABASE_VERSION = 2`) & FK cascades, 5-level metadata priority chain + clear sentinels, multi-artist album grouping, SAF ancestor/child overlap dedup & merge, nearest-ancestor `folder_rules` inheritance, Practice Folder (`isInPracticeFolder`) & Exclude-from-Auto-Grouping (`isExcludedFromAutoGrouping`) isolation from `albums`/`artists`/`videoItems` with child override, `OfflineVolumeGuard`, `<10ms` incremental skip, unconditional `.nomedia` scanning (never skipping `.nomedia` folders) & sidecar `.lrc`/`cover.jpg`, moved-file fingerprint migration, and concurrent `fileWriteMutex` serialization |
+| `core.db.DatabaseAndScannerTest` | 10 | 10 | SQLite `DATABASE_VERSION = 3` (`preserve_formants`, `bar_snap_enabled`, `first_downbeat_ms`, `stem_mix` DDL + `MediaRepository` round-trip + legacy `SEC_1`/`SEC_2` → `BEAT_4` normalization), subfolder rename dedup (`rock` → `Rock` / `metal`), 10-table FK cascades, 5-level metadata priority chain, multi-artist album grouping, SAF overlap dedup & merge, nearest-ancestor `folder_rules` inheritance, Practice Folder & Exclude-from-Auto-Grouping isolation, `OfflineVolumeGuard`, `<10ms` incremental skip, unconditional `.nomedia` scanning, and `fileWriteMutex` serialization |
 | `core.metadata.AudioTagCodecTest` | 5 | 5 | Crash-safe read/write & unknown-frame preservation across MP3 ID3v2.3/v2.4 + APIC, FLAC Vorbis Comments + PICTURE, Ogg Vorbis / Opus (`granulePosition = 0L` & valid Ogg CRC-32), MP4/M4A `ilst` (`stco`/`co64` chunk offset recalculation + 64-bit `co64` overflow upgrade), and zero-staging `PosixFdByteSource` |
 | `core.metadata.MetadataAndLanTest` | 2 | 2 | `DefaultMetadataEngine.saveMetadata` persists staged candidate `coverRemoteUrl` cover bytes, `syncedLrc`/`plainLyrics` lyrics cache and tags on save; LAN `GET /api/metadata/candidates` and `"candidatesOnly": true` return candidates without auto-saving until `POST /api/metadata/update` |
 | `core.metadata.MetadataParsingAndM3uTest` | 5 | 5 | `SmartFilenameParser`, `ArtistSplitter` (`AC/DC` allowlist), `.lrc` parser (UTF-8/GB18030/UTF-16), and `.m3u8` `#EXT-X-MINIPLAYER-PRACTICE:1` 3-tier import/export |
 | `core.metadata.OnlineMetadataCompleterTest` | 4 | 4 | MusicBrainz `1 req/s` rate limiter, Cover Art Archive `3.0s` deadline racing to iTunes `1000x1000bb` CDN fallback + trusted `*.archive.org` HTTPS redirect upgrade, `(Backing Track)` suffix preservation, and batch `>= 85%` confidence threshold |
 | `core.update.AppUpdaterAndPracticeMathTest` | 5 | 5 | `SemanticVersion` & `Sha256SumsParser`, GitHub `/releases/latest` → `/releases` fallback, `≤ 5` HTTPS redirect hop cap, 4-stage `ApkValidator`, and `PracticeMath` |
-| `player.PracticeLoopEngineTest` | 11 | 11 | A-B loop state machine (`NONE` → `A_SET` → `ACTIVE_LOOP` → `SUSPENDED`), `exoPlayer.repeatMode` sync, single-tap `⏮` restart-from-`A` vs. `400ms` double-tap guard, `applyAutoDetectedBpm`, `Count-In` frame pre-priming & pause cancellation, `>80ms` adaptive video keyframe fallback, PCM RMS waveform, and `ArtworkLoader` |
+| `player.FormantStemDspProcessorTest` | 4 | 4 | Zero-latency identity bypass + WOLA COLA reconstruction (`≤ 2 LSB`, exact 1:1 drain frame count), `-4 st` formant-preserving STFT spectral envelope restoration vs. uncompensated formant drop, 5-stem soft-mask partition-of-unity ($\sum_s M_s \equiv 1.0$) + stereo Mid/Side vocal vs. guitar mute separation, and `64 KB` `StemNetModel` (`miniplayer-stem-net-v1.bin`) + `25 Hz` `.stm` GZIP cache round-trip |
+| `player.PracticeLoopEngineTest` | 13 | 13 | Bar-snap A-B marking/dragging/seek & `alignDownbeatToCurrentPosition`, direct `OFF ↔ BEAT_4` Count-In 1-tap toggle, `preserveFormants` & `StemMixConfig` propagation to `LoopPlayerPort`, A-B loop state machine (`NONE` → `A_SET` → `ACTIVE_LOOP` → `SUSPENDED`), `exoPlayer.repeatMode` sync, single-tap `⏮` restart-from-`A` vs. `400ms` double-tap guard, `applyAutoDetectedBpm`, `Count-In` frame pre-priming, `>80ms` adaptive video keyframe fallback, PCM RMS waveform, and `ArtworkLoader` |
 | `player.RealTimeSonicAudioProcessorTest` | 4 | 4 | Always-active `isActive() == true` across identity & non-identity states, 24 rapid multi-click pitch shifts (`-6st..+6st`, `±5c`) draining `SonicAudioProcessor` buffers with zero dropped samples, `Sonic -> Identity -> Sonic` transitions, and idempotent `queueEndOfStream` |
 | `player.PlaybackParametersDecisionTest` | 3 | 3 | Speed/pitch clamping (`0.25f..2.0f`, `0.5f..2.0f`), ExoPlayer speed-only propagation (`pitch = 1.0f` invariant), and zero-seek pitch transitions |
-| `player.BpmDetectorTest` | 5 | 5 | Synthetic drum/pulse onset-autocorrelation accuracy across `80`, `100`, `120`, `140`, and `160` BPM, stereo interleaved PCM handling, silence/short-clip rejection, and octave ambiguity resolution |
+| `player.BpmDetectorTest` | 7 | 7 | `OnsetFluxAccumulator.computeBeatGrid` pickup-silence downbeat & `4/4` bar phase detection, `BeatGrid` bar snapping (`snapPointA`, `snapPointB`, `snapDraggedLoopPoints`, `countBarsBetween`) & backward-compatible cache parser, plus onset-autocorrelation accuracy across `80–160` BPM, stereo PCM, silence rejection, and octave ambiguity resolution |
 | `lan.LanStudioServerTest` | 9 | 9 | Emoji-free SPA serving, library filters (`isInPracticeFolder` & `isExcludedFromAutoGrouping` isolation), HTTP `200` + `206 Partial Content` byte-range streaming, streaming upload + `mkdir` + `folder-rule` (`isPractice` & `excludeFromGrouping`), metadata persistence, `.m3u8` round-trip, bookmark CRUD, and RFC 1918/loopback + `Host` + `Origin` + PIN security guards |
 | `lan.QrCodeGeneratorTest` | 3 | 3 | Pure-Kotlin ISO/IEC 18004 QR Version 1–10 capacity compliance, GF(256) Reed-Solomon syndrome verification, and oversized payload rejection |
 | `integration.MiniPlayerEndToEndIntegrationTest` | 6 | 6 | Full cross-module E2E verification across `core`, `player`, and `lan` (including folder `"不自动归类"` inheritance/casual-playback invariants, recursive folder-to-playlist natural sort collection, and unconditional `.nomedia` scanning) |
-| **Total** | **71** | **71** | **100% pass (`0` failures, `0` errors)** |
+| **Total** | **80** | **80** | **100% pass (`0` failures, `0` errors)** |

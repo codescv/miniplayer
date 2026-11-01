@@ -19,6 +19,7 @@ local.properties
 *.jks
 *.keystore
 SHA256SUMS.txt
+/miniplayer-stem-net-v1.bin
 captures/
 
 # Git Worktrees

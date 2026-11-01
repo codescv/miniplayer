@@ -1,6 +1,7 @@
 package com.miniplayer.app.player
 
 import android.media.AudioFormat
+import com.miniplayer.app.core.model.BeatGrid
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -150,6 +151,95 @@ class BpmDetectorTest {
         flacOut.write(blockBytes.size and 0xFF)
         flacOut.write(blockBytes)
         assertEquals(108, BpmDetector.extractEmbeddedBpmFromHeader(flacOut.toByteArray()))
+    }
+
+    @Test
+    fun computeBeatGrid_detectsBpmFirstBeatAndDownbeatWithPickupSilence() {
+        val sampleRate = 44_100
+        val bpm = 120 // beat = 500ms, 4/4 bar = 2000ms
+        val pickupSilenceMs = 820L
+        val durationSec = 14.0
+        val totalFrames = (durationSec * sampleRate).toInt()
+        val pcm = ShortArray(totalFrames)
+        val beatPeriodSec = 60.0 / bpm
+        val pickupSec = pickupSilenceMs / 1000.0
+        val totalBeats = ((durationSec - pickupSec) / beatPeriodSec).toInt()
+
+        for (beat in 0 until totalBeats) {
+            val beatInBar = beat % 4
+            val startFrame = ((pickupSec + beat * beatPeriodSec) * sampleRate).toInt()
+            val freq = when (beatInBar) {
+                0 -> 88.0   // Strong Beat 1 downbeat kick
+                2 -> 215.0  // Beat 3 snare backbeat
+                else -> 160.0
+            }
+            val amp = when (beatInBar) {
+                0 -> 28_000.0
+                2 -> 22_000.0
+                else -> 13_500.0
+            }
+            val hitLen = (0.045 * sampleRate).toInt()
+            for (i in 0 until hitLen) {
+                val f = startFrame + i
+                if (f >= totalFrames) break
+                val env = exp(-i.toDouble() / (0.011 * sampleRate))
+                pcm[f] = (sin(2.0 * PI * freq * i / sampleRate) * amp * env)
+                    .toInt().coerceIn(-32767, 32767).toShort()
+            }
+        }
+
+        val grid = BpmDetector.detectBeatGridFromPcm(
+            pcmInterleaved = pcm,
+            frameCount = totalFrames,
+            sampleRate = sampleRate,
+            channelCount = 1,
+        )
+        assertNotNull("Expected valid BeatGrid for 120 BPM 4/4 groove", grid)
+        assertTrue("Expected ~120 BPM (±1), got ${grid!!.bpm}", abs(grid.bpm - 120) <= 1)
+        assertEquals(4, grid.beatsPerBar)
+        // 820ms is inside [0, 2000ms), so folded firstDownbeatMs should align near 820ms (±75ms)
+        assertTrue(
+            "Expected firstDownbeatMs near 820ms (±75ms), got ${grid.firstDownbeatMs}ms",
+            abs(grid.firstDownbeatMs - pickupSilenceMs) <= 75L,
+        )
+    }
+
+    @Test
+    fun beatGridBarSnappingAndWaveformCacheCodec_behaveDeterministically() {
+        val grid = BeatGrid(bpm = 120, firstBeatMs = 200L, firstDownbeatMs = 200L, beatsPerBar = 4)
+        assertEquals(500.0, grid.beatDurationMs, 0.001)
+        assertEquals(2000.0, grid.barDurationMs, 0.001)
+
+        val bars = grid.generateBarBoundaries(10_500L)
+        assertEquals(listOf(200L, 2_200L, 4_200L, 6_200L, 8_200L, 10_200L), bars)
+
+        // snapPointA: within first 75% of measure [2200..4200] -> snaps to start of current measure (2200L);
+        // in last 25% (>= 3700L) -> snaps forward to next measure boundary (4200L)
+        assertEquals(2_200L, grid.snapPointA(positionMs = 2_900L, durationMs = 20_000L))
+        assertEquals(4_200L, grid.snapPointA(positionMs = 3_920L, durationMs = 20_000L))
+
+        // snapPointB: enforces >= 1 full bar after A, and snaps to nearest bar boundary
+        assertEquals(4_200L, grid.snapPointB(aMs = 2_200L, positionMs = 2_600L, durationMs = 20_000L))
+        assertEquals(10_200L, grid.snapPointB(aMs = 2_200L, positionMs = 10_050L, durationMs = 20_000L))
+        assertEquals(4, grid.countBarsBetween(2_200L, 10_200L))
+
+        // snapDraggedLoopPoints: dragging A or B snaps to bar boundaries while keeping >= 1 full bar span
+        assertEquals(4_200L to 10_200L, grid.snapDraggedLoopPoints(4_080L, 10_200L, "A", 20_000L))
+        assertEquals(8_200L to 10_200L, grid.snapDraggedLoopPoints(9_900L, 10_200L, "A", 20_000L))
+        assertEquals(4_200L to 6_200L, grid.snapDraggedLoopPoints(4_200L, 4_600L, "B", 20_000L))
+
+        // WaveformExtractor backward-compatible cache parser ("120" vs "128,180,180,4")
+        val legacyParsed = WaveformExtractor.parseCachedBeatGrid("120")
+        assertEquals(BeatGrid(bpm = 120, firstBeatMs = 0L, firstDownbeatMs = 0L, beatsPerBar = 4), legacyParsed)
+
+        val serialized = WaveformExtractor.formatCachedBeatGrid(
+            BeatGrid(bpm = 128, firstBeatMs = 180L, firstDownbeatMs = 180L, beatsPerBar = 4),
+        )
+        assertEquals("128,180,180,4", serialized)
+        assertEquals(
+            BeatGrid(bpm = 128, firstBeatMs = 180L, firstDownbeatMs = 180L, beatsPerBar = 4),
+            WaveformExtractor.parseCachedBeatGrid(serialized),
+        )
     }
 
     private fun synthesizeDrumPulseTrack(

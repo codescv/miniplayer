@@ -44,7 +44,7 @@ class PracticeLoopEngineTest {
     @Test
     fun abLoopThreeStateFlow_nudgeAndSuspend_cancelsAndReschedulesBoundary() {
         engine.bindTrack(
-            state = PracticeState(itemId = 10L),
+            state = PracticeState(itemId = 10L, barSnapEnabled = false),
             isVideo = false,
             activatePracticeMode = true,
         )
@@ -425,6 +425,99 @@ class PracticeLoopEngineTest {
         assertEquals(138, persistedStates.last().bpm)
     }
 
+    @Test
+    fun barSnapAbLoop_snapsMarkAMarkBDragManualSeekAndCalibratesFirstDownbeat() {
+        // Default PracticeState has barSnapEnabled = true!
+        engine.bindTrack(
+            state = PracticeState(itemId = 88L, bpm = 120, firstDownbeatMs = 200L), // bar = 2000ms
+            isVideo = false,
+            activatePracticeMode = true,
+        )
+        assertTrue(engine.practiceState.value.barSnapEnabled)
+
+        // 1. Mark A at 2750ms (inside [2200..4200]) -> snaps to 2200ms
+        fakePort.currentPositionMs = 2_750L
+        engine.markPointA()
+        assertEquals(2_200L, engine.practiceState.value.activeAMs)
+
+        // 2. Mark B at 9950ms -> snaps to nearest bar boundary 10200ms (exact 4 bars = 8000ms!)
+        fakePort.currentPositionMs = 9_950L
+        engine.markPointBAndLoop()
+        assertEquals(2_200L, engine.practiceState.value.activeAMs)
+        assertEquals(10_200L, engine.practiceState.value.activeBMs)
+        assertEquals(4, engine.practiceState.value.beatGrid().countBarsBetween(2_200L, 10_200L))
+        assertEquals(2_200L, fakePort.currentPositionMs)
+
+        // 3. Dragging handle A to 4050ms snaps to 4200ms
+        engine.setLoopPointsFromDrag(aMs = 4_050L, bMs = 10_200L, commitPersist = true, draggingHandle = "A")
+        assertEquals(4_200L, engine.practiceState.value.activeAMs)
+        assertEquals(10_200L, engine.practiceState.value.activeBMs)
+
+        // 4. Manual seek on waveform ruler while loop is active snaps to nearest bar boundary (6450ms -> 6200ms)
+        engine.onUserManualSeek(6_450L)
+        assertEquals(6_200L, fakePort.currentPositionMs)
+
+        // 5. Calibrate first downbeat to 2500ms -> folds to 500ms and re-snaps active A/B to [4500..10500]
+        engine.alignDownbeatToCurrentPosition(posMs = 2_500L)
+        assertEquals(500L, engine.practiceState.value.firstDownbeatMs)
+        assertEquals(4_500L, engine.practiceState.value.activeAMs)
+        assertEquals(10_500L, engine.practiceState.value.activeBMs)
+
+        // 6. Toggle bar-snap off -> raw ms marking works without snapping
+        engine.toggleBarSnap()
+        assertFalse(engine.practiceState.value.barSnapEnabled)
+        engine.markPointA(3_333L)
+        assertEquals(3_333L, engine.practiceState.value.activeAMs)
+    }
+
+    @Test
+    fun beatOnlyCountInToggleAndFormantStemDspPropagation_behaveDeterministically() {
+        engine.bindTrack(
+            state = PracticeState(itemId = 89L),
+            isVideo = false,
+            activatePracticeMode = true,
+        )
+        // Beat-only 1-tap toggle: OFF -> BEAT_4 -> OFF (never SEC_1 or SEC_2)
+        assertEquals(CountInMode.OFF, engine.practiceState.value.countInMode)
+        engine.cycleCountInMode()
+        assertEquals(CountInMode.BEAT_4, engine.practiceState.value.countInMode)
+        engine.cycleCountInMode()
+        assertEquals(CountInMode.OFF, engine.practiceState.value.countInMode)
+
+        // Legacy SEC_1 / SEC_2 normalize directly to BEAT_4
+        engine.setCountInMode(CountInMode.SEC_1)
+        assertEquals(CountInMode.BEAT_4, engine.practiceState.value.countInMode)
+        assertEquals(CountInMode.BEAT_4, CountInMode.fromStoredValue("SEC_2"))
+        assertEquals(CountInMode.OFF, CountInMode.fromStoredValue("OFF"))
+
+        // Formant preservation & 5-stem mixer propagation to LoopPlayerPort
+        assertTrue(fakePort.lastPreserveFormants)
+        assertTrue(fakePort.lastStemMix.isUnity)
+
+        engine.setPreserveFormants(false)
+        assertFalse(fakePort.lastPreserveFormants)
+
+        engine.setStemVolume(StemType.VOCALS, 0.25f)
+        assertEquals(0.25f, fakePort.lastStemMix.effectiveGain(StemType.VOCALS), 1e-4f)
+
+        engine.toggleStemMute(StemType.DRUMS)
+        assertEquals(0f, fakePort.lastStemMix.effectiveGain(StemType.DRUMS), 1e-4f)
+
+        engine.toggleStemSolo(StemType.GUITAR)
+        assertEquals(1.0f, fakePort.lastStemMix.effectiveGain(StemType.GUITAR), 1e-4f)
+        assertEquals(0f, fakePort.lastStemMix.effectiveGain(StemType.VOCALS), 1e-4f)
+
+        engine.resetStemMix()
+        assertTrue(fakePort.lastStemMix.isUnity)
+
+        // Exiting Practice Mode resets live DSP parameters to casual bit-transparent defaults
+        engine.setStemVolume(StemType.BASS, 1.40f)
+        assertFalse(fakePort.lastStemMix.isUnity)
+        engine.setPracticeModeActive(false)
+        assertTrue(fakePort.lastPreserveFormants)
+        assertTrue(fakePort.lastStemMix.isUnity)
+    }
+
     private class FakeLoopPlayerPort(override var durationMs: Long) : LoopPlayerPort {
         var attachedEngine: PracticeLoopEngine? = null
         override var currentPositionMs: Long = 0L
@@ -434,6 +527,8 @@ class PracticeLoopEngineTest {
         var cancelBoundaryCount: Int = 0
         var lastSpeed: Float = 1.0f
         var lastPitch: Float = 1.0f
+        var lastPreserveFormants: Boolean = true
+        var lastStemMix: StemMixConfig = StemMixConfig()
         var fastVideoSeekConfigured: Boolean = false
         var abLoopOwnsRepeatSnapshot: Boolean = false
 
@@ -454,6 +549,11 @@ class PracticeLoopEngineTest {
             lastSpeed = speed
             lastPitch = pitch
             abLoopOwnsRepeatSnapshot = attachedEngine?.abLoopOwnsRepeat == true
+        }
+
+        override fun applyDspParameters(preserveFormants: Boolean, stemMix: StemMixConfig) {
+            lastPreserveFormants = preserveFormants
+            lastStemMix = stemMix
         }
 
         override fun configureExactSeek() {

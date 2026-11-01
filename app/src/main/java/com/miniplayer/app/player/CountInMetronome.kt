@@ -74,24 +74,11 @@ class CountInMetronome(
         pendingOnComplete = onComplete
         activeJob = mainScope.launch {
             try {
-                when (mode) {
-                    CountInMode.SEC_1 -> runFixedSecondsCountdown(
-                        mode = mode,
-                        seconds = 1,
-                        playClickSound = playClickSound,
-                    )
-                    CountInMode.SEC_2 -> runFixedSecondsCountdown(
-                        mode = mode,
-                        seconds = 2,
-                        playClickSound = playClickSound,
-                    )
-                    CountInMode.BEAT_4 -> runFourBeatCountdown(
-                        bpm = bpm,
-                        practiceSpeed = practiceSpeed,
-                        playClickSound = playClickSound,
-                    )
-                    CountInMode.OFF -> Unit
-                }
+                runFourBeatCountdown(
+                    bpm = bpm,
+                    practiceSpeed = practiceSpeed,
+                    playClickSound = playClickSound,
+                )
                 if (isActive) {
                     val finishCallback = pendingOnComplete
                     pendingOnComplete = null
