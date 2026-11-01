@@ -43,7 +43,13 @@ object DownbeatViterbi {
     const val W_CLICK = 1.0
     const val W_NN = 1.0
     const val CAD_PATH_CAP = 1.5
-    const val HALF_BAR_AMBIGUITY_THRESHOLD = 2.0
+    /**
+     * Structural Beat 1 vs Beat 3 margin below which the grid is flagged `halfBarAmbiguous`
+     * (design: "2.0 (tune)"). Tuned on the §4 synthetic set: symmetric half-bar material without
+     * fills/cadence leaves 0.1–2.3 of residual evidence over a 45 s window, while a single fill→crash
+     * every 4 bars gives ≥ 8.
+     */
+    const val HALF_BAR_AMBIGUITY_THRESHOLD = 3.0
     private const val PHRASE_RESET = -3.5
     private const val NEG_INF = -1e18
 
@@ -111,7 +117,32 @@ object DownbeatViterbi {
 
     private const val WALTZ_MARGIN_PER_BEAT = 0.08
 
-    private fun decodeOne(f: BeatSyncFeatures, p: Int, pattern: RhythmPattern): DownbeatDecode? {
+    /**
+     * Debug/diagnostics: per-feature emission totals for an all-GROOVE path whose state at beat 0
+     * is [startK] (so `startK` and `startK + 2` compare the Beat 1 vs Beat 3 hypotheses).
+     */
+    internal fun featureContributions(f: BeatSyncFeatures, p: Int, pattern: RhythmPattern, startK: Int): Map<String, Double> {
+        val t = templates(p, pattern, f.harmRhythm)
+        val ks = 4 * p
+        val out = linkedMapOf("K" to 0.0, "S" to 0.0, "H1" to 0.0, "Bj" to 0.0, "Cad" to 0.0, "Sec" to 0.0, "Fill" to 0.0, "Crash" to 0.0, "Step" to 0.0)
+        val wCad = if (f.harmRhythm >= 4) W_CAD else 0.0
+        for (i in 0 until f.size) {
+            val k = Math.floorMod(startK + i, ks)
+            val b = k % p
+            out["K"] = out["K"]!! + W_K0 * f.drumPresence * f.k[i] * t.tauK[b]
+            out["S"] = out["S"]!! + W_S0 * f.drumPresence * f.s[i] * t.tauS[b]
+            out["H1"] = out["H1"]!! + W_H1 * f.h1[i] * t.tauH[b]
+            out["Bj"] = out["Bj"]!! + W_B * f.bj[i] * t.tauH[b]
+            out["Cad"] = out["Cad"]!! + wCad * f.cad[i] * t.kCad[k]
+            out["Sec"] = out["Sec"]!! + W_SEC * f.sec[i] * t.kSec[k]
+            out["Fill"] = out["Fill"]!! + W_F * f.fill[i] * t.tauF[b]
+            out["Crash"] = out["Crash"]!! + W_C * f.crash[i] * t.kC[k]
+            out["Step"] = out["Step"]!! + W_E * f.step[i] * t.kE[k]
+        }
+        return out
+    }
+
+    internal fun decodeOne(f: BeatSyncFeatures, p: Int, pattern: RhythmPattern): DownbeatDecode? {
         val m = f.size
         val t = templates(p, pattern, f.harmRhythm)
         val ks = 4 * p
@@ -155,7 +186,9 @@ object DownbeatViterbi {
         val dP = DoubleArray(m)
         val bG = Array(m) { IntArray(ks) } // predecessor: k' >= 0 groove, -1 pre
         dP[0] = pre[0]
-        for (k in 0 until ks) dG[0][k] = -0.5 + emit[0][k]
+        // Initial GROOVE −0.5; a track that opens straight into the groove *is* an entrance, so the
+        // same relative entry preference (k = 0 over other bar-starts over off-beats) applies.
+        for (k in 0 until ks) dG[0][k] = -0.5 + (entry(k) - entry(0)) + emit[0][k]
         for (i in 1 until m) {
             dP[i] = dP[i - 1] + pre[i]
             for (k in 0 until ks) {
@@ -234,7 +267,14 @@ object DownbeatViterbi {
         val sorted = byB.sortedDescending()
         val bestB = byB.indices.maxByOrNull { byB[it] } ?: 0
         val downbeatMargin = if (p > 1) byB[bestB] - sorted[1] else 0.0
-        val halfBarMargin = if (p == 4) byB[0] - byB[2] else downbeatMargin
+        // Structural Beat 1 vs Beat 3 margin: path vs the same path shifted by two beats, excluding
+        // the first bar after the GROOVE entry so the entrance tie-break alone never hides ambiguity.
+        val halfBarMargin = if (p == 4) {
+            // The Beat-3 hypothesis may pick its own phrase phase: compare against its best one.
+            (0 until 4).minOf { r -> structuralShiftMargin(emit, path, anchor + 4, 2 + 4 * r) }
+        } else {
+            downbeatMargin
+        }
         val anchorK = if (path[anchor] >= 0) path[anchor] else (0 until 4).maxByOrNull { mm[it * p] }!! * p
         val rStar = anchorK / p
         val byR = DoubleArray(4) { mm[it * p] }
@@ -252,6 +292,17 @@ object DownbeatViterbi {
             phraseMargin = phraseMargin,
             meterIrregular = irregular,
         )
+    }
+
+    private fun structuralShiftMargin(emit: Array<DoubleArray>, path: IntArray, from: Int, shift: Int): Double {
+        val ks = emit.firstOrNull()?.size ?: return 0.0
+        var sum = 0.0
+        for (i in from.coerceAtLeast(0) until path.size) {
+            val k = path[i]
+            if (k < 0) continue
+            sum += emit[i][k] - emit[i][(k + shift) % ks]
+        }
+        return sum
     }
 
     /** Per-bar evidence along the decoded path; flags a consistent sign flip after some bar. */

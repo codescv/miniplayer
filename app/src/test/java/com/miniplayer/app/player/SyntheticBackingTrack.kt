@@ -46,9 +46,10 @@ class SyntheticBackingTrack(
     }
 
     fun snare(tMs: Double, amp: Double = 0.35) {
-        // 2-pole resonant band-pass (~1.8 kHz) over white noise + 190 Hz body.
-        val r = 0.93
-        val w0 = 2.0 * PI * 1800.0 / sampleRate
+        // Wide 2-pole resonant band-pass (~3 kHz, Q≈1) over white noise (the snare wires) + a short
+        // 200 Hz shell body, like a real snare (most energy 1–6 kHz).
+        val r = 0.72
+        val w0 = 2.0 * PI * 3000.0 / sampleRate
         val a1 = 2 * r * kotlin.math.cos(w0)
         val a2 = -r * r
         var y1 = 0.0
@@ -58,8 +59,7 @@ class SyntheticBackingTrack(
             val y = x + a1 * y1 + a2 * y2
             y2 = y1
             y1 = y
-            val env = exp(-t / 0.045)
-            amp * env * (0.22 * y + 0.45 * sin(2 * PI * 190.0 * t))
+            amp * (0.55 * y * exp(-t / 0.05) + 0.30 * sin(2 * PI * 200.0 * t) * exp(-t / 0.025))
         }
     }
 
@@ -103,14 +103,15 @@ class SyntheticBackingTrack(
         }
     }
 
-    /** Sawtooth bass root (octave 2). */
+    /** Band-limited sawtooth bass root (octave 2, first 12 harmonics like a real bass guitar). */
     fun bass(startMs: Double, durMs: Double, rootPc: Int, amp: Double = 0.12) {
         val f = midiHz(36.0 + rootPc)
         render(startMs, durMs) { _, t ->
             val atk = (t * 1000.0 / 5.0).coerceAtMost(1.0)
             val rel = ((durMs / 1000.0 - t) / 0.02).coerceIn(0.0, 1.0)
-            val ph = (f * t) % 1.0
-            amp * atk * rel * (2.0 * ph - 1.0) * (0.7 + 0.3 * exp(-t / 0.3))
+            var saw = 0.0
+            for (h in 1..12) saw += sin(2 * PI * f * h * t) / h
+            amp * atk * rel * (2.0 / PI) * saw * (0.7 + 0.3 * exp(-t / 0.3))
         }
     }
 

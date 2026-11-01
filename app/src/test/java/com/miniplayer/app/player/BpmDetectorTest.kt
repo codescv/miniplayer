@@ -4,15 +4,30 @@ import android.media.AudioFormat
 import com.miniplayer.app.core.model.BeatGrid
 import com.miniplayer.app.core.model.BeatGridConfidence
 import com.miniplayer.app.core.model.BeatGridSource
+import com.miniplayer.app.core.model.PracticeState
+import com.miniplayer.app.player.SyntheticBackingTrack.Companion.A
+import com.miniplayer.app.player.SyntheticBackingTrack.Companion.C
+import com.miniplayer.app.player.SyntheticBackingTrack.Companion.Ch
+import com.miniplayer.app.player.SyntheticBackingTrack.Companion.D
+import com.miniplayer.app.player.SyntheticBackingTrack.Companion.F
+import com.miniplayer.app.player.SyntheticBackingTrack.Companion.G
+import com.miniplayer.app.player.beat.BeatGridAnalysis
+import com.miniplayer.app.player.beat.BpmOctave
+import com.miniplayer.app.player.beat.RhythmPattern
+import com.miniplayer.app.player.beat.TempoFit
+import com.miniplayer.app.player.beat.TempoRegression
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sin
+import kotlin.random.Random
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -530,5 +545,436 @@ class BpmDetectorTest {
             }
         }
         return out
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // BeatGrid v2 synthetic cases (§4 of beatgrid_v2_design.md Rev 3)
+    // ---------------------------------------------------------------------------------------------
+
+    private val sr = 44_100
+
+    private fun analyze(track: SyntheticBackingTrack, windowSec: Double = 45.0, stereo: Boolean = false, tag: Double? = null): BeatGridAnalysis {
+        val frames = minOf(track.frames, (windowSec * track.sampleRate).toInt())
+        val pcm = if (stereo) track.toStereoPcm16() else track.toPcm16()
+        val ch = if (stereo) 2 else 1
+        val res = BpmDetector.detectBeatGridDetailedFromPcm(pcm, frames, track.sampleRate, ch, embeddedBpm = tag)
+        assertNotNull("analysis must succeed", res)
+        return res!!
+    }
+
+    private fun describe(a: BeatGridAnalysis): String {
+        val g = a.grid
+        val d = a.diagnostics
+        return "bpm=${"%.4f".format(g.bpmPrecise)} anchor=${g.firstDownbeatMs} bpb=${g.beatsPerBar} phraseOff=${g.phraseOffsetBars} " +
+            "conf=${g.confidence} pattern=${d.pattern} harm=${d.harmRhythm} drum=${"%.2f".format(d.drumPresence)} " +
+            "fallback=${d.chromaFallbackBeats} empty=${d.emptyChromaBeats} anchorBeat=${d.anchorBeatIndex} fit=${d.tempoFit}"
+    }
+
+    private fun uniform(startMs: Double, bpm: Double): (Int) -> Double = { b -> startMs + b * 60_000.0 / bpm }
+
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    fun case01_fractional120_40_loop_kick1EqualsKick3_preciseTempoAnchorPhraseAndDrift() {
+        val bpm = 120.40
+        val start = 250.0
+        val dur = 210.0
+        val t = SyntheticBackingTrack(sr, dur)
+        val bt = uniform(start, bpm)
+        val beats = ((dur * 1000 - start) / (60_000 / bpm)).toInt() - 1
+        val w = GrooveWriter(t, bt)
+        w.drums(0, beats, kickAmps = mapOf(0 to 0.55, 2 to 0.55))
+        w.harmony(0, beats, listOf(Ch(C), Ch(G), Ch(A, true), Ch(F)), beatsPerChord = 4)
+        val a = analyze(t)
+        val g = a.grid
+        val info = describe(a)
+        assertEquals(info, bpm, g.bpmPrecise, 0.02)
+        assertEquals(4, g.beatsPerBar)
+        val barMs = 4 * 60_000.0 / bpm
+        assertTrue("anchor bar phase ±8ms: $info", phaseErrorMs(g.firstDownbeatMs.toDouble(), start, barMs) <= 8.0)
+        // Phrase (4 bars, starting on C) correct: the C bars are phrase starts.
+        val cBar = g.barIndexAt((start + 4 * barMs + 50).toLong()) // bar 4 = C again
+        assertTrue("phrase start on C bars: $info", g.isPhraseStart(cBar))
+        assertFalse("G bar is not a phrase start: $info", g.isPhraseStart(cBar + 1))
+        // Drift at 3:30 < 15 ms.
+        val lastTrueDownbeat = start + ((205_000 - start) / barMs).toInt() * barMs
+        val k = ((lastTrueDownbeat - g.firstDownbeatMs) / g.barDurationMs).let { Math.round(it) }
+        val predicted = g.firstDownbeatMs + k * g.barDurationMs
+        assertTrue("drift at 3:30 = ${predicted - lastTrueDownbeat}: $info", abs(predicted - lastTrueDownbeat) < 15.0)
+    }
+
+    @Test
+    fun case02_hatCountInAndQuietSnarePickup_beat1IsFirstBandHit() {
+        val bpm = 95.50
+        val start = 400.0
+        val t = SyntheticBackingTrack(sr, 40.0)
+        val bt = uniform(start, bpm)
+        for (b in 0 until 4) t.hat(bt(b), amp = 0.25, decaySec = 0.01) // 4 hi-hat count-in clicks
+        for (b in 4 until 6) t.snare(bt(b), amp = 0.35 * 0.25) // 2-beat pickup at 25 % energy
+        val bandStart = 6
+        val beats = ((40_000 - start) / (60_000 / bpm)).toInt() - 1
+        val w = GrooveWriter(t, { b -> bt(b + bandStart) })
+        w.drums(0, beats - bandStart)
+        w.harmony(0, beats - bandStart, listOf(Ch(A, true), Ch(F), Ch(C), Ch(G)), beatsPerChord = 4)
+        t.crash(bt(bandStart))
+        val a = analyze(t)
+        val info = describe(a)
+        val barMs = 4 * 60_000.0 / bpm
+        assertTrue("Beat 1 = first band hit: $info", phaseErrorMs(a.grid.firstDownbeatMs.toDouble(), bt(bandStart), barMs) <= 15.0)
+    }
+
+    @Test
+    fun case03_dawClickCountIn_isAbsorbedByPre() {
+        val bpm = 110.0
+        val start = 300.0
+        val t = SyntheticBackingTrack(sr, 40.0)
+        val bt = uniform(start, bpm)
+        for (b in 0 until 6) t.dawClick(bt(b), freq = if (b % 4 == 0) 1000.0 else 880.0)
+        val bandStart = 6
+        val beats = ((40_000 - start) / (60_000 / bpm)).toInt() - 1
+        val w = GrooveWriter(t, { b -> bt(b + bandStart) })
+        w.drums(0, beats - bandStart)
+        w.harmony(0, beats - bandStart, listOf(Ch(C), Ch(F), Ch(G), Ch(C)), beatsPerChord = 4)
+        val a = analyze(t)
+        val info = describe(a)
+        val barMs = 4 * 60_000.0 / bpm
+        assertTrue("bar phase on band entry: $info", phaseErrorMs(a.grid.firstDownbeatMs.toDouble(), bt(bandStart), barMs) <= 15.0)
+        assertTrue("clicks stay in PRE (anchor not before band): $info", a.grid.firstDownbeatMs >= bt(bandStart) - 15.0)
+    }
+
+    private fun halfBarTrack(prog: List<Ch>, fills: Boolean, bpm: Double = 112.0, start: Double = 350.0, dur: Double = 46.0): Pair<SyntheticBackingTrack, (Int) -> Double> {
+        val t = SyntheticBackingTrack(sr, dur)
+        val bt = uniform(start, bpm)
+        val beats = ((dur * 1000 - start) / (60_000 / bpm)).toInt() - 1
+        val w = GrooveWriter(t, bt)
+        w.drums(0, beats, kickAmps = mapOf(0 to 0.55, 2 to 0.55))
+        w.harmony(0, beats, prog, beatsPerChord = 2)
+        if (fills) w.fills(0, beats, everyBars = 4)
+        return t to bt
+    }
+
+    @Test
+    fun case04_halfBarHarmony_fillsResolveBeat1_withoutCuesFlaggedAmbiguous() {
+        val prog = listOf(Ch(C), Ch(F), Ch(A, true), Ch(G))
+        val (t1, bt) = halfBarTrack(prog, fills = true)
+        val a1 = analyze(t1)
+        val barMs = 4 * 60_000.0 / 112.0
+        assertTrue("fills -> correct Beat 1: ${describe(a1)}", phaseErrorMs(a1.grid.firstDownbeatMs.toDouble(), bt(0), barMs) <= 15.0)
+        assertEquals(describe(a1), 2, a1.diagnostics.harmRhythm)
+        val (t2, _) = halfBarTrack(prog, fills = false)
+        val a2 = analyze(t2)
+        assertTrue("no fills -> halfBarAmbiguous: ${describe(a2)}", a2.grid.confidence.halfBarAmbiguous)
+    }
+
+    @Test
+    fun case05_halfTimeBallad_patternBWinsAndBeat1Correct() {
+        val bpm = 76.0
+        val start = 500.0
+        val dur = 46.0
+        val t = SyntheticBackingTrack(sr, dur)
+        val bt = uniform(start, bpm)
+        val beats = ((dur * 1000 - start) / (60_000 / bpm)).toInt() - 1
+        val w = GrooveWriter(t, bt)
+        // Half-time feel: kick on 1, snare on 3, quarter-note hats (no 8ths, so the quarter is 76 BPM).
+        w.drums(0, beats, kickBeats = setOf(0), snareBeats = setOf(2), hats = false)
+        for (b in 0 until beats) t.hat(bt(b), 0.06)
+        w.harmony(0, beats, listOf(Ch(C), Ch(A, true), Ch(F), Ch(G)), beatsPerChord = 4)
+        // A half-time groove's tempo octave (76 vs 152) is inherently ambiguous to Stage 2; the embedded
+        // tag resolves the octave only (§3.0). The case under test is the P-B pattern decision.
+        val a = analyze(t, tag = 76.0)
+        val info = describe(a)
+        assertEquals(info, bpm, a.grid.bpmPrecise, 0.05)
+        assertEquals(info, RhythmPattern.HALF_TIME, a.diagnostics.pattern)
+        assertTrue("Beat 1: $info", phaseErrorMs(a.grid.firstDownbeatMs.toDouble(), start, a.grid.barDurationMs) <= 15.0)
+    }
+
+    @Test
+    fun case06_drumlessStrummedGuitar_lowDrumPresenceAndBeat1OnChordChange() {
+        val bpm = 100.0
+        val start = 300.0
+        val dur = 46.0
+        val t = SyntheticBackingTrack(sr, dur)
+        val bt = uniform(start, bpm)
+        val beats = ((dur * 1000 - start) / (60_000 / bpm)).toInt() - 1
+        val prog = listOf(Ch(G), Ch(D), Ch(A, true), Ch(C))
+        for (b in 0 until beats) {
+            val bar = b / 4
+            val ch = prog[bar % prog.size]
+            val bib = b % 4
+            if (bib == 0 || bib == 2) {
+                t.chord(bt(b), bt(b + 2) - bt(b), ch.pc, ch.minor, amp = 0.06, attackMs = 3.0)
+            } else {
+                t.snare(bt(b), amp = 0.10) // muted "chuck" on 2 & 4 (noise burst, no kick)
+            }
+        }
+        val a = analyze(t)
+        val info = describe(a)
+        assertTrue("low drumPresence: $info", a.diagnostics.drumPresence < 0.3)
+        assertTrue("Beat 1 on chord change: $info", phaseErrorMs(a.grid.firstDownbeatMs.toDouble(), start, a.grid.barDurationMs) <= 15.0)
+    }
+
+    @Test
+    fun case07_singleChordFunkVamp_halfBarAmbiguousAndBeat1AtEntrance() {
+        val bpm = 104.0
+        val start = 600.0
+        val dur = 46.0
+        val t = SyntheticBackingTrack(sr, dur)
+        val bt = uniform(start, bpm)
+        val beats = ((dur * 1000 - start) / (60_000 / bpm)).toInt() - 1
+        GrooveWriter(t, bt).drums(0, beats, kickAmps = mapOf(0 to 0.55, 2 to 0.55))
+        t.chord(bt(0), bt(beats) - bt(0), 2, true, amp = 0.05)
+        val a = analyze(t)
+        val info = describe(a)
+        assertTrue("halfBarAmbiguous: $info", a.grid.confidence.halfBarAmbiguous)
+        assertTrue("Beat 1 = band entrance: $info", phaseErrorMs(a.grid.firstDownbeatMs.toDouble(), start, a.grid.barDurationMs) <= 15.0)
+    }
+
+    @Test
+    fun case08_quietPianoIntroThenBandDrop_anchorOnDropAndBarsExtendBack() {
+        val bpm = 120.0
+        val t = SyntheticBackingTrack(sr, 46.0)
+        val bt = uniform(0.0, bpm)
+        val prog = listOf(Ch(C), Ch(A, true), Ch(F), Ch(G))
+        GrooveWriter(t, bt).harmony(0, 32, prog, beatsPerChord = 4, padAmp = 0.025, withBass = false)
+        val beats = 46_000 / 500 - 1
+        val w = GrooveWriter(t, bt)
+        w.drums(32, beats)
+        w.harmony(32, beats, listOf(Ch(F), Ch(G), Ch(C), Ch(A, true)), beatsPerChord = 4)
+        t.crash(bt(32))
+        val a = analyze(t)
+        val info = describe(a)
+        val g = a.grid
+        assertTrue("anchor phase on the drop (16 s): $info", phaseErrorMs(g.firstDownbeatMs.toDouble(), 16_000.0, g.barDurationMs) <= 15.0)
+        val bars = g.generateBarBoundaries(40_000L)
+        assertTrue("bars extend back over the intro: $bars", bars.any { abs(it - 2_000L) <= 15L })
+        assertTrue("phrase start at the drop: $info", g.isPhraseStart(g.barIndexAt(16_050L)))
+        val d = a.diagnostics
+        val dropBeat = d.beatTimesMs.indices.minByOrNull { abs(d.beatTimesMs[it] - 16_000.0) }!!
+        val secMax = d.sec.maxOrNull() ?: 0.0
+        assertTrue("Sec fires at the drop: sec=${d.sec[dropBeat]} max=$secMax", d.sec[dropBeat] > 0.5 && d.sec[dropBeat] >= 0.8 * secMax)
+    }
+
+    @Test
+    fun case09_waltz_threeFourDetectedAndPersistedThroughPracticeState() {
+        val bpm = 126.0
+        val start = 300.0
+        val dur = 46.0
+        val t = SyntheticBackingTrack(sr, dur)
+        val bt = uniform(start, bpm)
+        val beats = ((dur * 1000 - start) / (60_000 / bpm)).toInt() - 1
+        val w = GrooveWriter(t, bt, beatsPerBar = 3)
+        w.drums(0, beats, kickBeats = setOf(0), snareBeats = setOf(1, 2), snareAmp = 0.18)
+        w.harmony(0, beats, listOf(Ch(C), Ch(G), Ch(A, true), Ch(F)), beatsPerChord = 3)
+        val a = analyze(t)
+        val info = describe(a)
+        assertEquals(info, 3, a.grid.beatsPerBar)
+        assertTrue("waltz Beat 1: $info", phaseErrorMs(a.grid.firstDownbeatMs.toDouble(), start, a.grid.barDurationMs) <= 15.0)
+        val state = PracticeState(itemId = 9L)
+            .withBpmPrecise(a.grid.bpmPrecise)
+            .copy(beatsPerBar = a.grid.beatsPerBar, firstDownbeatMs = a.grid.firstDownbeatMs, beatGridSource = a.grid.source)
+        assertEquals(3, state.beatGrid().beatsPerBar)
+        assertEquals(a.grid.bpmPrecise, state.beatGrid().bpmPrecise, 1e-9)
+    }
+
+    @Test
+    fun case10_liveTempoWander_unstableButAnchorAccurateEarly() {
+        val base = 110.0
+        val start = 400.0
+        val dur = 46.0
+        // bpm(t) = base·(1 + 0.015·sin(2πt/12s)); integrate beat times.
+        val times = ArrayList<Double>()
+        var tt = start
+        while (tt < dur * 1000 - 600) {
+            times.add(tt)
+            val bpmNow = base * (1 + 0.015 * kotlin.math.sin(2 * PI * tt / 12_000.0))
+            tt += 60_000.0 / bpmNow
+        }
+        val t = SyntheticBackingTrack(sr, dur)
+        val bt: (Int) -> Double = { b -> if (b < times.size) times[b] else times.last() + (b - times.size + 1) * 545.0 }
+        val w = GrooveWriter(t, bt)
+        w.drums(0, times.size - 1)
+        w.harmony(0, times.size - 1, listOf(Ch(C), Ch(G), Ch(F), Ch(G)), beatsPerChord = 4)
+        val a = analyze(t)
+        val info = describe(a)
+        assertFalse("tempoStable=false: $info", a.grid.confidence.tempoStable)
+        assertTrue("anchor < 30 s: $info", a.grid.firstDownbeatMs < 30_000)
+        val nearestDownbeat = times.indices.filter { it % 4 == 0 }.minOf { abs(times[it] - a.grid.firstDownbeatMs) }
+        assertTrue("anchor within ±15 ms of a true downbeat ($nearestDownbeat): $info", nearestDownbeat <= 15.0)
+    }
+
+    @Test
+    fun case11_punk170_noPhantomH1OnBeat2() {
+        val bpm = 170.0
+        val start = 200.0
+        val dur = 46.0
+        val t = SyntheticBackingTrack(sr, dur)
+        val bt = uniform(start, bpm)
+        val beats = ((dur * 1000 - start) / (60_000 / bpm)).toInt() - 1
+        val w = GrooveWriter(t, bt)
+        w.drums(0, beats)
+        w.harmony(0, beats, listOf(Ch(A), Ch(D), Ch(G), Ch(D)), beatsPerChord = 4)
+        val a = analyze(t)
+        val info = describe(a)
+        val d = a.diagnostics
+        assertEquals(info, 0, d.emptyChromaBeats)
+        // Fold raw H1 by beat-in-bar relative to the true downbeat: change beats dominate Beat 2.
+        val mu = DoubleArray(4)
+        val cnt = IntArray(4)
+        for (i in 1 until d.beatTimesMs.size) {
+            val b = Math.floorMod(Math.round((d.beatTimesMs[i] - start) / (60_000 / bpm)).toInt(), 4)
+            mu[b] += d.h1Raw[i]
+            cnt[b]++
+        }
+        for (b in 0 until 4) mu[b] /= cnt[b].coerceAtLeast(1)
+        assertTrue("no phantom H1 on Beat 2: ${mu.toList()} $info", mu[1] < 0.35 * mu[0])
+        assertTrue("Beat 1: $info", phaseErrorMs(a.grid.firstDownbeatMs.toDouble(), start, a.grid.barDurationMs) <= 15.0)
+    }
+
+    @Test
+    fun case12_48kStereoInputAndFractionalFlacTagUsedOnlyForOctave() {
+        val bpm = 120.4
+        val start = 300.0
+        val dur = 40.0
+        val t = SyntheticBackingTrack(48_000, dur)
+        val bt = uniform(start, bpm)
+        val beats = ((dur * 1000 - start) / (60_000 / bpm)).toInt() - 1
+        val w = GrooveWriter(t, bt)
+        w.drums(0, beats)
+        w.harmony(0, beats, listOf(Ch(C), Ch(G), Ch(A, true), Ch(F)), beatsPerChord = 4)
+        val stereo = analyze(t, stereo = true)
+        assertEquals(describe(stereo), bpm, stereo.grid.bpmPrecise, 0.03)
+        assertEquals(BeatGridSource.AUTO_MIX, stereo.grid.source)
+        val mono = analyze(t)
+        assertEquals(describe(mono), bpm, mono.grid.bpmPrecise, 0.03)
+
+        assertEquals(120.4, BpmDetector.parseBpmTagDouble("120.4")!!, 1e-9)
+        assertEquals(120, BpmDetector.parseBpmTagString("120.4"))
+        // FLAC Vorbis BPM=120.4 parsed as Double
+        val vendor = "x".toByteArray()
+        val comment = "BPM=120.4".toByteArray()
+        val block = java.nio.ByteBuffer.allocate(4 + vendor.size + 8 + comment.size).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        block.putInt(vendor.size).put(vendor).putInt(1).putInt(comment.size).put(comment)
+        val flac = byteArrayOf('f'.code.toByte(), 'L'.code.toByte(), 'a'.code.toByte(), 'C'.code.toByte(), 0x84.toByte(), 0, 0, block.capacity().toByte()) + block.array()
+        assertEquals(120.4, BpmDetector.extractEmbeddedBpmDoubleFromHeader(flac)!!, 1e-9)
+        // Tag only chooses the octave of the acoustic tempo; it never replaces it.
+        assertEquals(120.42, BpmOctave.resolve(120.4, 60.21), 1e-9)
+        assertEquals(97.0, BpmOctave.resolve(120.4, 97.0), 1e-9)
+        val tagged = analyze(t, tag = 120.4)
+        assertEquals(stereo.grid.bpmPrecise, tagged.grid.bpmPrecise, 0.03)
+    }
+
+    @Test
+    fun case13_longBaselineSlipGuardRejectsPhaseLockAndMp3NeverPhaseLocks() {
+        val tS = 60_000.0 / 120.40
+        val start = TempoFit(tS, 250.0, 2.0, true, 80, 0.004)
+        // 1.05-beat drift accumulated over ~100 s: local mid tempo differs by 1.05 beats / span.
+        val span = 100_000.0
+        val nBeats = Math.round(span / tS)
+        val tMid = tS * (1 + 1.05 / nBeats)
+        val midBeat = 250.0 + nBeats * tS + 1.05 * tS
+        val mid = TempoFit(tMid, midBeat, 2.0, true, 25, 0.02)
+        val flac = TempoRegression.mergeLongBaseline(start, 250.0, mid, midBeat, sampleAccurateSeek = true)
+        assertFalse("slip guard must reject phase-lock (slip=${flac.slipMetric})", flac.phaseLocked)
+        assertTrue(flac.slipMetric >= 0.25)
+        // Small genuine residual on FLAC -> phase-lock refines T.
+        val exactMid = TempoFit(tS, 0.0, 2.0, true, 25, 0.02)
+        val lockedBeat = 250.0 + nBeats * tS + 0.1 * tS
+        val locked = TempoRegression.mergeLongBaseline(start, 250.0, exactMid, lockedBeat, sampleAccurateSeek = true)
+        assertTrue(locked.phaseLocked)
+        assertEquals(tS + 0.1 * tS / nBeats, locked.periodMs, 1e-9)
+        // MP3 path never phase-locks.
+        val mp3 = TempoRegression.mergeLongBaseline(start, 250.0, exactMid, lockedBeat, sampleAccurateSeek = false)
+        assertFalse(mp3.phaseLocked)
+        assertEquals(tS, mp3.periodMs, 1e-6)
+    }
+
+    @Test
+    fun case15_halfBarIVIVvi_and_CCDmDmGGCC_harmRhythm2_cadOff_fillsDecide() {
+        for (prog in listOf(
+            listOf(Ch(F), Ch(C), Ch(G), Ch(A, true)),
+            listOf(Ch(C), Ch(D, true), Ch(G), Ch(C)),
+        )) {
+            val (t1, bt) = halfBarTrack(prog, fills = true, bpm = 108.0)
+            val a1 = analyze(t1)
+            val barMs = 4 * 60_000.0 / 108.0
+            assertEquals(describe(a1), 2, a1.diagnostics.harmRhythm)
+            assertTrue("fills -> correct Beat 1: ${describe(a1)}", phaseErrorMs(a1.grid.firstDownbeatMs.toDouble(), bt(0), barMs) <= 15.0)
+            val (t2, bt2) = halfBarTrack(prog, fills = false, bpm = 108.0)
+            val a2 = analyze(t2)
+            val onBeat3 = phaseErrorMs(a2.grid.firstDownbeatMs.toDouble(), bt2(2), barMs) <= 15.0
+            assertTrue(
+                "without fills: ambiguous, never a confident Beat 3: ${describe(a2)}",
+                a2.grid.confidence.halfBarAmbiguous && (!onBeat3 || a2.grid.confidence.halfBarAmbiguous),
+            )
+        }
+    }
+
+    @Test
+    fun case16_pushedBeatsAt175_perBeatChromaFallbackNoEmptyBeats() {
+        val bpm = 175.0
+        val start = 300.0
+        val dur = 46.0
+        val rnd = Random(3)
+        val period = 60_000.0 / bpm
+        val n = ((dur * 1000 - start) / period).toInt() - 2
+        // Live "pushed" playing: every beat independently pushed/laid back by up to ±60 ms + slow wander.
+        val times = DoubleArray(n + 2) { b ->
+            val wander = 25.0 * cos(2 * PI * b / 48.0)
+            start + b * period + wander + rnd.nextDouble(-60.0, 60.0)
+        }
+        val t = SyntheticBackingTrack(sr, dur)
+        val bt: (Int) -> Double = { b -> times[b.coerceIn(0, times.size - 1)] + (if (b >= times.size) (b - times.size + 1) * period else 0.0) }
+        val w = GrooveWriter(t, bt)
+        w.drums(0, n)
+        w.harmony(0, n, listOf(Ch(4 /* E */), Ch(A), Ch(D), Ch(A)), beatsPerChord = 4)
+        val a = analyze(t)
+        val info = describe(a)
+        assertFalse("tempoStable=false: $info", a.grid.confidence.tempoStable)
+        assertTrue("fallback engages: $info", a.diagnostics.chromaFallbackBeats > 0)
+        assertEquals(info, 0, a.diagnostics.emptyChromaBeats)
+    }
+
+    @Test
+    fun stemsFastPath_drumsBassAndHarmonyStems_analyseAsAutoStems() {
+        val bpm = 118.6
+        val start = 420.0
+        val dur = 46.0
+        val beats = ((dur * 1000 - start) / (60_000 / bpm)).toInt() - 1
+        val bt = uniform(start, bpm)
+        val prog = listOf(Ch(A, true), Ch(F), Ch(C), Ch(G))
+        val drums = SyntheticBackingTrack(sr, dur, seed = 11).also { GrooveWriter(it, bt).drums(0, beats) }
+        val bass = SyntheticBackingTrack(sr, dur).also { t ->
+            var b = 0
+            var ci = 0
+            while (b < beats) {
+                t.bass(bt(b), bt(b + 4) - bt(b), prog[ci % 4].pc)
+                b += 4
+                ci++
+            }
+        }
+        val guitar = SyntheticBackingTrack(sr, dur).also {
+            GrooveWriter(it, bt).harmony(0, beats, prog, beatsPerChord = 4, withBass = false)
+        }
+        val silent = FloatArray(drums.frames)
+        fun stereo(x: FloatArray) = arrayOf(x.copyOf(), x.copyOf())
+        val cache = com.miniplayer.app.player.StemSeparatedTrackCache.fromFloatStemsInMemory(
+            itemId = 42L,
+            sampleRate = sr,
+            stems5Stereo = arrayOf(stereo(silent), stereo(guitar.buf), stereo(bass.buf), stereo(drums.buf), stereo(silent)),
+        )
+        val reader = com.miniplayer.app.player.beat.StemBlockReader(cache)
+        // Bulk block reader matches per-frame decode (non-block-aligned offset).
+        val probe = reader.readMono(com.miniplayer.app.core.model.StemType.DRUMS, 1_000_037, 300)
+        val frame = FloatArray(10)
+        for (i in 0 until 300) {
+            cache.readFrameStems(1_000_037 + i, frame)
+            assertEquals(0.5f * (frame[6] + frame[7]), probe[i], 1e-6f)
+        }
+        val a = reader.analyzeBeatGrid()
+        assertNotNull(a)
+        val g = a!!.grid
+        assertEquals(BeatGridSource.AUTO_STEMS, g.source)
+        assertEquals(describe(a), bpm, g.bpmPrecise, 0.03)
+        assertTrue("stems Beat 1: ${describe(a)}", phaseErrorMs(g.firstDownbeatMs.toDouble(), start, g.barDurationMs) <= 15.0)
     }
 }

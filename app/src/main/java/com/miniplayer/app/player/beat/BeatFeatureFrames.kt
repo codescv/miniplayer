@@ -16,6 +16,8 @@ class BeatFeatureFrames(
     val lowRms: FloatArray,
     val midRms: FloatArray,
     val highRms: FloatArray,
+    /** > 6 kHz RMS (cymbals; no chord-harmonic leakage). */
+    val airRms: FloatArray,
     val broadOnset: FloatArray,
     val lowOnset: FloatArray,
     val midOnset: FloatArray,

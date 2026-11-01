@@ -61,6 +61,7 @@ class OnsetFluxAccumulator(
     private var lowRmsFrames = FloatArray(4_096)
     private var midRmsFrames = FloatArray(4_096)
     private var highRmsFrames = FloatArray(4_096)
+    private var airRmsFrames = FloatArray(4_096)
     private var energyCount = 0
 
     private var currentHopFrames = 0
@@ -68,6 +69,12 @@ class OnsetFluxAccumulator(
     private var currentHopLowSqSum = 0.0
     private var currentHopMidSqSum = 0.0
     private var currentHopHighSqSum = 0.0
+    private var currentHopAirSqSum = 0.0
+
+    // "Air" band (> 6 kHz, two cascaded RBJ biquad high-passes, −56 dB at 1.2 kHz): cymbal / crash
+    // energy without chord-harmonic leakage (BeatGrid v2 `Crash`).
+    private val airHp1 = Biquad.highPass(safeSampleRate, BpmDetector.AIR_BAND_CUTOFF_HZ)
+    private val airHp2 = Biquad.highPass(safeSampleRate, BpmDetector.AIR_BAND_CUTOFF_HZ)
 
     private var partialChannelIndex = 0
     private var partialFrameSignedSum = 0.0
@@ -219,6 +226,8 @@ class OnsetFluxAccumulator(
         currentHopLowSqSum += bLow * bLow
         currentHopMidSqSum += bMid * bMid
         currentHopHighSqSum += bHigh * bHigh
+        val air = airHp2.process(airHp1.process(signedMono))
+        currentHopAirSqSum += air * air
         currentHopFrames++
 
         if (currentHopFrames == hopSamples) {
@@ -228,28 +237,32 @@ class OnsetFluxAccumulator(
                 lowRms = sqrt(currentHopLowSqSum * invHop).toFloat(),
                 midRms = sqrt(currentHopMidSqSum * invHop).toFloat(),
                 highRms = sqrt(currentHopHighSqSum * invHop).toFloat(),
+                airRms = sqrt(currentHopAirSqSum * invHop).toFloat(),
             )
             currentHopFrames = 0
             currentHopAbsSum = 0.0
             currentHopLowSqSum = 0.0
             currentHopMidSqSum = 0.0
             currentHopHighSqSum = 0.0
+            currentHopAirSqSum = 0.0
         }
     }
 
-    private fun pushHopFrame(energy: Float, lowRms: Float, midRms: Float, highRms: Float) {
+    private fun pushHopFrame(energy: Float, lowRms: Float, midRms: Float, highRms: Float, airRms: Float) {
         if (energyCount == energyFrames.size) {
             val newSize = energyFrames.size * 2
             energyFrames = energyFrames.copyOf(newSize)
             lowRmsFrames = lowRmsFrames.copyOf(newSize)
             midRmsFrames = midRmsFrames.copyOf(newSize)
             highRmsFrames = highRmsFrames.copyOf(newSize)
+            airRmsFrames = airRmsFrames.copyOf(newSize)
         }
         val idx = energyCount++
         energyFrames[idx] = energy
         lowRmsFrames[idx] = lowRms
         midRmsFrames[idx] = midRms
         highRmsFrames[idx] = highRms
+        airRmsFrames[idx] = airRms
     }
 
     private class BandEnvelopes(
@@ -677,6 +690,7 @@ class OnsetFluxAccumulator(
             lowRms = lowRmsFrames.copyOf(n),
             midRms = midRmsFrames.copyOf(n),
             highRms = highRmsFrames.copyOf(n),
+            airRms = airRmsFrames.copyOf(n),
             broadOnset = env.broadOnset,
             lowOnset = env.lowOnset,
             midOnset = env.midOnset,
@@ -829,10 +843,51 @@ class OnsetFluxAccumulator(
     }
 }
 
+/** Direct-form-I RBJ biquad (used for the > 6 kHz "air" band). */
+internal class Biquad(
+    private val b0: Double,
+    private val b1: Double,
+    private val b2: Double,
+    private val a1: Double,
+    private val a2: Double,
+) {
+    private var x1 = 0.0
+    private var x2 = 0.0
+    private var y1 = 0.0
+    private var y2 = 0.0
+
+    fun process(x: Double): Double {
+        val y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        x2 = x1
+        x1 = x
+        y2 = y1
+        y1 = y
+        return y
+    }
+
+    companion object {
+        fun highPass(sampleRate: Int, cutoffHz: Double, q: Double = 0.7071): Biquad {
+            val fc = cutoffHz.coerceAtMost(sampleRate * 0.45)
+            val w0 = 2.0 * PI * fc / sampleRate
+            val cosW = kotlin.math.cos(w0)
+            val alpha = kotlin.math.sin(w0) / (2.0 * q)
+            val a0 = 1.0 + alpha
+            return Biquad(
+                b0 = (1.0 + cosW) / 2.0 / a0,
+                b1 = -(1.0 + cosW) / a0,
+                b2 = (1.0 + cosW) / 2.0 / a0,
+                a1 = -2.0 * cosW / a0,
+                a2 = (1.0 - alpha) / a0,
+            )
+        }
+    }
+}
+
 object BpmDetector {
     const val TARGET_ENVELOPE_RATE_HZ = 100
     const val LOW_BAND_CUTOFF_HZ = 155.0
     const val MID_BAND_CUTOFF_HZ = 2400.0
+    const val AIR_BAND_CUTOFF_HZ = 6000.0
     const val MIN_DURATION_SECONDS = 2.5
     const val MIN_SEARCH_BPM = 45.0
     const val MAX_SEARCH_BPM = 220.0

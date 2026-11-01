@@ -24,6 +24,8 @@ data class BeatGridDiagnostics(
     val sec: DoubleArray = DoubleArray(0),
     val h1Raw: DoubleArray = DoubleArray(0),
     val path: IntArray = IntArray(0),
+    /** Stage 4 features (debug screen / tests). */
+    val features: BeatSyncFeatures? = null,
 )
 
 class BeatGridAnalysis(val grid: BeatGrid, val diagnostics: BeatGridDiagnostics)
@@ -121,6 +123,7 @@ object BeatGridAnalyzer {
                 sec = feats.sec,
                 h1Raw = feats.h1Raw,
                 path = decode.path,
+                features = feats,
             ),
         )
     }

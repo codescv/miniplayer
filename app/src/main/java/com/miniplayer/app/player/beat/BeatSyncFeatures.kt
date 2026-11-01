@@ -37,6 +37,9 @@ class BeatSyncFeatures(
     /** Optional neural activations (plug-in slot, §3.5). */
     val beatAct: DoubleArray? = null,
     val downbeatAct: DoubleArray? = null,
+    /** Debug: off-beat mid/high onset counts per beat (Fill input) and raw crash ratios. */
+    val onsetCount: IntArray = IntArray(0),
+    val crashRaw: DoubleArray = DoubleArray(0),
 ) {
     val size: Int get() = timesMs.size
 
@@ -62,7 +65,9 @@ class BeatSyncFeatures(
                 val comp = frames.maxOver(frames.compositeOnset, t - 25.0, t + 25.0).toDouble()
                 val e = frames.maxOver(frames.energy, t - 25.0, t + 25.0).toDouble()
                 kRaw[i] = if (frames.hasLowBand) low else 0.0
-                sRaw[i] = max(mid, high) - 0.6 * kRaw[i]
+                // max(mid, high) − 0.6·low, with high-band-only onsets (hi-hats) at 0.6 so a constant
+                // hat on every beat cannot mask where the snare / backbeat actually is.
+                sRaw[i] = max(mid, 0.6 * high) - 0.6 * kRaw[i]
                 aRaw[i] = 0.72 * (comp / compRef).coerceAtMost(2.0) + 0.28 * (e / energyRef).coerceAtMost(2.0)
             }
 
@@ -162,42 +167,52 @@ class BeatSyncFeatures(
 
             // ---- Section novelty (order-preserving, stacked) -----------------------------------
             val secRaw = DoubleArray(m)
-            for (i in 0 until m) {
-                var tonalNov = Double.MAX_VALUE
-                var drumNov = Double.MAX_VALUE
-                var any = false
-                for (l in intArrayOf(16, 8)) {
-                    if (i - l < 0 || i + l > m) {
-                        tonalNov = 0.0
-                        drumNov = 0.0
-                        break
-                    }
-                    any = true
-                    tonalNov = min(tonalNov, 1.0 - stackedCos(chromaBeat, i, l))
-                    drumNov = min(drumNov, 1.0 - stackedDrumCos(kRaw, sRaw, i, l))
-                }
-                // Both scales must agree (min): a static loop whose period does not divide L = 8 does
-                // not leak an arbitrary phrase phase into Sec.
-                secRaw[i] = if (any) max(0.0, tonalNov) + 0.5 * max(0.0, drumNov) else 0.0
+            for (i in 16 until m - 15) {
+                // L = 16 drives; L = 8 only adds where L = 16 agrees (min), so a static 16-beat loop
+                // (L = 8 windows differ by construction) cannot leak an arbitrary phrase phase.
+                val t16 = max(0.0, 1.0 - stackedCos(chromaBeat, i, 16))
+                val t8 = max(0.0, 1.0 - stackedCos(chromaBeat, i, 8))
+                val d16 = max(0.0, 1.0 - stackedDrumCos(kRaw, sRaw, i, 16))
+                val d8 = max(0.0, 1.0 - stackedDrumCos(kRaw, sRaw, i, 8))
+                secRaw[i] = (t16 + 0.5 * min(t8, t16)) + 0.5 * (d16 + 0.5 * min(d8, d16))
             }
 
             // ---- Fill / Crash / Step / Click ---------------------------------------------------
-            val fillSig = FloatArray(frames.n) { frames.midOnset[it] + frames.highOnset[it] }
-            val fillThr = 0.35 * Stats.percentilePositive(fillSig, 0.95)
+            // Fill: density of percussive onsets at *sub-beat* positions in beats m−2..m−1. Onsets
+            // are 400 Hz edge-slope peaks that lift the envelope 30 % above its recent maximum
+            // (drum attacks; slow tonal swells / beating never qualify); on-beat ±40 ms excluded so
+            // grid-aligned kick / snare / chord attacks do not count.
+            val x = frames.edge
+            val edgeP95 = Stats.percentilePositive(x, 0.95)
             val onsetCount = IntArray(m)
+            val minSep = (30.0 / frames.edgeHopMs).toInt().coerceAtLeast(1)
             for (i in 0 until m) {
-                val lo = frames.hopAt(timesMs[i] - 25.0).coerceAtLeast(1)
-                val hi = (frames.hopAt(nextT(i) - 25.0) - 1).coerceAtMost(frames.n - 2)
-                for (h in lo..hi) {
-                    if (fillSig[h] > fillThr && fillSig[h] >= fillSig[h - 1] && fillSig[h] > fillSig[h + 1]) onsetCount[i]++
+                val lo = frames.edgeAt(timesMs[i] + 40.0).coerceAtLeast(9)
+                val hi = frames.edgeAt(nextT(i) - 40.0).coerceAtMost(x.size - 2)
+                var last = -minSep
+                for (k in lo..hi) {
+                    val d = x[k] - x[k - 1]
+                    if (d <= 0f || d < x[k + 1] - x[k]) continue
+                    // A genuine new attack clears the recent (2.5–20 ms) maximum: fluctuations inside a
+                    // decaying noise burst and slow tonal swells / beating never do.
+                    var recentMax = 0f
+                    for (j in k - 8 until k - 1) if (x[j] > recentMax) recentMax = x[j]
+                    if (x[k + 1] >= 1.3f * recentMax + 0.02f * edgeP95.toFloat() && k - last >= minSep) {
+                        onsetCount[i]++
+                        last = k
+                    }
                 }
             }
-            val medCount = Stats.median(DoubleArray(m) { onsetCount[it].toDouble() }).coerceAtLeast(0.5)
+            // Excess onsets over the track's typical density (median per beat), counted over 2 beats;
+            // standardised with a 2-onset floor so one stray onset is ~0.5σ while a 16th fill is ≥ 3σ.
+            val medCount = Stats.median(DoubleArray(m) { onsetCount[it].toDouble() })
             val fillRaw = DoubleArray(m) { i ->
-                if (i < 2) 0.0 else (onsetCount[i - 2] + onsetCount[i - 1]) / (2.0 * medCount) - 1.0
+                if (i < 2) 0.0 else max(0.0, (onsetCount[i - 2] + onsetCount[i - 1]) - 2.0 * medCount - 1.0)
             }
-            val highMed = Stats.median(DoubleArray(frames.n) { frames.highRms[it].toDouble() })
-            val eps = 0.1 * highMed + 1e-6
+            // Crash: sustained high-band floor after the beat vs the floor just before it. Floors
+            // (20th percentiles) ignore hat / snare / fill transients, so only a ringing cymbal that
+            // starts on this beat fires (robust to fills and to the crash's own attack).
+            val eps = 0.05 * Stats.percentilePositive(frames.airRms, 0.95) + 1e-6
             val crashRaw = DoubleArray(m) { i ->
                 val t = timesMs[i]
                 var lo = t + 200.0
@@ -206,7 +221,9 @@ class BeatSyncFeatures(
                     lo = t + 0.4 * (nextT(i) - t)
                     hi = t + 0.9 * (nextT(i) - t)
                 }
-                (frames.meanOver(frames.highRms, lo, hi) + eps) / (frames.meanOver(frames.highRms, t, t + 50.0) + eps)
+                val preLo = t - min(200.0, 0.6 * periodMs)
+                // Sparse: only a ≥ 2× (6 dB) rise of the sustained cymbal floor counts.
+                max(0.0, ln((floorOver(frames, frames.airRms, lo, hi) + eps) / (floorOver(frames, frames.airRms, preLo, t - 20.0) + eps)) - ln(2.0))
             }
             val lowRef = Stats.percentilePositive(frames.lowRms, 0.75).coerceAtLeast(1e-6)
             val accRef = Stats.percentilePositive(frames.accentEnergy, 0.75).coerceAtLeast(1e-6)
@@ -225,7 +242,10 @@ class BeatSyncFeatures(
                 val behindLo = max(0, i - 4)
                 val behind = if (i > behindLo) (behindLo until i).sumOf { eG[it] } / (i - behindLo) else 0.0
                 val gate = (eG[i] / eGp75).coerceIn(0.0, 1.0)
-                if (i == 0 && eG[0] < 0.7 * eGp75) 0.0 else max(0.0, medAhead - behind) * gate
+                val rise = max(0.0, medAhead - behind)
+                // Sparse: a band arrival lifts E_g by ≥ 15 % of its p75; chord-to-chord level wobble
+                // inside a steady groove must not leak a periodic (phrase-phase) bias.
+                if ((i == 0 && eG[0] < 0.7 * eGp75) || rise < 0.15 * eGp75) 0.0 else rise * gate
             }
             val stepMax = stepRaw.maxOrNull() ?: 0.0
             val firstStep = stepRaw.indexOfFirst { it >= 0.5 * stepMax && stepMax > 0.0 }.let { if (it < 0) m else it }
@@ -259,8 +279,8 @@ class BeatSyncFeatures(
                 bj = bj,
                 cad = cad,
                 sec = Stats.robustZ(secRaw, 0.02, 0.3),
-                fill = Stats.robustZ(fillRaw, 0.25, 0.3),
-                crash = Stats.robustZ(crashRaw, 0.1, 0.3),
+                fill = Stats.robustZ(fillRaw, 2.0, 0.0),
+                crash = Stats.robustZ(crashRaw, ln(2.0), 0.0),
                 step = Stats.robustZ(stepRaw, 0.05, 0.3),
                 click = Stats.robustZ(clickRaw, 0.5, 0.5),
                 tonal = tonal,
@@ -271,6 +291,8 @@ class BeatSyncFeatures(
                 keyConfidence = kappa,
                 chromaFallbackBeats = fallbackBeats,
                 emptyChromaBeats = emptyBeats,
+                onsetCount = onsetCount,
+                crashRaw = crashRaw,
             )
         }
 
@@ -327,8 +349,9 @@ class BeatSyncFeatures(
         }
 
         /**
-         * Track-level drum presence ∈ [0, 1]: low-band onset periodicity at τ0 × peakiness
-         * (excess kurtosis of the low-band onset) × low-band transient depth.
+         * Track-level drum presence ∈ [0, 1]: low-band onset periodicity at τ0 / 2τ0 / 4τ0 ×
+         * peakiness (kurtosis of the low-band onset; kicks are isolated spikes, strummed / sustained
+         * low notes are not) × low-band share (a kick dominates the < 155 Hz band).
          */
         internal fun computeDrumPresence(frames: BeatFeatureFrames, tau0Hops: Double): Double {
             if (!frames.hasLowBand) return 0.0
@@ -355,18 +378,23 @@ class BeatSyncFeatures(
             }
             val l1 = tau0Hops.toInt()
             val periodicity = maxOf(
-                acf(l1), acf(l1 + 1),
-                acf((2 * tau0Hops).toInt()), acf((2 * tau0Hops).toInt() + 1),
+                maxOf(acf(l1), acf(l1 + 1)),
+                maxOf(acf((2 * tau0Hops).toInt()), acf((2 * tau0Hops).toInt() + 1)),
+                maxOf(acf((4 * tau0Hops).toInt()), acf((4 * tau0Hops).toInt() + 1)),
             )
-            val p95 = Stats.percentilePositive(frames.lowRms, 0.95)
-            val p30 = Stats.percentile(DoubleArray(n) { frames.lowRms[it].toDouble() }, 0.30)
-            val depth = if (p30 > 1e-9) p95 / p30 else 10.0
             val share = Stats.percentilePositive(frames.lowRms, 0.95) /
                 Stats.percentilePositive(frames.energy, 0.95).coerceAtLeast(1e-9)
             return ((periodicity / 0.25).coerceIn(0.0, 1.0) *
-                ((kurt - 3.0) / 6.0).coerceIn(0.0, 1.0) *
-                ((depth - 1.5) / 2.5).coerceIn(0.0, 1.0) *
+                ((kurt - 6.0) / 6.0).coerceIn(0.0, 1.0) *
                 ((share - 0.15) / 0.35).coerceIn(0.0, 1.0)).coerceIn(0.0, 1.0)
+        }
+
+        /** 20th percentile of [series] over hops covering `[fromMs, toMs)`. */
+        private fun floorOver(frames: BeatFeatureFrames, series: FloatArray, fromMs: Double, toMs: Double): Double {
+            val lo = frames.hopAt(fromMs).coerceIn(0, series.size - 1)
+            val hi = (frames.hopAt(toMs) - 1).coerceIn(lo, series.size - 1)
+            val vals = DoubleArray(hi - lo + 1) { series[lo + it].toDouble() }
+            return Stats.percentile(vals, 0.2)
         }
 
         private fun stackedCos(c: Array<FloatArray>, i: Int, l: Int): Double {
@@ -382,7 +410,18 @@ class BeatSyncFeatures(
                     nb += b[p].toDouble() * b[p]
                 }
             }
-            return if (na > 1e-12 && nb > 1e-12) dot / sqrt(na * nb) else 1.0
+            return zeroAwareCos(dot, na, nb)
+        }
+
+        /** Both windows empty -> identical (1); exactly one empty -> maximally novel (0). */
+        private fun zeroAwareCos(dot: Double, na: Double, nb: Double): Double {
+            val ea = na > 1e-9
+            val eb = nb > 1e-9
+            return when {
+                ea && eb -> dot / sqrt(na * nb)
+                !ea && !eb -> 1.0
+                else -> 0.0
+            }
         }
 
         private fun stackedDrumCos(k: DoubleArray, s: DoubleArray, i: Int, l: Int): Double {
@@ -398,7 +437,7 @@ class BeatSyncFeatures(
                 na += ak * ak + aS * aS
                 nb += bk * bk + bS * bS
             }
-            return if (na > 1e-12 && nb > 1e-12) dot / sqrt(na * nb) else 1.0
+            return zeroAwareCos(dot, na, nb)
         }
 
         private fun jsd(p: FloatArray, q: FloatArray): Double {
