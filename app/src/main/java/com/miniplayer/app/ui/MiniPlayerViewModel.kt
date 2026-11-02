@@ -1,5 +1,6 @@
 package com.miniplayer.app.ui
 
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -1063,10 +1064,15 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 }
             is DirectInstallAction.RequestInstallPermission -> buildUnknownSourcesSettingsIntent()
         }
-        runCatching { context.startActivity(intent) }
+        val launchContext = if (context is Activity && (context.isFinishing || context.isDestroyed)) {
+            getApplication<Application>()
+        } else {
+            context
+        }
+        runCatching { launchContext.startActivity(intent) }
             .onSuccess {
                 if (action is DirectInstallAction.RequestInstallPermission) {
-                    emitMessage("请允许 MiniPlayer 安装未知应用，返回后将自动安装更新")
+                    emitMessage("请允许 Play 安装未知应用，返回后将自动安装更新")
                 }
             }
             .onFailure { e ->
@@ -1076,7 +1082,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /** Called on `ON_START`: auto-installs an APK left pending while the user granted unknown-sources permission. */
-    private fun resumePendingInstallIfPermitted() {
+    fun resumePendingInstallIfPermitted() {
         if (!directInstallCoordinator.pendingInstallAfterSettings) return
         val action = directInstallCoordinator.onAppForegrounded(core.updater.canRequestPackageInstalls())
         performDirectInstallAction(action, getApplication<Application>())

@@ -1,6 +1,6 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.15 (`versionCode = 10015`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.16 (`versionCode = 10016`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
 > **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · Microsoft ONNX Runtime Android `1.20.0` · SQLite (`SQLiteOpenHelper` `DATABASE_VERSION = 5` + Kotlin `StateFlow`)
 
@@ -319,7 +319,7 @@ CREATE TABLE app_settings (
    - ② `PackageManager.getPackageArchiveInfo` 解析出的 `packageName == context.packageName` (`com.miniplayer.app`)；
    - ③ 新包 `longVersionCode > currentVersionCode`（严防版本降级攻击）；
    - ④ 签名证书集合与当前已安装宿主应用签名证书完全一致。
-4. **安全拉起安装**：落盘至 `context.cacheDir/updates/MiniPlayer-<tag>.apk`，通过 `FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)` 构造 `Intent.ACTION_VIEW`（若 `canRequestPackageInstalls()` 为 `false` 则先引导跳转 `Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES`）。
+4. **一键下载并直接安装 (`DirectInstallCoordinator.kt`, `MiniPlayerViewModel.kt`, `v1.0.16`)**：落盘至 `context.cacheDir/updates/MiniPlayer-<tag>.apk`，下载与四重安全校验通过后无需二次确认点击，立即通过 `DirectInstallCoordinator` 状态机与 `FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)` 拉起 `Intent.ACTION_VIEW` 系统安装器；若 `canRequestPackageInstalls()` 为 `false`，则记录待安装 APK 并跳转 `Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES`，当用户授权返回前台（`ON_START` / `onAppForegrounded` 或重建后的 Activity 首帧 `resumePendingInstallIfPermitted`）时自动续接拉起安装（同时在 `UiUpdateState.ReadyToInstall` 保留 `立即安装更新` 兜底按钮以防用户手动取消系统安装弹窗）。
 
 ---
 

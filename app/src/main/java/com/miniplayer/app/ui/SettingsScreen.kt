@@ -197,7 +197,11 @@ fun SettingsScreen(
                                             )
                                         }
                                         Button(
-                                            onClick = { viewModel.downloadAndVerifyUpdate(info) },
+                                            onClick = {
+                                                viewModel.downloadAndVerifyUpdate(info) { apkFile ->
+                                                    viewModel.requestInstallApk(apkFile, context)
+                                                }
+                                            },
                                             modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                                         ) {
                                             Text("下载并安装更新 (SHA-256 + 签名校验)")

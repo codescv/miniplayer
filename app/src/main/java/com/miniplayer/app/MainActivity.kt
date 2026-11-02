@@ -110,6 +110,7 @@ private fun BackgroundVideoAudioContinuationEffect(viewModel: MiniPlayerViewMode
                         viewModel.onAppForegrounded()
                     } else {
                         hasSeenInitialStart = true
+                        viewModel.resumePendingInstallIfPermitted()
                     }
                 }
                 Lifecycle.Event.ON_STOP -> viewModel.playerController.onUiStopped()

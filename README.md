@@ -39,6 +39,12 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 ---
 
+## What's New in `v1.0.16` (`versionCode = 10016`)
+
+1. **Direct APK Installation Immediately After Update Download & Verification (`DirectInstallCoordinator.kt`, `MiniPlayerViewModel.kt`, `SettingsScreen.kt`, `MainActivity.kt`)**: Tapping **`下载并安装更新 (SHA-256 + 签名校验)`** now automatically launches the Android package installer (`FileProvider` `Intent.ACTION_VIEW`) as soon as the APK finishes downloading and passes `SHA256SUMS.txt` + 4-stage `ApkValidator` signature verification—eliminating the redundant second confirmation tap. If `canRequestPackageInstalls()` is not yet granted, `DirectInstallCoordinator` records the verified APK as pending, opens `Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES` (`package:com.miniplayer.app`), and automatically resumes installation on `Lifecycle.Event.ON_START` (`onAppForegrounded()` / `resumePendingInstallIfPermitted()`) once permission is granted, while keeping `立即安装更新` in `ReadyToInstall` as a re-trigger fallback if the user dismisses the system installer dialog.
+
+---
+
 ## What's New in `v1.0.15` (`versionCode = 10015`)
 
 1. **Direct Email Compose for Feedback with Image Attachments on Android 15–17 & ColorOS/OxygenOS (`FeedbackEmailTargetResolver.kt`, `AgentFeedbackLauncher.kt`, `AndroidManifest.xml`)**: Fixed an Android 15–17 (`ENFORCE_INTENTS_TO_MATCH_INTENT_FILTERS`) and ColorOS/OxygenOS issue where sending feedback with an image (`增加图片`) fell back to the generic `"分享1张图片"` system share sheet instead of opening the email client's compose screen. `FeedbackEmailTargetResolver` queries installed `ACTION_SENDTO` (`mailto:`) handlers (filtering out system/OEM resolvers such as `android`, `com.oplus.resolver`, and `*ResolverActivity` / `*ChooserActivity`, prioritizing the user's default `mailto:` email client, then Gmail `com.google.android.gm`, then other `mailto:` apps), resolves each email package's matching `ACTION_SEND` (`image/*` / `*/*` / `message/rfc822`) compose `ComponentName`, grants `FLAG_GRANT_READ_URI_PERMISSION` to the target package on the `FileProvider` URI, and launches an explicit `ACTION_SEND` compose intent with `EXTRA_EMAIL`, `EXTRA_SUBJECT`, `EXTRA_TEXT`, `EXTRA_STREAM`, and `ClipData` **without** `selector`.
@@ -167,7 +173,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.15.apk` | Signed Android Release APK (`versionCode = 10015`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.16.apk` | Signed Android Release APK (`versionCode = 10016`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `htdemucs_6s.onnx` | Meta Research `htdemucs_6s` hybrid transformer ONNX model (`105.1 MB` / `110,242,365` bytes) downloaded on-demand in-app for 5-stem offline separation (hosted on `v1.0.10` release) |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -184,7 +190,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 export JAVA_HOME="/path/to/jdk21"
 export ANDROID_HOME="/path/to/Android/Sdk"
 
-# Run full JVM unit, BeatGrid v2 DSP/Viterbi & cross-module integration tests (139 tests across 17 suites), debug/release APK builds, and Android Lint
+# Run full JVM unit, BeatGrid v2 DSP/Viterbi & cross-module integration tests (146 tests across 18 suites), debug/release APK builds, and Android Lint
 ./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug
 ```
 
@@ -196,6 +202,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, `v1.0.9` automatic bar-snap A-B loop & beat-only `4拍` count-in, `v1.0.10` pure Sonic pitch shifting & genuine Meta `HTDemucs` `htdemucs_6s.onnx` 5-stem separation + real-time time-domain mixer, `v1.0.11` local Agent Feedback sender, `v1.0.12` multi-band BPM detection, `v1.0.13` BeatGrid v2 6-stage beat/downbeat/phrase alignment engine & one-tap Beat-1 controls, `v1.0.14` unified single-entry Agent Feedback sheet, and `v1.0.15` direct email compose target resolution for image feedback)
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, `v1.0.9` automatic bar-snap A-B loop & beat-only `4拍` count-in, `v1.0.10` pure Sonic pitch shifting & genuine Meta `HTDemucs` `htdemucs_6s.onnx` 5-stem separation + real-time time-domain mixer, `v1.0.11` local Agent Feedback sender, `v1.0.12` multi-band BPM detection, `v1.0.13` BeatGrid v2 6-stage beat/downbeat/phrase alignment engine & one-tap Beat-1 controls, `v1.0.14` unified single-entry Agent Feedback sheet, `v1.0.15` direct email compose target resolution for image feedback, and `v1.0.16` 1-click direct update download & auto-install)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 5`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`HtdemucsStft`/`StemSeparationEngine`/`StemSeparatedTrackCache` (`BFP10`)/`com.miniplayer.app.player.beat.*` (`BeatGrid` v2) specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit, BeatGrid v2 synthetic backing-track benchmark (`139` tests across `17` suites), Lint, and `v1.0.15` verification report
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit, BeatGrid v2 synthetic backing-track benchmark (`146` tests across `18` suites), Lint, and `v1.0.16` verification report

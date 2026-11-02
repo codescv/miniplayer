@@ -91,4 +91,29 @@ class DirectInstallCoordinatorTest {
         assertFalse(c.pendingInstallAfterSettings)
         assertEquals(DirectInstallAction.None, c.onAppForegrounded(canRequestPackageInstalls = true))
     }
+
+    @Test
+    fun settingsAndLifecycleWireDirectInstallAndRecreatedActivityResume() {
+        var root: File? = File(System.getProperty("user.dir") ?: ".").canonicalFile
+        while (root != null && !(File(root, "settings.gradle.kts").isFile && File(root, "app").isDirectory)) {
+            root = root.parentFile
+        }
+        val repoRoot = checkNotNull(root) { "Could not locate repository root" }
+        val settings = File(repoRoot, "app/src/main/java/com/miniplayer/app/ui/SettingsScreen.kt").readText()
+        val mainActivity = File(repoRoot, "app/src/main/java/com/miniplayer/app/MainActivity.kt").readText()
+        val viewModel = File(repoRoot, "app/src/main/java/com/miniplayer/app/ui/MiniPlayerViewModel.kt").readText()
+
+        // Download button immediately triggers requestInstallApk without requiring a second tap
+        assertTrue(settings.contains("Text(\"下载并安装更新 (SHA-256 + 签名校验)\")"))
+        assertFalse(settings.contains("Text(\"下载并校验更新 (SHA-256 + 签名校验)\")"))
+        assertTrue(settings.contains("viewModel.downloadAndVerifyUpdate(info)"))
+        assertTrue(settings.contains("viewModel.requestInstallApk(apkFile, context)"))
+        // Fallback button stays in ReadyToInstall if user dismissed the system installer dialog
+        assertTrue(settings.contains("Text(\"立即安装更新\")"))
+        assertTrue(settings.contains("viewModel.requestInstallApk(state.apkFile, context)"))
+        // Both normal foreground return and recreated-Activity ON_START resume pending install
+        assertTrue(mainActivity.contains("viewModel.onAppForegrounded()"))
+        assertTrue(mainActivity.contains("viewModel.resumePendingInstallIfPermitted()"))
+        assertTrue(viewModel.contains("resumePendingInstallIfPermitted()"))
+    }
 }
