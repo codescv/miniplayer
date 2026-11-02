@@ -39,6 +39,12 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 ---
 
+## What's New in `v1.0.15` (`versionCode = 10015`)
+
+1. **Direct Email Compose for Feedback with Image Attachments on Android 15–17 & ColorOS/OxygenOS (`FeedbackEmailTargetResolver.kt`, `AgentFeedbackLauncher.kt`, `AndroidManifest.xml`)**: Fixed an Android 15–17 (`ENFORCE_INTENTS_TO_MATCH_INTENT_FILTERS`) and ColorOS/OxygenOS issue where sending feedback with an image (`增加图片`) fell back to the generic `"分享1张图片"` system share sheet instead of opening the email client's compose screen. `FeedbackEmailTargetResolver` queries installed `ACTION_SENDTO` (`mailto:`) handlers (filtering out system/OEM resolvers such as `android`, `com.oplus.resolver`, and `*ResolverActivity` / `*ChooserActivity`, prioritizing the user's default `mailto:` email client, then Gmail `com.google.android.gm`, then other `mailto:` apps), resolves each email package's matching `ACTION_SEND` (`image/*` / `*/*` / `message/rfc822`) compose `ComponentName`, grants `FLAG_GRANT_READ_URI_PERMISSION` to the target package on the `FileProvider` URI, and launches an explicit `ACTION_SEND` compose intent with `EXTRA_EMAIL`, `EXTRA_SUBJECT`, `EXTRA_TEXT`, `EXTRA_STREAM`, and `ClipData` **without** `selector`.
+
+---
+
 ## What's New in `v1.0.14` (`versionCode = 10014`)
 
 1. **Unified Single-Entry Agent Feedback (`发送反馈`, `SettingsScreen.kt`, `AgentFeedbackHelper.kt`)**: `关于与自动更新` now exposes exactly **one** `发送反馈` button on the `发送反馈给 Agent` row; the redundant `Agent 反馈邮箱` text button and standalone `AgentEmailConfigDialog` were removed because the feedback bottom sheet already hosts the local-only `Agent 反馈邮箱` field with an inline `保存` action. The sheet presents 3 clearly labeled core fields — **`标题`** (becomes the `play: [v1.0.14] <标题>` subject), **`问题描述`** (multiline email body), and **`增加图片`** (Android Photo Picker → `FileProvider` `Intent.EXTRA_STREAM` attachment) — and enables `发送反馈给 Agent` only when the email is valid and at least one of the three fields is non-empty (`AgentFeedbackHelper.canSendFeedback`; image-only feedback uses the `图片反馈` subject fallback).
@@ -161,7 +167,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.14.apk` | Signed Android Release APK (`versionCode = 10014`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.15.apk` | Signed Android Release APK (`versionCode = 10015`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `htdemucs_6s.onnx` | Meta Research `htdemucs_6s` hybrid transformer ONNX model (`105.1 MB` / `110,242,365` bytes) downloaded on-demand in-app for 5-stem offline separation (hosted on `v1.0.10` release) |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -178,7 +184,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 export JAVA_HOME="/path/to/jdk21"
 export ANDROID_HOME="/path/to/Android/Sdk"
 
-# Run full JVM unit, BeatGrid v2 DSP/Viterbi & cross-module integration tests (127 tests across 16 suites), debug/release APK builds, and Android Lint
+# Run full JVM unit, BeatGrid v2 DSP/Viterbi & cross-module integration tests (139 tests across 17 suites), debug/release APK builds, and Android Lint
 ./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug
 ```
 
@@ -190,6 +196,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, `v1.0.9` automatic bar-snap A-B loop & beat-only `4拍` count-in, `v1.0.10` pure Sonic pitch shifting & genuine Meta `HTDemucs` `htdemucs_6s.onnx` 5-stem separation + real-time time-domain mixer, `v1.0.11` local Agent Feedback sender, `v1.0.12` multi-band BPM detection, and `v1.0.13` BeatGrid v2 6-stage beat/downbeat/phrase alignment engine & one-tap Beat-1 controls)
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, `v1.0.9` automatic bar-snap A-B loop & beat-only `4拍` count-in, `v1.0.10` pure Sonic pitch shifting & genuine Meta `HTDemucs` `htdemucs_6s.onnx` 5-stem separation + real-time time-domain mixer, `v1.0.11` local Agent Feedback sender, `v1.0.12` multi-band BPM detection, `v1.0.13` BeatGrid v2 6-stage beat/downbeat/phrase alignment engine & one-tap Beat-1 controls, `v1.0.14` unified single-entry Agent Feedback sheet, and `v1.0.15` direct email compose target resolution for image feedback)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 5`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`HtdemucsStft`/`StemSeparationEngine`/`StemSeparatedTrackCache` (`BFP10`)/`com.miniplayer.app.player.beat.*` (`BeatGrid` v2) specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit, BeatGrid v2 synthetic backing-track benchmark (`127` tests across `16` suites), Lint, and `v1.0.13` verification report
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit, BeatGrid v2 synthetic backing-track benchmark (`139` tests across `17` suites), Lint, and `v1.0.15` verification report

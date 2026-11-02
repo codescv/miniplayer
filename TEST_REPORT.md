@@ -1,9 +1,11 @@
-# MiniPlayer v1.0.13 — Verification, Security Audit & Release Report
+# MiniPlayer v1.0.15 — Verification, Security Audit & Release Report
 
-**Version:** `1.0.13` (`versionCode = 10013`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
+**Version:** `1.0.15` (`versionCode = 10015`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch / Worktree Verified (`v1.0.13`):** `/tmp/wt-play-v1013` (`vibe/v1013`, stacked on `main` @ `770ba6c`; **`127` unit, BeatGrid v2 DSP/Viterbi & cross-module integration tests across `16` suites**, `126` executed, `0` failures, `0` errors, `1` optional local-model E2E skipped when `/tmp/htdemucs-export/htdemucs_6s.onnx` is absent)  
-**Release APK (`v1.0.13`):** `MiniPlayer-v1.0.13.apk` (`app/build/outputs/apk/release/app-release.apk`) — **`85,304,465` bytes**, SHA-256 **`afd0d7a9b98dfd4a6bbccd84dff20d371edf0cd9002baf996e99460ac4899b13`**  
+**Branch / Worktree Verified (`v1.0.15`):** `/tmp/wt-play-6facdd7c` (`vibe/6facdd7c`, stacked on `main` @ `46d66ca`; **`139` unit, BeatGrid v2 DSP/Viterbi & cross-module integration tests across `17` suites**, `138` executed, `0` failures, `0` errors, `1` optional local-model E2E skipped when `/tmp/htdemucs-export/htdemucs_6s.onnx` is absent)  
+**Release APK (`v1.0.15`):** `MiniPlayer-v1.0.15.apk` (`app/build/outputs/apk/release/app-release.apk`) — **`85,320,989` bytes**, SHA-256 **`d4c6dcaa6e2fefd989ad73d311ae647b92c30c6d2bd8262d3da53d9e3d2d60a7`**  
+**Previous Release APK (`v1.0.14`):** `MiniPlayer-v1.0.14.apk` — `85,304,465` bytes, SHA-256 `4fb71d4622584674b37f1bb99891332d2940ab837fbd412a4c03e23477474018`  
+**Previous Release APK (`v1.0.13`):** `MiniPlayer-v1.0.13.apk` — `85,304,465` bytes, SHA-256 `afd0d7a9b98dfd4a6bbccd84dff20d371edf0cd9002baf996e99460ac4899b13`  
 **Previous Release APK (`v1.0.12`):** `MiniPlayer-v1.0.12.apk` — `85,238,929` bytes, SHA-256 `370565a8294e31669000a272d3038faafae7d5a7b68496e1a20215d86535999e`  
 **Previous Release APK (`v1.0.11`):** `MiniPlayer-v1.0.11.apk` — `85,238,929` bytes, SHA-256 `b144cae8503c25099bdc416f4b04a5f003f8aa5a3b1ec3146370747faaca266c`  
 **Release APK (`v1.0.10`):** `app/build/outputs/apk/release/app-release.apk` — **`85,206,021` bytes**, SHA-256 **`ab7f57128e2772c432fde69f59b3bd253ab6a05ae33eb261e1c864ef04710979`**  
@@ -14,7 +16,24 @@
 
 ---
 
-## 000. `v1.0.13` BeatGrid v2 SOTA Beat, Downbeat & Hypermeter Alignment Verification
+## 0000. `v1.0.15` Direct Email Compose Resolution for Image Feedback Verification
+
+Run in isolated verification worktree `/tmp/wt-play-6facdd7c` (`vibe/6facdd7c`, `JAVA_HOME=~/.jdks/jdk21`, `ANDROID_HOME=~/Android/Sdk`):
+- **Command:** `./gradlew --offline testDebugUnitTest lintDebug assembleRelease` (`BUILD SUCCESSFUL`)
+- **Unit & Cross-Module Integration Tests:** **`139`** tests across **`17`** suites (`138` passed, `0` failures, `0` errors, `1` optional local-ONNX-file test skipped), including **`9/9`** in `FeedbackEmailTargetResolverTest` and **`9/9`** in `AgentFeedbackHelperTest`:
+  - System/OEM resolver filtering (`android`, `com.oplus.resolver`, `com.coloros.resolver`, `com.android.intentresolver`, `*ResolverActivity` / `*ChooserActivity`, and untrusted `com.oplus.*` / `com.coloros.*` / `com.heytap.*` packages).
+  - Deterministic email package ordering: (1) default `mailto:` email client, (2) `com.google.android.gm` (Gmail), (3) remaining `mailto:` handlers.
+  - Package-scoped `ACTION_SEND` (`image/jpeg` -> `image/*` -> `*/*` -> `message/rfc822`) compose `ComponentName` resolution, explicit `grantUriPermission(..., FLAG_GRANT_READ_URI_PERMISSION)`, `EXTRA_EMAIL` / `EXTRA_SUBJECT` / `EXTRA_TEXT` / `EXTRA_STREAM` / `ClipData`, and strict `hasSelector == false` invariant so Android 15–17 `ENFORCE_INTENTS_TO_MATCH_INTENT_FILTERS` and ColorOS/OxygenOS never divert image feedback into `"分享1张图片"`.
+  - Repository-wide `SecretScan` confirming zero hardcoded personal/corporate email addresses or secret tokens, and pure-JVM boundary check on `com.miniplayer.app.core.feedback`.
+- **Android Lint (`lintDebug` & `lintVitalRelease`):** **`0` errors**, `37` warnings.
+- **Release APK (`MiniPlayer-v1.0.15.apk`):**
+  - `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10015' versionName='1.0.15' platformBuildVersionName='15' platformBuildVersionCode='35' compileSdkVersion='35'`, `minSdkVersion:'26'`, `targetSdkVersion:'35'`.
+  - `apksigner verify -v --print-certs`: `Verifies` (APK Signature Scheme v2 `true`), `1` signer, `CN=Android Debug`, certificate SHA-256 `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5` (identical signing identity to `v1.0.5`–`v1.0.14` for seamless `ApkValidator` in-place upgrades).
+  - Byte size & digest: **`85,320,989` bytes**, SHA-256 **`d4c6dcaa6e2fefd989ad73d311ae647b92c30c6d2bd8262d3da53d9e3d2d60a7`**.
+
+---
+
+## 000. `v1.0.13` BeatGrid v2 SOTA Beat, Downbeat & Hypermeter Alignment Verification (previous)
 
 Run in isolated verification worktree `/tmp/wt-play-v1013` (`vibe/v1013`, `JAVA_HOME=~/.jdks/jdk21`, `ANDROID_HOME=~/Android/Sdk`):
 - **Commands:**
@@ -183,16 +202,17 @@ All Android builds and pure-JVM unit/integration tests succeeded **100% offline*
 
 ---
 
-## 3. Unit & End-to-End Integration Test Suites (`v1.0.13`)
+## 3. Unit & End-to-End Integration Test Suites (`v1.0.15`)
 
 ### 3.1 JVM, BeatGrid v2 DSP/Viterbi & Cross-Module Test Summary (`./gradlew testDebugUnitTest`)
 
-**Summary:** `16` test suites, **`127` tests (`126` passed, `0` failures, `0` errors, `1` optional local-model test skipped)**.
+**Summary:** `17` test suites, **`139` tests (`138` passed, `0` failures, `0` errors, `1` optional local-model test skipped)**.
 
 | Test Suite | Tests | Passed | Coverage Scope |
 |---|---:|---:|---|
 | `core.db.DatabaseAndScannerTest` | 11 | 11 | SQLite `DATABASE_VERSION = 5` (`bpm_precise`, `beats_per_bar`, `phrase_offset_bars`, `beat_grid_source` real `sqlite3` `v4 -> v5` migration preserving rows as `AUTO_LEGACY` + `3/4` waltz & negative `firstDownbeatMs` round-trip), subfolder rename dedup (`rock` → `Rock` / `metal`), 10-table FK cascades, 5-level metadata priority chain, multi-artist album grouping, SAF overlap dedup & merge, nearest-ancestor `folder_rules` inheritance, Practice Folder & Exclude-from-Auto-Grouping isolation, `OfflineVolumeGuard`, `<10ms` incremental skip, unconditional `.nomedia` scanning, and `fileWriteMutex` serialization |
-| `core.feedback.AgentFeedbackHelperTest` | 6 | 6 | `play: [v1.0.13]` subject normalization, RFC 6068 `%20` `mailto:` encoding, blank summary fallback, diagnostic formatting including BeatGrid v2 (`bpmPrecise`, `beatsPerBar`, `firstDownbeatMs`, `beatGridSource`), and privacy hygiene |
+| `core.feedback.AgentFeedbackHelperTest` | 9 | 9 | `play: [v1.0.15]` subject normalization, unified `标题`/`问题描述`/`增加图片` send-gate & image-only `图片反馈` fallback, RFC 6068 `%20` `mailto:` encoding, diagnostic formatting including BeatGrid v2, single-entry `SettingsScreen` source check, and repo-wide `SecretScan` & pure-JVM boundary hygiene |
+| `core.feedback.FeedbackEmailTargetResolverTest` | 9 | 9 | System/OEM resolver filtering (`android`, `com.oplus.resolver`, `com.coloros.resolver`, `com.android.intentresolver`, `*ResolverActivity`/`*ChooserActivity`), deterministic `mailto:` package ordering (default -> Gmail -> others), `ACTION_SEND` (`image/jpeg` -> `image/*` -> `*/*` -> `message/rfc822`) compose `ComponentName` resolution, and explicit `FeedbackSendIntentSpec` (`hasSelector == false`, `grantReadUriPermission == true`) |
 | `core.metadata.AudioTagCodecTest` | 5 | 5 | Crash-safe read/write & unknown-frame preservation across MP3 ID3v2.3/v2.4 + APIC, FLAC Vorbis Comments + PICTURE, Ogg Vorbis / Opus (`granulePosition = 0L` & valid Ogg CRC-32), MP4/M4A `ilst` (`stco`/`co64` chunk offset recalculation + 64-bit `co64` overflow upgrade), and zero-staging `PosixFdByteSource` |
 | `core.metadata.MetadataAndLanTest` | 2 | 2 | `DefaultMetadataEngine.saveMetadata` persists staged candidate `coverRemoteUrl` cover bytes, `syncedLrc`/`plainLyrics` lyrics cache and tags on save; LAN `GET /api/metadata/candidates` and `"candidatesOnly": true` return candidates without auto-saving until `POST /api/metadata/update` |
 | `core.metadata.MetadataParsingAndM3uTest` | 5 | 5 | `SmartFilenameParser`, `ArtistSplitter` (`AC/DC` allowlist), `.lrc` parser (UTF-8/GB18030/UTF-16), and `.m3u8` `#EXT-X-MINIPLAYER-PRACTICE:1` 3-tier import/export |
@@ -207,4 +227,4 @@ All Android builds and pure-JVM unit/integration tests succeeded **100% offline*
 | `lan.LanStudioServerTest` | 9 | 9 | Emoji-free SPA serving, library filters (`isInPracticeFolder` & `isExcludedFromAutoGrouping` isolation), HTTP `200` + `206 Partial Content` byte-range streaming, streaming upload + `mkdir` + `folder-rule`, metadata persistence, `.m3u8` round-trip, bookmark CRUD, BeatGrid v2 JSON round-trip (`bpmPrecise`, `beatsPerBar`, `phraseOffsetBars`, `beatGridSource`, negative `firstDownbeatMs`, non-truncating integer echo), and RFC 1918/loopback + `Host` + `Origin` + PIN security guards |
 | `lan.QrCodeGeneratorTest` | 3 | 3 | Pure-Kotlin ISO/IEC 18004 QR Version 1–10 capacity compliance, GF(256) Reed-Solomon syndrome verification, and oversized payload rejection |
 | `integration.MiniPlayerEndToEndIntegrationTest` | 6 | 6 | Full cross-module E2E verification across `core`, `player`, and `lan` (including folder `"不自动归类"` inheritance/casual-playback invariants, recursive folder-to-playlist natural sort collection, and unconditional `.nomedia` scanning) |
-| **Total** | **127** | **126 (+1 skip)** | **100% pass (`0` failures, `0` errors)** |
+| **Total** | **139** | **138 (+1 skip)** | **100% pass (`0` failures, `0` errors)** |

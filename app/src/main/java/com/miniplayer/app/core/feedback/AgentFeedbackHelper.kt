@@ -71,7 +71,7 @@ object AgentFeedbackHelper {
     const val DEFAULT_SUMMARY = "使用反馈"
     /** `v1.0.14`: subject/body fallback when only an image (`增加图片`) is attached without 标题/问题描述. */
     const val ATTACHMENT_ONLY_SUMMARY = "图片反馈"
-    const val DEFAULT_VERSION_TAG = "v1.0.14"
+    const val DEFAULT_VERSION_TAG = "v1.0.15"
     const val MAX_SUMMARY_LENGTH = 120
     private const val FALLBACK_SUMMARY_LENGTH = 60
 
