@@ -3,14 +3,21 @@ package com.miniplayer.app.ui
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import com.miniplayer.app.core.feedback.AgentFeedbackPayload
+import com.miniplayer.app.core.feedback.FeedbackEmailTargetResolver
+import com.miniplayer.app.core.feedback.FeedbackSendIntentSpec
 import com.miniplayer.app.core.feedback.FeedbackPreferenceStore
+import com.miniplayer.app.core.feedback.ResolvedEmailActivity
 import java.io.File
 import java.io.IOException
 
@@ -119,18 +126,38 @@ object AgentFeedbackLauncher {
         attachment: StagedFeedbackAttachment? = null,
     ): Boolean {
         val needNewTask = context !is Activity
+        val pm = context.packageManager
+        val mailtoProbes = listOf(
+            Intent(Intent.ACTION_SENDTO, Uri.parse(payload.mailtoUri)),
+            Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")),
+        )
+        val defaultMailto = mailtoProbes.firstNotNullOfOrNull { probe ->
+            runCatching { pm.resolveDefaultActivity(probe) }.getOrNull()
+        }
+        val mailtoActivities = mailtoProbes
+            .flatMap { probe ->
+                pm.queryActivitiesSafe(probe, PackageManager.MATCH_DEFAULT_ONLY) +
+                    pm.queryActivitiesSafe(probe, 0)
+            }
+            .distinct()
+
         if (attachment == null) {
-            val sendToIntent = Intent(Intent.ACTION_SENDTO).apply {
+            fun buildSendTo(pkg: String?): Intent = Intent(Intent.ACTION_SENDTO).apply {
                 data = Uri.parse(payload.mailtoUri)
+                if (pkg != null) setPackage(pkg)
                 putExtra(Intent.EXTRA_EMAIL, arrayOf(payload.recipientEmail))
                 putExtra(Intent.EXTRA_SUBJECT, payload.subject)
                 putExtra(Intent.EXTRA_TEXT, payload.body)
                 if (needNewTask) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            try {
-                context.startActivity(sendToIntent)
-                return true
-            } catch (_: ActivityNotFoundException) {
+            if (context.tryStart(buildSendTo(null))) return true
+            val emailPackages = FeedbackEmailTargetResolver.orderEmailPackages(
+                defaultMailto = defaultMailto,
+                mailtoActivities = mailtoActivities,
+                includeGmailIfInstalled = false,
+            )
+            for (pkg in emailPackages) {
+                if (context.tryStart(buildSendTo(pkg))) return true
             }
 
             val fallbackSend = Intent(Intent.ACTION_SEND).apply {
@@ -142,44 +169,119 @@ object AgentFeedbackLauncher {
             val chooser = Intent.createChooser(fallbackSend, "发送反馈给 Agent").apply {
                 if (needNewTask) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            return runCatching {
-                context.startActivity(chooser)
-                true
-            }.getOrDefault(false)
+            return context.tryStart(chooser)
         }
 
-        fun buildAttachmentSendIntent(withMailtoSelector: Boolean): Intent =
-            Intent(Intent.ACTION_SEND).apply {
-                type = attachment.mimeType.ifBlank { "image/*" }
-                putExtra(Intent.EXTRA_EMAIL, arrayOf(payload.recipientEmail))
-                putExtra(Intent.EXTRA_SUBJECT, payload.subject)
-                putExtra(Intent.EXTRA_TEXT, payload.body)
-                putExtra(Intent.EXTRA_STREAM, attachment.contentUri)
-                clipData = ClipData.newRawUri("feedback_attachment", attachment.contentUri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                if (withMailtoSelector) {
-                    selector = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:"))
-                }
+        // v1.0.15: launch the email client's ACTION_SEND compose activity explicitly (no selector) so
+        // Android 15–17 intent-filter enforcement never rejects it and ColorOS/OxygenOS never turns it
+        // into the generic "分享1张图片" share sheet.
+        val targets = FeedbackEmailTargetResolver.resolveComposeTargets(
+            defaultMailto = defaultMailto,
+            mailtoActivities = mailtoActivities,
+            attachmentMime = attachment.mimeType,
+        ) { pkg, mime ->
+            val probe = Intent(Intent.ACTION_SEND).apply {
+                type = mime
+                setPackage(pkg)
+            }
+            pm.queryActivitiesSafe(probe, PackageManager.MATCH_DEFAULT_ONLY)
+                .ifEmpty { pm.queryActivitiesSafe(probe, 0) }
+        }
+        for (target in targets) {
+            val spec = FeedbackEmailTargetResolver.buildAttachmentSendSpec(
+                payload = payload,
+                target = target,
+                attachmentUri = attachment.contentUri.toString(),
+            )
+            runCatching {
+                context.grantUriPermission(
+                    target.packageName,
+                    attachment.contentUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            val intent = spec.toIntent(attachment.contentUri).apply {
                 if (needNewTask) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-
-        try {
-            context.startActivity(buildAttachmentSendIntent(withMailtoSelector = true))
-            return true
-        } catch (_: ActivityNotFoundException) {
+            if (context.tryStart(intent)) return true
         }
 
-        val chooser = Intent.createChooser(
-            buildAttachmentSendIntent(withMailtoSelector = false),
-            "发送反馈给 Agent",
-        ).apply {
+        // Last resort only when no email client exposes a visible ACTION_SEND compose activity.
+        val fallbackSend = Intent(Intent.ACTION_SEND).apply {
+            type = attachment.mimeType.ifBlank { "image/*" }
+            putExtra(Intent.EXTRA_EMAIL, arrayOf(payload.recipientEmail))
+            putExtra(Intent.EXTRA_SUBJECT, payload.subject)
+            putExtra(Intent.EXTRA_TEXT, payload.body)
+            putExtra(Intent.EXTRA_STREAM, attachment.contentUri)
+            clipData = ClipData.newRawUri(FeedbackEmailTargetResolver.CLIP_LABEL, attachment.contentUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(fallbackSend, "发送反馈给 Agent").apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (needNewTask) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        return runCatching {
-            context.startActivity(chooser)
+        return context.tryStart(chooser)
+    }
+
+    private fun FeedbackSendIntentSpec.toIntent(streamUri: Uri): Intent {
+        val spec = this
+        val intent = Intent(spec.action)
+        val explicitClass = spec.className
+        if (explicitClass != null) {
+            intent.component = ComponentName(spec.packageName, explicitClass)
+        } else {
+            intent.setPackage(spec.packageName)
+        }
+        intent.type = spec.mimeType
+        intent.putExtra(Intent.EXTRA_EMAIL, spec.recipients.toTypedArray())
+        intent.putExtra(Intent.EXTRA_SUBJECT, spec.subject)
+        intent.putExtra(Intent.EXTRA_TEXT, spec.text)
+        intent.putExtra(Intent.EXTRA_STREAM, streamUri)
+        intent.clipData = ClipData.newRawUri(spec.clipLabel, streamUri)
+        if (spec.grantReadUriPermission) intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        // spec.hasSelector is always false by contract: never set `selector` on an explicit ACTION_SEND.
+        return intent
+    }
+
+    private fun Context.tryStart(intent: Intent): Boolean =
+        try {
+            startActivity(intent)
             true
-        }.getOrDefault(false)
+        } catch (_: ActivityNotFoundException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
+
+    private fun PackageManager.resolveDefaultActivity(intent: Intent): ResolvedEmailActivity? {
+        val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            resolveActivity(
+                intent,
+                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        }
+        return info?.toResolvedEmailActivity()
+    }
+
+    private fun PackageManager.queryActivitiesSafe(intent: Intent, flags: Int): List<ResolvedEmailActivity> =
+        runCatching {
+            val infos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(flags.toLong()))
+            } else {
+                @Suppress("DEPRECATION")
+                queryIntentActivities(intent, flags)
+            }
+            infos.mapNotNull { it.toResolvedEmailActivity() }
+        }.getOrDefault(emptyList())
+
+    private fun ResolveInfo.toResolvedEmailActivity(): ResolvedEmailActivity? {
+        val ai = activityInfo ?: return null
+        val pkg = ai.packageName ?: return null
+        val name = ai.name ?: return null
+        return ResolvedEmailActivity(packageName = pkg, activityName = name)
     }
 
     private fun purgeStaleAttachments(feedbackDir: File) {
