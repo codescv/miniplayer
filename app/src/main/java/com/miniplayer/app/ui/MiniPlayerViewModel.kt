@@ -17,6 +17,8 @@ import com.miniplayer.app.core.feedback.FeedbackDiagnostics
 import com.miniplayer.app.core.metadata.DefaultMetadataEngine
 import com.miniplayer.app.core.metadata.SmartFilenameParser
 import com.miniplayer.app.core.model.*
+import com.miniplayer.app.core.update.DirectInstallAction
+import com.miniplayer.app.core.update.DirectInstallCoordinator
 import com.miniplayer.app.player.PlayerController
 import com.miniplayer.app.player.StemAnalysisState
 import java.io.File
@@ -252,6 +254,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     private val _updateState = MutableStateFlow<UiUpdateState>(UiUpdateState.Idle)
     val updateState: StateFlow<UiUpdateState> = _updateState.asStateFlow()
 
+    private val directInstallCoordinator = DirectInstallCoordinator()
+
     private val feedbackStore = SharedPreferencesFeedbackStore(
         application.getSharedPreferences(AgentFeedbackHelper.PREFS_NAME, Context.MODE_PRIVATE),
     )
@@ -405,6 +409,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun onAppForegrounded() {
+        resumePendingInstallIfPermitted()
         val now = System.currentTimeMillis()
         if (scanProgress.value.isScanning || now - lastForegroundScanAtMs < 1_500L) return
         if (safRoots.value.isEmpty()) return
@@ -1010,29 +1015,86 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun downloadAndVerifyUpdate(info: UpdateInfo) {
+    /**
+     * Downloads + verifies (SHA-256 + signing certificate) the update APK, then installs it directly
+     * without a second confirmation tap (`v1.0.16`). [onReadyToInstall] defaults to [requestInstallApk];
+     * the `UiUpdateState.ReadyToInstall` state is still published so `立即安装更新` can re-trigger
+     * installation if the user dismissed the system installer dialog.
+     */
+    fun downloadAndVerifyUpdate(
+        info: UpdateInfo,
+        onReadyToInstall: ((File) -> Unit)? = null,
+    ) {
+        if (_updateState.value is UiUpdateState.Downloading) return
         _updateState.value = UiUpdateState.Downloading(info, 0L, info.apkSizeBytes)
         viewModelScope.launch {
-            try {
-                val apkFile = core.updater.downloadAndVerifyUpdate(info) { downloaded, total ->
+            val apkFile = try {
+                core.updater.downloadAndVerifyUpdate(info) { downloaded, total ->
                     _updateState.value = UiUpdateState.Downloading(info, downloaded, total)
                 }
-                _updateState.value = UiUpdateState.ReadyToInstall(info, apkFile)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 _updateState.value = UiUpdateState.Error(e.message ?: "下载或安全校验 APK 失败")
+                return@launch
             }
+            _updateState.value = UiUpdateState.ReadyToInstall(info, apkFile)
+            if (onReadyToInstall != null) onReadyToInstall(apkFile) else requestInstallApk(apkFile)
         }
+    }
+
+    /**
+     * Launches the system package installer for a verified [apkFile] right away. If the
+     * unknown-sources permission is missing, opens `ACTION_MANAGE_UNKNOWN_APP_SOURCES` and remembers the
+     * APK so [onAppForegrounded] installs it automatically once the user grants permission and returns.
+     */
+    fun requestInstallApk(apkFile: File, context: Context = getApplication<Application>()) {
+        val action = directInstallCoordinator.onApkVerified(apkFile, core.updater.canRequestPackageInstalls())
+        performDirectInstallAction(action, context)
+    }
+
+    private fun performDirectInstallAction(action: DirectInstallAction, context: Context) {
+        val intent = when (action) {
+            is DirectInstallAction.None -> return
+            is DirectInstallAction.LaunchInstaller -> runCatching { core.updater.buildInstallIntent(action.apkFile) }
+                .getOrElse { e ->
+                    emitMessage("无法启动安装程序：${e.message ?: e.javaClass.simpleName}")
+                    return
+                }
+            is DirectInstallAction.RequestInstallPermission -> buildUnknownSourcesSettingsIntent()
+        }
+        runCatching { context.startActivity(intent) }
+            .onSuccess {
+                if (action is DirectInstallAction.RequestInstallPermission) {
+                    emitMessage("请允许 MiniPlayer 安装未知应用，返回后将自动安装更新")
+                }
+            }
+            .onFailure { e ->
+                if (action is DirectInstallAction.RequestInstallPermission) directInstallCoordinator.clearPending()
+                emitMessage("无法启动安装程序：${e.message ?: e.javaClass.simpleName}")
+            }
+    }
+
+    /** Called on `ON_START`: auto-installs an APK left pending while the user granted unknown-sources permission. */
+    private fun resumePendingInstallIfPermitted() {
+        if (!directInstallCoordinator.pendingInstallAfterSettings) return
+        val action = directInstallCoordinator.onAppForegrounded(core.updater.canRequestPackageInstalls())
+        performDirectInstallAction(action, getApplication<Application>())
+    }
+
+    private fun buildUnknownSourcesSettingsIntent(): Intent {
+        val app = getApplication<Application>()
+        return Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${app.packageName}"),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
     fun buildInstallOrPermissionIntent(apkFile: File): Intent {
         return if (core.updater.canRequestPackageInstalls()) {
             core.updater.buildInstallIntent(apkFile)
         } else {
-            val app = getApplication<Application>()
-            Intent(
-                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:${app.packageName}"),
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            buildUnknownSourcesSettingsIntent()
         }
     }
 

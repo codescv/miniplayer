@@ -200,7 +200,7 @@ fun SettingsScreen(
                                             onClick = { viewModel.downloadAndVerifyUpdate(info) },
                                             modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                                         ) {
-                                            Text("下载并校验更新 (SHA-256 + 签名校验)")
+                                            Text("下载并安装更新 (SHA-256 + 签名校验)")
                                         }
                                     } else {
                                         Text(
@@ -242,10 +242,7 @@ fun SettingsScreen(
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                                     )
                                     Button(
-                                        onClick = {
-                                            val intent = viewModel.buildInstallOrPermissionIntent(state.apkFile)
-                                            context.startActivity(intent)
-                                        },
+                                        onClick = { viewModel.requestInstallApk(state.apkFile, context) },
                                         modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                                     ) {
                                         Text("立即安装更新")
