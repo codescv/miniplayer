@@ -6,13 +6,14 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -48,12 +49,31 @@ fun PlaylistsScreen(
     val playback by viewModel.playbackSnapshot.collectAsState()
 
     var showCreateDialog by remember { mutableStateOf(false) }
+    var createDialogPractice by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<PlaylistSummary?>(null) }
 
     LaunchedEffect(Unit) {
         if (searchQuery.isNotEmpty()) {
             viewModel.setPlaylistSearchQuery("")
         }
+    }
+
+    // Swipeable sub-tab pager: FilterChips <-> HorizontalPager stay in sync (§4.2). Each page keeps
+    // its own hoisted scroll state so swiping away and back preserves exact positions.
+    val playlistTabs = SubTabOrder.PLAYLISTS
+    val subTabs = rememberSubTabPager(
+        tabs = playlistTabs,
+        selectedTab = filter,
+        onSelectTab = { viewModel.selectPlaylistFilter(it) },
+    )
+    val displayedFilter = subTabs.displayedTab
+    val allListState = rememberLazyListState()
+    val practiceListState = rememberLazyListState()
+    val bookmarksListState = rememberLazyListState()
+    val openCreateDialog = {
+        // Snapshot the active tab at open time so the dialog's default never flips mid-edit.
+        createDialogPractice = subTabs.displayedTab == PlaylistFilter.PRACTICE_ONLY
+        showCreateDialog = true
     }
 
     BackHandler(enabled = activeDetail != null) {
@@ -120,95 +140,85 @@ fun PlaylistsScreen(
                     actions = {},
                 )
 
-                // Mandatory Single-Select 3 FilterChips (§4.2)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val chips = listOf(
-                        PlaylistFilter.ALL to "全部",
-                        PlaylistFilter.PRACTICE_ONLY to "练习列表",
-                        PlaylistFilter.WITH_BOOKMARKS to "含段落书签",
-                    )
-                    chips.forEach { (chipFilter, label) ->
-                        val selected = filter == chipFilter
-                        FilterChip(
-                            selected = selected,
-                            onClick = {
-                                if (!selected) viewModel.selectPlaylistFilter(chipFilter)
-                            },
-                            label = { Text(label) },
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        )
-                    }
-                }
+                // Mandatory Single-Select 3 FilterChips (§4.2), swipe-synced with the pager below
+                SubTabChipRow(
+                    tabs = playlistTabs,
+                    activeTab = displayedFilter,
+                    label = SubTabOrder::playlistLabel,
+                    onChipClick = subTabs::onChipClick,
+                )
             }
         },
         floatingActionButton = {
-            if (filter != PlaylistFilter.WITH_BOOKMARKS) {
+            if (playlistFabVisible(displayedFilter)) {
                 FloatingActionButton(
-                    onClick = { showCreateDialog = true },
+                    onClick = openCreateDialog,
                 ) {
                     Icon(Icons.Outlined.Add, contentDescription = "新建播放列表")
                 }
             }
         },
     ) { innerPadding ->
-        if (filter == PlaylistFilter.WITH_BOOKMARKS) {
-            BookmarkedTracksSection(
-                items = bookmarkedTracks,
-                searchQuery = searchQuery,
-                onJumpToBookmark = { track, bookmark ->
-                    viewModel.playFromContext(
-                        items = listOf(track),
-                        startIndex = 0,
-                        context = PlayContext.BOOKMARK_JUMP,
-                        targetBookmark = bookmark,
-                        openFullPlayer = true,
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-            )
-        } else {
-            val filteredPlaylists = remember(playlists, filter, searchQuery) {
-                playlists.filter { pl ->
-                    val matchesFilter = filter == PlaylistFilter.ALL || pl.isPracticePlaylist
-                    val matchesSearch = searchQuery.isBlank() || pl.name.contains(searchQuery, ignoreCase = true)
-                    matchesFilter && matchesSearch
-                }
-            }
-
-            if (filteredPlaylists.isEmpty()) {
-                EmptyLibraryPlaceholder(
-                    title = if (filter == PlaylistFilter.PRACTICE_ONLY) "暂无练习列表" else "暂无自建播放列表",
-                    subtitle = "可将音频伴奏与教学视频混排在同一练习列表中，点播自动展开练习工作台。",
-                    actionLabel = "新建播放列表",
-                    onAction = { showCreateDialog = true },
+        HorizontalPager(
+            state = subTabs.pagerState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            key = { page -> playlistTabs.tabAtPage(page).name },
+        ) { page ->
+            // Each page renders its OWN filter (never the global `filter`) so mid-swipe
+            // neighbours already show their final content.
+            val pageFilter = playlistTabs.tabAtPage(page)
+            if (pageFilter == PlaylistFilter.WITH_BOOKMARKS) {
+                BookmarkedTracksSection(
+                    items = bookmarkedTracks,
+                    searchQuery = searchQuery,
+                    listState = bookmarksListState,
+                    onJumpToBookmark = { track, bookmark ->
+                        viewModel.playFromContext(
+                            items = listOf(track),
+                            startIndex = 0,
+                            context = PlayContext.BOOKMARK_JUMP,
+                            targetBookmark = bookmark,
+                            openFullPlayer = true,
+                        )
+                    },
+                    modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    items(filteredPlaylists, key = { it.playlistId }) { pl ->
-                        PlaylistSummaryCard(
-                            playlist = pl,
-                            onClick = { viewModel.openPlaylist(pl.playlistId) },
-                            onRename = { renameTarget = pl },
-                            onTogglePractice = {
-                                viewModel.setPlaylistPracticeMode(pl.playlistId, !pl.isPracticePlaylist)
-                            },
-                            onExport = { onExportM3uRequest(pl.playlistId, pl.name) },
-                            onDelete = { viewModel.deletePlaylist(pl.playlistId) },
-                        )
+                val pagePlaylists = remember(playlists, pageFilter, searchQuery) {
+                    playlistsForPage(playlists, pageFilter, searchQuery)
+                }
+
+                if (pagePlaylists.isEmpty()) {
+                    EmptyLibraryPlaceholder(
+                        title = playlistPageEmptyTitle(pageFilter),
+                        subtitle = "可将音频伴奏与教学视频混排在同一练习列表中，点播自动展开练习工作台。",
+                        actionLabel = "新建播放列表",
+                        onAction = {
+                            createDialogPractice = pageFilter == PlaylistFilter.PRACTICE_ONLY
+                            showCreateDialog = true
+                        },
+                    )
+                } else {
+                    LazyColumn(
+                        state = if (pageFilter == PlaylistFilter.PRACTICE_ONLY) practiceListState else allListState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(pagePlaylists, key = { it.playlistId }) { pl ->
+                            PlaylistSummaryCard(
+                                playlist = pl,
+                                onClick = { viewModel.openPlaylist(pl.playlistId) },
+                                onRename = { renameTarget = pl },
+                                onTogglePractice = {
+                                    viewModel.setPlaylistPracticeMode(pl.playlistId, !pl.isPracticePlaylist)
+                                },
+                                onExport = { onExportM3uRequest(pl.playlistId, pl.name) },
+                                onDelete = { viewModel.deletePlaylist(pl.playlistId) },
+                            )
+                        }
                     }
                 }
             }
@@ -218,7 +228,7 @@ fun PlaylistsScreen(
     if (showCreateDialog) {
         CreateOrRenamePlaylistDialog(
             initialName = "",
-            initialPractice = filter == PlaylistFilter.PRACTICE_ONLY,
+            initialPractice = createDialogPractice,
             isRenameOnly = false,
             onConfirm = { name, isPractice ->
                 viewModel.createPlaylist(name, isPractice)
@@ -380,6 +390,7 @@ private fun BookmarkedTracksSection(
     searchQuery: String,
     onJumpToBookmark: (MediaItem, PracticeBookmark) -> Unit,
     modifier: Modifier = Modifier,
+    listState: LazyListState = rememberLazyListState(),
 ) {
     val filtered = remember(items, searchQuery) {
         if (searchQuery.isBlank()) items
@@ -402,6 +413,7 @@ private fun BookmarkedTracksSection(
 
     LazyColumn(
         modifier = modifier,
+        state = listState,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {

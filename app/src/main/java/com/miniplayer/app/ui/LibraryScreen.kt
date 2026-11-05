@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -72,8 +73,21 @@ fun LibraryScreen(
     val artistListState = rememberLazyListState()
     val videoListState = rememberLazyListState()
 
-    // Predictive Back handling for secondary drill-down views
-    BackHandler(enabled = activeAlbum != null || activeArtist != null || folderBrowse != null) {
+    // Swipeable sub-tab pager: FilterChips <-> HorizontalPager stay in sync (§4.1)
+    val libraryTabs = SubTabOrder.LIBRARY
+    val subTabs = rememberSubTabPager(
+        tabs = libraryTabs,
+        selectedTab = activeView,
+        onSelectTab = { viewModel.selectLibraryView(it) },
+    )
+    val displayedView = subTabs.displayedTab
+
+    // Predictive Back handling for secondary drill-down views. Folder drill-down only intercepts
+    // Back while its `文件夹` page is the visible one (it stays open underneath other views).
+    BackHandler(
+        enabled = activeAlbum != null || activeArtist != null ||
+            (folderBrowse != null && displayedView == LibraryView.FOLDERS),
+    ) {
         when {
             activeAlbum != null -> viewModel.closeAlbum()
             activeArtist != null -> viewModel.closeArtist()
@@ -142,35 +156,13 @@ fun LibraryScreen(
                     },
                 )
 
-                // Mandatory Single-Select 4 FilterChips (§4.1)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val chips = listOf(
-                        LibraryView.FOLDERS to "文件夹",
-                        LibraryView.ALBUMS to "专辑",
-                        LibraryView.ARTISTS to "歌手",
-                        LibraryView.VIDEOS to "视频",
-                    )
-                    chips.forEach { (view, label) ->
-                        val selected = activeView == view
-                        FilterChip(
-                            selected = selected,
-                            onClick = {
-                                // Mandatory single-selection: re-tapping active chip keeps it selected
-                                if (!selected) {
-                                    viewModel.selectLibraryView(view)
-                                }
-                            },
-                            label = { Text(label) },
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-                        )
-                    }
-                }
+                // Mandatory Single-Select 4 FilterChips (§4.1), swipe-synced with the pager below
+                SubTabChipRow(
+                    tabs = libraryTabs,
+                    activeTab = displayedView,
+                    label = SubTabOrder::libraryLabel,
+                    onChipClick = subTabs::onChipClick,
+                )
 
                 if (scanProgress.isScanning) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -178,7 +170,7 @@ fun LibraryScreen(
             }
         },
         floatingActionButton = {
-            if (activeView == LibraryView.FOLDERS && folderBrowse == null && safRoots.isNotEmpty()) {
+            if (libraryAddFolderFabVisible(displayedView, folderBrowse != null, safRoots.isNotEmpty())) {
                 FloatingActionButton(
                     onClick = onAddFolderClick,
                 ) {
@@ -187,160 +179,166 @@ fun LibraryScreen(
             }
         },
     ) { innerPadding ->
-        Box(
+        HorizontalPager(
+            state = subTabs.pagerState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-        ) {
-            when (activeView) {
-                LibraryView.FOLDERS -> {
-                    val browse = folderBrowse
-                    if (browse == null) {
-                        FoldersRootList(
-                            roots = safRoots,
+            key = { page -> libraryTabs.tabAtPage(page).name },
+        ) { page ->
+            Box(modifier = Modifier.fillMaxSize()) {
+                // Each page renders its OWN view (not the globally selected one) so neighbours look
+                // right mid-swipe; scroll states are hoisted above so positions survive swiping away.
+                when (libraryTabs.tabAtPage(page)) {
+                    LibraryView.FOLDERS -> {
+                        val browse = folderBrowse
+                        if (browse == null) {
+                            FoldersRootList(
+                                roots = safRoots,
+                                searchQuery = searchQuery,
+                                folderMode = folderMode,
+                                listState = folderListState,
+                                onToggleMode = { viewModel.toggleFolderDisplayMode() },
+                                onAddFolder = onAddFolderClick,
+                                onOpenRoot = { root ->
+                                    if (root.mountState == MountState.PERMISSION_REVOKED) {
+                                        onAddFolderClick()
+                                    } else {
+                                        viewModel.openFolder(root.rootId, "")
+                                    }
+                                },
+                                onTogglePractice = { root ->
+                                    viewModel.setFolderPracticeFlag(
+                                        rootId = root.rootId,
+                                        relPath = "",
+                                        folderUri = root.treeUri,
+                                        isPractice = !root.isPracticeFolder,
+                                    )
+                                },
+                                onToggleExcludeFromGrouping = { root ->
+                                    viewModel.setFolderExcludeFromGroupingFlag(
+                                        rootId = root.rootId,
+                                        relPath = "",
+                                        folderUri = root.treeUri,
+                                        isExcluded = !root.isExcludedFromAutoGrouping,
+                                    )
+                                },
+                                onAddAllRootToPlaylist = { root ->
+                                    viewModel.openAddFolderToPlaylistPicker(root.rootId, "")
+                                },
+                                onBatchAutoMatchRoot = { root ->
+                                    val rootItems = viewModel.allMediaItems.value.filter { it.rootId == root.rootId }
+                                    viewModel.startBatchAutoCompletion(rootItems)
+                                },
+                                onBatchEditRoot = { root ->
+                                    val rootItems = viewModel.allMediaItems.value.filter { it.rootId == root.rootId }
+                                    viewModel.openMetadataEditor(rootItems)
+                                },
+                                onRescanRoot = { root -> viewModel.rescanRoot(root.rootId) },
+                                onRemoveRoot = { root -> viewModel.removeSafRoot(root.rootId) },
+                            )
+                        } else {
+                            FolderBrowseView(
+                                browse = browse,
+                                folderMode = folderMode,
+                                sortOrder = currentSort,
+                                searchQuery = searchQuery,
+                                currentPlayingId = playback.currentItem?.itemId,
+                                onNavigateUp = { viewModel.navigateFolderUp() },
+                                onBreadcrumbClick = { relPath -> viewModel.openFolder(browse.root.rootId, relPath) },
+                                onAddAllCurrentFolderToPlaylist = {
+                                    viewModel.openAddFolderToPlaylistPicker(browse.root.rootId, browse.currentRelPath)
+                                },
+                                onToggleMode = { viewModel.toggleFolderDisplayMode() },
+                                onOpenSubfolder = { sub -> viewModel.openFolder(sub.rootId, sub.relPath) },
+                                onToggleSubfolderPractice = { sub ->
+                                    viewModel.setFolderPracticeFlag(
+                                        rootId = sub.rootId,
+                                        relPath = sub.relPath,
+                                        folderUri = sub.folderUri,
+                                        isPractice = !sub.isPracticeFolder,
+                                    )
+                                },
+                                onToggleSubfolderExcludeFromGrouping = { sub ->
+                                    viewModel.setFolderExcludeFromGroupingFlag(
+                                        rootId = sub.rootId,
+                                        relPath = sub.relPath,
+                                        folderUri = sub.folderUri,
+                                        isExcluded = !sub.isExcludedFromAutoGrouping,
+                                    )
+                                },
+                                onAddAllSubfolderToPlaylist = { sub ->
+                                    viewModel.openAddFolderToPlaylistPicker(sub.rootId, sub.relPath)
+                                },
+                                onBatchAutoMatchSubfolder = { sub ->
+                                    val subItems = viewModel.allMediaItems.value.filter {
+                                        it.rootId == sub.rootId &&
+                                            (it.parentRelPath == sub.relPath || it.parentRelPath.startsWith("${sub.relPath}/"))
+                                    }
+                                    viewModel.startBatchAutoCompletion(subItems)
+                                },
+                                onBatchEditSubfolder = { sub ->
+                                    val subItems = viewModel.allMediaItems.value.filter {
+                                        it.rootId == sub.rootId &&
+                                            (it.parentRelPath == sub.relPath || it.parentRelPath.startsWith("${sub.relPath}/"))
+                                    }
+                                    viewModel.openMetadataEditor(subItems)
+                                },
+                                onPlayMediaItem = { sortedItems, idx ->
+                                    val item = sortedItems[idx]
+                                    val ctx = if (browse.isCurrentPracticeFolder || item.isInPracticeFolder) {
+                                        PlayContext.PRACTICE_FOLDER
+                                    } else {
+                                        PlayContext.CASUAL
+                                    }
+                                    viewModel.playFromContext(sortedItems, idx, ctx)
+                                },
+                                onEditTrack = { viewModel.openMetadataEditor(listOf(it)) },
+                                onAddToPlaylist = { viewModel.openAddToPlaylistPicker(listOf(it)) },
+                            )
+                        }
+                    }
+                    LibraryView.ALBUMS -> {
+                        AlbumsGridContent(
+                            albums = albums,
+                            allMediaItems = allMediaItems,
+                            sortOrder = currentSort,
                             searchQuery = searchQuery,
-                            folderMode = folderMode,
-                            listState = folderListState,
-                            onToggleMode = { viewModel.toggleFolderDisplayMode() },
+                            gridState = albumGridState,
+                            onOpenAlbum = { viewModel.openAlbum(it) },
                             onAddFolder = onAddFolderClick,
-                            onOpenRoot = { root ->
-                                if (root.mountState == MountState.PERMISSION_REVOKED) {
-                                    onAddFolderClick()
-                                } else {
-                                    viewModel.openFolder(root.rootId, "")
-                                }
-                            },
-                            onTogglePractice = { root ->
-                                viewModel.setFolderPracticeFlag(
-                                    rootId = root.rootId,
-                                    relPath = "",
-                                    folderUri = root.treeUri,
-                                    isPractice = !root.isPracticeFolder,
-                                )
-                            },
-                            onToggleExcludeFromGrouping = { root ->
-                                viewModel.setFolderExcludeFromGroupingFlag(
-                                    rootId = root.rootId,
-                                    relPath = "",
-                                    folderUri = root.treeUri,
-                                    isExcluded = !root.isExcludedFromAutoGrouping,
-                                )
-                            },
-                            onAddAllRootToPlaylist = { root ->
-                                viewModel.openAddFolderToPlaylistPicker(root.rootId, "")
-                            },
-                            onBatchAutoMatchRoot = { root ->
-                                val rootItems = viewModel.allMediaItems.value.filter { it.rootId == root.rootId }
-                                viewModel.startBatchAutoCompletion(rootItems)
-                            },
-                            onBatchEditRoot = { root ->
-                                val rootItems = viewModel.allMediaItems.value.filter { it.rootId == root.rootId }
-                                viewModel.openMetadataEditor(rootItems)
-                            },
-                            onRescanRoot = { root -> viewModel.rescanRoot(root.rootId) },
-                            onRemoveRoot = { root -> viewModel.removeSafRoot(root.rootId) },
                         )
-                    } else {
-                        FolderBrowseView(
-                            browse = browse,
-                            folderMode = folderMode,
+                    }
+                    LibraryView.ARTISTS -> {
+                        ArtistsListContent(
+                            artists = artists,
+                            sortOrder = currentSort,
+                            searchQuery = searchQuery,
+                            listState = artistListState,
+                            onOpenArtist = { viewModel.openArtist(it) },
+                            onAddFolder = onAddFolderClick,
+                        )
+                    }
+                    LibraryView.VIDEOS -> {
+                        VideosListContent(
+                            videos = videos,
                             sortOrder = currentSort,
                             searchQuery = searchQuery,
                             currentPlayingId = playback.currentItem?.itemId,
-                            onNavigateUp = { viewModel.navigateFolderUp() },
-                            onBreadcrumbClick = { relPath -> viewModel.openFolder(browse.root.rootId, relPath) },
-                            onAddAllCurrentFolderToPlaylist = {
-                                viewModel.openAddFolderToPlaylistPicker(browse.root.rootId, browse.currentRelPath)
+                            listState = videoListState,
+                            onPlayVideo = { sortedVideos, idx ->
+                                val target = sortedVideos[idx]
+                                val ctx = if (target.isInPracticeFolder) PlayContext.PRACTICE_FOLDER else PlayContext.CASUAL
+                                viewModel.playFromContext(sortedVideos, idx, ctx, openFullPlayer = true)
                             },
-                            onToggleMode = { viewModel.toggleFolderDisplayMode() },
-                            onOpenSubfolder = { sub -> viewModel.openFolder(sub.rootId, sub.relPath) },
-                            onToggleSubfolderPractice = { sub ->
-                                viewModel.setFolderPracticeFlag(
-                                    rootId = sub.rootId,
-                                    relPath = sub.relPath,
-                                    folderUri = sub.folderUri,
-                                    isPractice = !sub.isPracticeFolder,
-                                )
+                            onPracticeVideo = { sortedVideos, idx ->
+                                viewModel.playFromContext(sortedVideos, idx, PlayContext.PRACTICE_FOLDER, openFullPlayer = true)
                             },
-                            onToggleSubfolderExcludeFromGrouping = { sub ->
-                                viewModel.setFolderExcludeFromGroupingFlag(
-                                    rootId = sub.rootId,
-                                    relPath = sub.relPath,
-                                    folderUri = sub.folderUri,
-                                    isExcluded = !sub.isExcludedFromAutoGrouping,
-                                )
-                            },
-                            onAddAllSubfolderToPlaylist = { sub ->
-                                viewModel.openAddFolderToPlaylistPicker(sub.rootId, sub.relPath)
-                            },
-                            onBatchAutoMatchSubfolder = { sub ->
-                                val subItems = viewModel.allMediaItems.value.filter {
-                                    it.rootId == sub.rootId &&
-                                        (it.parentRelPath == sub.relPath || it.parentRelPath.startsWith("${sub.relPath}/"))
-                                }
-                                viewModel.startBatchAutoCompletion(subItems)
-                            },
-                            onBatchEditSubfolder = { sub ->
-                                val subItems = viewModel.allMediaItems.value.filter {
-                                    it.rootId == sub.rootId &&
-                                        (it.parentRelPath == sub.relPath || it.parentRelPath.startsWith("${sub.relPath}/"))
-                                }
-                                viewModel.openMetadataEditor(subItems)
-                            },
-                            onPlayMediaItem = { sortedItems, idx ->
-                                val item = sortedItems[idx]
-                                val ctx = if (browse.isCurrentPracticeFolder || item.isInPracticeFolder) {
-                                    PlayContext.PRACTICE_FOLDER
-                                } else {
-                                    PlayContext.CASUAL
-                                }
-                                viewModel.playFromContext(sortedItems, idx, ctx)
-                            },
-                            onEditTrack = { viewModel.openMetadataEditor(listOf(it)) },
+                            onEditVideo = { viewModel.openMetadataEditor(listOf(it)) },
                             onAddToPlaylist = { viewModel.openAddToPlaylistPicker(listOf(it)) },
+                            onAddFolder = onAddFolderClick,
                         )
                     }
-                }
-                LibraryView.ALBUMS -> {
-                    AlbumsGridContent(
-                        albums = albums,
-                        allMediaItems = allMediaItems,
-                        sortOrder = currentSort,
-                        searchQuery = searchQuery,
-                        gridState = albumGridState,
-                        onOpenAlbum = { viewModel.openAlbum(it) },
-                        onAddFolder = onAddFolderClick,
-                    )
-                }
-                LibraryView.ARTISTS -> {
-                    ArtistsListContent(
-                        artists = artists,
-                        sortOrder = currentSort,
-                        searchQuery = searchQuery,
-                        listState = artistListState,
-                        onOpenArtist = { viewModel.openArtist(it) },
-                        onAddFolder = onAddFolderClick,
-                    )
-                }
-                LibraryView.VIDEOS -> {
-                    VideosListContent(
-                        videos = videos,
-                        sortOrder = currentSort,
-                        searchQuery = searchQuery,
-                        currentPlayingId = playback.currentItem?.itemId,
-                        listState = videoListState,
-                        onPlayVideo = { sortedVideos, idx ->
-                            val target = sortedVideos[idx]
-                            val ctx = if (target.isInPracticeFolder) PlayContext.PRACTICE_FOLDER else PlayContext.CASUAL
-                            viewModel.playFromContext(sortedVideos, idx, ctx, openFullPlayer = true)
-                        },
-                        onPracticeVideo = { sortedVideos, idx ->
-                            viewModel.playFromContext(sortedVideos, idx, PlayContext.PRACTICE_FOLDER, openFullPlayer = true)
-                        },
-                        onEditVideo = { viewModel.openMetadataEditor(listOf(it)) },
-                        onAddToPlaylist = { viewModel.openAddToPlaylistPicker(listOf(it)) },
-                        onAddFolder = onAddFolderClick,
-                    )
                 }
             }
         }
