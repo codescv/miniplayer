@@ -10,7 +10,7 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
   - **Zero `MediaStore` spam, zero broad storage permissions & zero `.nomedia` skipping**: Never requests `READ_MEDIA_AUDIO`, `READ_MEDIA_VIDEO`, or `MANAGE_EXTERNAL_STORAGE`—no ringtones, call recordings, or chat voice notes polluting your library—and always scans all files inside explicitly added folders regardless of `.nomedia` marker files.
   - Mount specific folders on internal storage, SD cards, or USB OTG drives via Android SAF (`ACTION_OPEN_DOCUMENT_TREE`) with ancestor/child overlap deduplication, `<10ms` incremental cursor rescans, sidecar `.lrc` & `cover.jpg` indexing, moved-file fingerprint bookmark migration, and **Offline Volume Guard (`未挂载`)** that preserves playlists and A-B bookmarks when OTG drives are unplugged.
   - **Practice Folder (`练习文件夹`) & Exclude-from-Auto-Grouping (`不自动归类`) Isolation**: Marking any SAF root or subfolder as **`练习文件夹`** or **`不自动归类`** (each inherited automatically by descendant subfolders, with child-subfolder override support) keeps tracks cleanly accessible in **`文件夹`** (with 1-tap **`全部添加到播放列表`** on root folders, subfolders, and the active folder header), **`播放列表`**, and **`含段落书签`**, while automatically excluding them from **`专辑`**, **`歌手`**, and **`视频`**. Folders marked **`不自动归类`** (without **`练习文件夹`**) play in everyday **Casual Mode (`PlayContext.CASUAL`)**.
-  - **2 Bottom Tabs + 4 Pure-Text M3 Views**: Ultra-clean `LibraryScreen` top bar keeping **only** the `设置` icon button and sorting strictly by natural name order (`Track 2 < Track 10`), clean `PlaylistsScreen` top bar with zero action icons, `文件夹` (icon-only tree `⇄` flat view toggle and icon-only Add Folder FAB), `专辑` (`(Album, AlbumArtist)` grouping + `未知专辑` bucket), `歌手` (multi-artist `/` · `;` · `、` · `feat.` splitting with band allowlist like `AC/DC`), and `视频` (16:9 keyframe thumbnails, resolution badges, bookmark counts, and watch progress).
+  - **2 Bottom Tabs + 4 Pure-Text M3 Views with Bidirectional Swipeable Sub-Tabs (`v1.0.17`)**: Ultra-clean `LibraryScreen` top bar keeping **only** the `设置` icon button and sorting strictly by natural name order (`Track 2 < Track 10`), clean `PlaylistsScreen` top bar with zero action icons, and smooth left/right `HorizontalPager` swipe navigation across both `媒体库` (`文件夹 ↔ 专辑 ↔ 歌手 ↔ 视频`) and `播放列表` (`全部 ↔ 练习列表 ↔ 含段落书签`) synced flicker-free with the top `FilterChip` bar while preserving independent per-sub-tab scroll positions: `文件夹` (icon-only tree `⇄` flat view toggle and icon-only Add Folder FAB), `专辑` (`(Album, AlbumArtist)` grouping + `未知专辑` bucket), `歌手` (multi-artist `/` · `;` · `、` · `feat.` splitting with band allowlist like `AC/DC`), and `视频` (16:9 keyframe thumbnails, resolution badges, bookmark counts, and watch progress).
 
 - **Unified Audio/Video Player & Compact 2-Row Practice Deck (`练习模式 / 练习工作台`)**:
   - **Deterministic Progressive Disclosure & Guitar Icon (`GuitarIcon`)**: Everyday albums/folders play in **Casual Mode** (`1.0x`, clean cover/video canvas, synced `.lrc` lyrics via dead-centered `词` toggle, custom **Guitar Icon (`GuitarIcon`)** Practice Mode toggle, icon-only Add-to-Playlist button, sleep timer, and symmetric 5-button transport). Playing from a **`练习列表`**, **`练习文件夹`**, or **`含段落书签`** automatically opens the **Practice Deck** and restores saved speed, pitch, BPM, and A-B loops.
@@ -36,6 +36,15 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 - **Verified In-App GitHub Auto-Updater**:
   - Checks [`codescv/miniplayer` Releases](https://github.com/codescv/miniplayer/releases/latest) over HTTPS (`≤ 5` manual redirect hops, zero HTTP downgrade), verifies `SHA256SUMS.txt` digests, runs 4-stage `ApkValidator` checks (`PK\x03\x04` + `AndroidManifest.xml`, `com.miniplayer.app` package match, strict `versionCode > installed` anti-downgrade, and signing certificate SHA-256 equality), and launches `FileProvider` installation.
+
+---
+
+## What's New in `v1.0.17` (`versionCode = 10017`)
+
+1. **Horizontal Swipe Navigation for Sub-Tabs on Both Library & Playlists Screens (`SubTabSync.kt`, `SwipeableSubTabs.kt`, `LibraryScreen.kt`, `PlaylistsScreen.kt`)**:
+   - **Tab 1 (`媒体库`) & Tab 2 (`播放列表`) Swipeable Pagers**: Added `HorizontalPager` (`beyondViewportPageCount = 1`) across all 4 Library sub-tabs (`文件夹 ↔ 专辑 ↔ 歌手 ↔ 视频`) and all 3 Playlists sub-tabs (`全部 ↔ 练习列表 ↔ 含段落书签`), keeping full-screen detail views (`AlbumDetailContent`, `ArtistDetailContent`, `PlaylistDetailContent`) cleanly outside the sub-tab pagers while hoisting all per-tab `LazyListState` / `LazyGridState` instances so every sub-tab preserves its independent scroll position across swipes and detail drill-downs.
+   - **Per-Page Live Content During Swipe & Context-Aware FABs / Back Navigation**: Each Playlists pager page computes its own filtered data (`playlistsForPage`: `ALL` vs `PRACTICE_ONLY` vs `WITH_BOOKMARKS`) so adjacent pages render their real target content mid-drag; the `+` New Playlist FAB hides automatically on `含段落书签` and pre-selects `设为练习列表` when tapped from `练习列表`; in `媒体库`, the Add Folder FAB and subfolder predictive `BackHandler` are strictly scoped to `文件夹` while subfolder breadcrumb horizontal scroll coexists cleanly with pager swipes.
+   - **Zero-Flicker, Ping-Pong-Free `FilterChip <-> HorizontalPager` Synchronization**: `SubTabPagerSync` + `SubTabPagerController` read `StateFlow<T>.value` synchronously with monotonic generation tokens—eliminating intermediate chip flicker on multi-page chip taps (e.g., `文件夹 -> 视频`), handling mid-animation drag interruptions and cancelled half-swipes cleanly without feedback loops, and auto-scrolling `SubTabChipRow` to keep the active chip visible on narrow screens.
 
 ---
 
@@ -173,7 +182,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.16.apk` | Signed Android Release APK (`versionCode = 10016`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.17.apk` | Signed Android Release APK (`versionCode = 10017`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `htdemucs_6s.onnx` | Meta Research `htdemucs_6s` hybrid transformer ONNX model (`105.1 MB` / `110,242,365` bytes) downloaded on-demand in-app for 5-stem offline separation (hosted on `v1.0.10` release) |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 
@@ -190,7 +199,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 export JAVA_HOME="/path/to/jdk21"
 export ANDROID_HOME="/path/to/Android/Sdk"
 
-# Run full JVM unit, BeatGrid v2 DSP/Viterbi & cross-module integration tests (146 tests across 18 suites), debug/release APK builds, and Android Lint
+# Run full JVM unit, BeatGrid v2 DSP/Viterbi & cross-module integration tests (177 tests across 19 suites), debug/release APK builds, and Android Lint
 ./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug
 ```
 
@@ -202,6 +211,6 @@ Output APKs:
 
 ## Documentation
 
-- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, `v1.0.9` automatic bar-snap A-B loop & beat-only `4拍` count-in, `v1.0.10` pure Sonic pitch shifting & genuine Meta `HTDemucs` `htdemucs_6s.onnx` 5-stem separation + real-time time-domain mixer, `v1.0.11` local Agent Feedback sender, `v1.0.12` multi-band BPM detection, `v1.0.13` BeatGrid v2 6-stage beat/downbeat/phrase alignment engine & one-tap Beat-1 controls, `v1.0.14` unified single-entry Agent Feedback sheet, `v1.0.15` direct email compose target resolution for image feedback, and `v1.0.16` 1-click direct update download & auto-install)
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 5`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`HtdemucsStft`/`StemSeparationEngine`/`StemSeparatedTrackCache` (`BFP10`)/`com.miniplayer.app.player.beat.*` (`BeatGrid` v2) specs, LAN Web Studio & Auto-Updater security invariants
-- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit, BeatGrid v2 synthetic backing-track benchmark (`146` tests across `18` suites), Lint, and `v1.0.16` verification report
+- [`DESIGN.md`](DESIGN.md) — Product & UX/UI specification (wireframes, M3 tonal system, Practice Mode state machine, `v1.0.4` folder isolation, `v1.0.5` staged candidate save / renamed-folder dedup, `v1.0.8` frosted charcoal dark icon plate, `v1.0.9` automatic bar-snap A-B loop & beat-only `4拍` count-in, `v1.0.10` pure Sonic pitch shifting & genuine Meta `HTDemucs` `htdemucs_6s.onnx` 5-stem separation + real-time time-domain mixer, `v1.0.11` local Agent Feedback sender, `v1.0.12` multi-band BPM detection, `v1.0.13` BeatGrid v2 6-stage beat/downbeat/phrase alignment engine & one-tap Beat-1 controls, `v1.0.14` unified single-entry Agent Feedback sheet, `v1.0.15` direct email compose target resolution for image feedback, `v1.0.16` 1-click direct update download & auto-install, and `v1.0.17` horizontal swipe sub-tab navigation across Library & Playlists)
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — System architecture, 10-table SQLite DDL (`DATABASE_VERSION = 5`), Media3 threading/GOP/`RealTimeSonicAudioProcessor`/`HtdemucsStft`/`StemSeparationEngine`/`StemSeparatedTrackCache` (`BFP10`)/`com.miniplayer.app.player.beat.*` (`BeatGrid` v2)/`SubTabPagerSync` specs, LAN Web Studio & Auto-Updater security invariants
+- [`TEST_REPORT.md`](TEST_REPORT.md) — Full unit, BeatGrid v2 synthetic backing-track benchmark (`177` tests across `19` suites), Lint, and `v1.0.17` verification report

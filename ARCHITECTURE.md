@@ -1,6 +1,6 @@
 # MiniPlayer — 系统架构与模块契约规范 (Architecture & Module Contracts)
 
-> **版本**：v1.0.16 (`versionCode = 10016`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
+> **版本**：v1.0.17 (`versionCode = 10017`, 应用显示名 `Play`, `applicationId = "com.miniplayer.app"`, `minSdk = 26`, `targetSdk = 35`)  
 > **配套产品设计文档**：[DESIGN.md](./DESIGN.md)  
 > **构建与离线环境**：Kotlin `2.0.21` · AGP `8.7.1` · Jetpack Compose BOM `2024.10.01` (Material 3 `1.3.1`) · AndroidX Media3 `1.5.1` · Microsoft ONNX Runtime Android `1.20.0` · SQLite (`SQLiteOpenHelper` `DATABASE_VERSION = 5` + Kotlin `StateFlow`)
 
@@ -302,6 +302,9 @@ CREATE TABLE app_settings (
 7. **深色主题抬升表面与动态色板上抬 (`ui/theme/Theme.kt`, `v1.0.7`)**：
    - `DefaultDarkScheme`（Android 8.0–11 或禁用动态取色时）采用 Google Material「Charcoal Dark」炭灰阶梯：`background` / `surface = #1E1F24`、`surfaceContainerLowest = #181A1F`、`surfaceContainerLow = #26282F`、`surfaceContainer = #2B2E36`、`surfaceContainerHigh = #32353E`、`surfaceContainerHighest = #3B3E48`。
    - Android 12+ (`API 31+`) 深色动态取色路径：`MiniPlayerTheme` 以 `elevateDynamicDarkSurfaces(dynamicDarkColorScheme(context))` 代替裸 `dynamicDarkColorScheme`，通过 `ColorScheme.copy` 将 Material You 深色色板整体上抬一个色调台阶：`background` / `surface ← surfaceContainer`、`surfaceContainerLowest ← surface`、`surfaceContainerLow ← surfaceContainerHigh`、`surfaceContainer ← surfaceContainerHighest`、`surfaceContainerHigh ← surfaceBright`；`surfaceContainerHighest` 与所有 `on*` 文字色保持原值，故 WCAG AA 对比度不受影响。`rememberAnimatedColorScheme` 的播放页封面取色色板不经过此函数。
+8. **双 Tab 顶部标签与 `HorizontalPager` 双向零闪烁同步 (`ui/SubTabSync.kt`, `ui/SwipeableSubTabs.kt`, `ui/LibraryScreen.kt`, `ui/PlaylistsScreen.kt`, `v1.0.17`)**：
+   - 纯 JVM 状态机 `SubTabPagerSync`（单调递增 `generation` + `pendingTarget`）与 `SubTabPagerController` 直接读取 `StateFlow<T>.value` 真相源：点击非当前 `FilterChip` 立即更新 `ViewModel` 选中态并启动单协程 `animateScrollToPage(target)`（动画途中锁住 `displayedPage = pendingTarget.page` 杜绝跨多页点击如 `文件夹 -> 视频` 的中间 Chip 闪烁，连续快速点击通过递增 `generation` 安全覆盖前序动画）；用户跟手滑动结束（`isScrollInProgress == false`）时按 `settledPage` 回写 `ViewModel`（若动画中途被手指打断拖拽或半滑松手回弹，同样在静止帧收敛并清除挂起目标，彻底避免 `Chip <-> Pager` 乒乓循环）。
+   - `SubTabChipRow` 基于 `coords.positionInParent().x` 与 `chipRevealScrollTarget` 在窄屏横向滚动条中自动平滑滚入当前选中 Chip；`LibraryScreen`（4 页：`FOLDERS / ALBUMS / ARTISTS / VIDEOS`）与 `PlaylistsScreen`（3 页：`ALL / PRACTICE_ONLY / WITH_BOOKMARKS`，每页按各自 `pageFilter` 独立经 `playlistsForPage` 渲染真实目标列表）均将 `rememberSubTabPager` 与各页 `LazyListState` / `LazyGridState` 提升至全屏详情页（`AlbumDetailContent` / `ArtistDetailContent` / `PlaylistDetailContent`）早退分支之上，保证切页与进出详情页全程保留滚动位置，同时限定 `BackHandler` 与 FAB 可见性严格绑定当前展示的二级标签页。
 
 ---
 

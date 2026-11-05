@@ -68,32 +68,32 @@ class AgentFeedbackHelperTest {
     }
 
     @Test
-    fun `formatSubject enforces play routing prefix v1_0_16 tag strips debug suffix and sanitizes summary`() {
+    fun `formatSubject enforces play routing prefix v1_0_17 tag strips debug suffix and sanitizes summary`() {
         assertEquals(
-            "play: [v1.0.16] 练习模式希望支持导出循环片段",
+            "play: [v1.0.17] 练习模式希望支持导出循环片段",
             AgentFeedbackHelper.formatSubject(
                 summary = "练习模式希望支持导出循环片段",
-                versionName = "1.0.16",
+                versionName = "1.0.17",
             ),
         )
-        // Debug build suffix (-DEBUG) must normalize cleanly to [v1.0.16] and collapse newlines to single space
+        // Debug build suffix (-DEBUG) must normalize cleanly to [v1.0.17] and collapse newlines to single space
         assertEquals(
-            "play: [v1.0.16] 五轨混音 音量记忆优化",
+            "play: [v1.0.17] 五轨混音 音量记忆优化",
             AgentFeedbackHelper.formatSubject(
                 summary = "  五轨混音\n\t音量记忆优化  ",
-                versionName = "1.0.16-DEBUG",
+                versionName = "1.0.17-DEBUG",
             ),
         )
-        // Leading 'v' is not doubled and blank versionName falls back to v1.0.16
+        // Leading 'v' is not doubled and blank versionName falls back to v1.0.17
         assertEquals(
-            "play: [v1.0.16] 歌词字体大小调节",
+            "play: [v1.0.17] 歌词字体大小调节",
             AgentFeedbackHelper.formatSubject(
                 summary = "歌词字体大小调节",
-                versionName = "v1.0.16",
+                versionName = "v1.0.17",
             ),
         )
         assertEquals(
-            "play: [v1.0.16] 默认版本兜底",
+            "play: [v1.0.17] 默认版本兜底",
             AgentFeedbackHelper.formatSubject(
                 summary = "默认版本兜底",
                 versionName = "",
@@ -101,35 +101,35 @@ class AgentFeedbackHelperTest {
         )
         // Blank summary falls back to first non-empty line of details
         assertEquals(
-            "play: [v1.0.16] 第一行详细描述自动提炼为主题",
+            "play: [v1.0.17] 第一行详细描述自动提炼为主题",
             AgentFeedbackHelper.formatSubject(
                 summary = "   ",
-                versionName = "1.0.16",
+                versionName = "1.0.17",
                 detailsFallback = "\n  第一行详细描述自动提炼为主题 \n第二行补充细节",
             ),
         )
         // Both blank falls back to DEFAULT_SUMMARY
         assertEquals(
-            "play: [v1.0.16] 使用反馈",
+            "play: [v1.0.17] 使用反馈",
             AgentFeedbackHelper.formatSubject(
                 summary = "",
-                versionName = "1.0.16",
+                versionName = "1.0.17",
                 detailsFallback = "   ",
             ),
         )
         // Overly long summary is truncated safely
         val longSummary = "A".repeat(200)
-        val truncatedSubject = AgentFeedbackHelper.formatSubject(longSummary, "1.0.16")
-        assertTrue(truncatedSubject.startsWith("play: [v1.0.16] "))
+        val truncatedSubject = AgentFeedbackHelper.formatSubject(longSummary, "1.0.17")
+        assertTrue(truncatedSubject.startsWith("play: [v1.0.17] "))
         assertTrue(truncatedSubject.endsWith("…"))
-        assertTrue(truncatedSubject.length <= "play: [v1.0.16] ".length + AgentFeedbackHelper.MAX_SUMMARY_LENGTH)
+        assertTrue(truncatedSubject.length <= "play: [v1.0.17] ".length + AgentFeedbackHelper.MAX_SUMMARY_LENGTH)
     }
 
     @Test
     fun `formatBody formats practice and casual diagnostics cleanly and honors includeDiagnostics toggle`() {
         val practiceDiagnostics = FeedbackDiagnostics(
-            versionName = "1.0.16-DEBUG",
-            versionCode = 10016,
+            versionName = "1.0.17-DEBUG",
+            versionCode = 10017,
             androidVersion = "Android 15 (SDK 35)",
             deviceModel = "OnePlus 13T",
             currentTrackTitle = "Constellation Backing",
@@ -158,7 +158,7 @@ class AgentFeedbackHelperTest {
             diagnostics = practiceDiagnostics,
         )
         assertTrue(bodyWithDiag.startsWith("在 128 BPM 下希望支持半小节切换。"))
-        assertTrue(bodyWithDiag.contains("应用版本: v1.0.16 (10016)"))
+        assertTrue(bodyWithDiag.contains("应用版本: v1.0.17 (10017)"))
         assertTrue(bodyWithDiag.contains("设备环境: Android 15 (SDK 35) · OnePlus 13T"))
         assertTrue(bodyWithDiag.contains("当前媒体: Constellation Backing (音频 · 播放中 · 01:12.4 / 04:00.0)"))
         assertTrue(bodyWithDiag.contains("练习状态: 速度 0.85x · 变调 -1st-15c · BPM 128 · A 00:08.0 - B 00:16.0 (激活)"))
@@ -181,13 +181,13 @@ class AgentFeedbackHelperTest {
                 recipientEmail = "agent+triage@example.com",
                 summary = "A+B & C=1 混音反馈",
                 details = "第一行 A+B\n第二行 100% 正常",
-                versionName = "1.0.16",
+                versionName = "1.0.17",
                 includeDiagnostics = false,
             ),
         )
 
         assertEquals("agent+triage@example.com", payload.recipientEmail)
-        assertEquals("play: [v1.0.16] A+B & C=1 混音反馈", payload.subject)
+        assertEquals("play: [v1.0.17] A+B & C=1 混音反馈", payload.subject)
         assertFalse(payload.hasAttachment)
         assertTrue(payload.mailtoUri.startsWith("mailto:agent+triage@example.com?subject="))
 
@@ -200,7 +200,7 @@ class AgentFeedbackHelperTest {
             val idx = pair.indexOf('=')
             pair.substring(0, idx) to percentDecodeUtf8(pair.substring(idx + 1))
         }
-        assertEquals("play: [v1.0.16] A+B & C=1 混音反馈", params["subject"])
+        assertEquals("play: [v1.0.17] A+B & C=1 混音反馈", params["subject"])
         assertEquals("第一行 A+B\n第二行 100% 正常", params["body"])
     }
 
@@ -227,24 +227,24 @@ class AgentFeedbackHelperTest {
     }
 
     @Test
-    fun `buildPayload uses title for v1_0_16 subject description for body and supports image only feedback`() {
+    fun `buildPayload uses title for v1_0_17 subject description for body and supports image only feedback`() {
         // 标题 -> subject, 问题描述 -> body
         val full = AgentFeedbackHelper.buildPayload(
             AgentFeedbackRequest(
                 recipientEmail = "agent@example.com",
                 summary = "歌词页闪退",
                 details = "打开歌词页后立即闪退\n复现率 100%",
-                versionName = "1.0.16-DEBUG",
+                versionName = "1.0.17-DEBUG",
                 includeDiagnostics = false,
             ),
         )
-        assertEquals("play: [v1.0.16] 歌词页闪退", full.subject)
+        assertEquals("play: [v1.0.17] 歌词页闪退", full.subject)
         assertEquals("打开歌词页后立即闪退\n复现率 100%", full.body)
         assertFalse(full.hasAttachment)
 
         // Blank versionName falls back to the current release tag
-        assertEquals("v1.0.16", AgentFeedbackHelper.normalizeVersionTag(""))
-        assertEquals("v1.0.16", AgentFeedbackHelper.normalizeVersionTag(null))
+        assertEquals("v1.0.17", AgentFeedbackHelper.normalizeVersionTag(""))
+        assertEquals("v1.0.17", AgentFeedbackHelper.normalizeVersionTag(null))
 
         // 问题描述 only -> first line becomes subject
         val detailsOnly = AgentFeedbackHelper.buildPayload(
@@ -252,11 +252,11 @@ class AgentFeedbackHelperTest {
                 recipientEmail = "agent@example.com",
                 summary = "",
                 details = "\n  循环 A-B 点无法拖动 \n第二行",
-                versionName = "1.0.16",
+                versionName = "1.0.17",
                 includeDiagnostics = false,
             ),
         )
-        assertEquals("play: [v1.0.16] 循环 A-B 点无法拖动", detailsOnly.subject)
+        assertEquals("play: [v1.0.17] 循环 A-B 点无法拖动", detailsOnly.subject)
 
         // 增加图片 only (no 标题 / 问题描述) -> image-only fallback subject/body, flagged as attachment
         val imageOnly = AgentFeedbackHelper.buildPayload(
@@ -264,12 +264,12 @@ class AgentFeedbackHelperTest {
                 recipientEmail = "agent@example.com",
                 summary = "  ",
                 details = "",
-                versionName = "1.0.16",
+                versionName = "1.0.17",
                 includeDiagnostics = false,
                 hasAttachment = true,
             ),
         )
-        assertEquals("play: [v1.0.16] ${AgentFeedbackHelper.ATTACHMENT_ONLY_SUMMARY}", imageOnly.subject)
+        assertEquals("play: [v1.0.17] ${AgentFeedbackHelper.ATTACHMENT_ONLY_SUMMARY}", imageOnly.subject)
         assertEquals(AgentFeedbackHelper.ATTACHMENT_ONLY_SUMMARY, imageOnly.body)
         assertTrue(imageOnly.hasAttachment)
 
@@ -278,9 +278,9 @@ class AgentFeedbackHelperTest {
             AgentFeedbackRequest(
                 recipientEmail = "agent@example.com",
                 summary = "",
-                versionName = "1.0.16",
+                versionName = "1.0.17",
                 includeDiagnostics = true,
-                diagnostics = FeedbackDiagnostics(versionName = "1.0.16", versionCode = 10016, attachmentFileName = "shot.png"),
+                diagnostics = FeedbackDiagnostics(versionName = "1.0.17", versionCode = 10017, attachmentFileName = "shot.png"),
             ),
         )
         assertTrue(viaDiagnostics.hasAttachment)
