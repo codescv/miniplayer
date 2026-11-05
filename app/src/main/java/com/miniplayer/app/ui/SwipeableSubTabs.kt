@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -32,13 +33,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
  * Swipeable sub-tab controller shared by `媒体库` (4 views) and `播放列表` (3 filters).
  *
- * The ViewModel selection stays the single source of truth; this object wires the
- * [SubTabPagerSync] state machine to a Compose [PagerState]:
+ * The ViewModel [StateFlow] stays the single source of truth and every sync decision reads its
+ * *synchronous* `value` (never a `collectAsState()` snapshot, which lags one frame behind a write
+ * and would make e.g. `tap 视频 -> tap 文件夹` within one frame see a stale selection). This object
+ * wires the [SubTabPagerSync] state machine to a Compose [PagerState]:
  * - chip tap -> ViewModel updated immediately + `animateScrollToPage` (newer taps cancel older ones),
  * - user swipe -> ViewModel updated once the pager settles (never for intermediate pages),
  * - external ViewModel change -> pager scrolls to the new page.
@@ -48,14 +52,17 @@ internal class SubTabPagerController<T>(
     val tabs: List<T>,
     val pagerState: PagerState,
     private val scope: CoroutineScope,
+    private val selection: StateFlow<T>,
 ) {
     var syncState by mutableStateOf(SubTabSyncState())
         private set
 
     private var scrollJob: Job? = null
 
-    /** Latest ViewModel selection + setter (updated every composition). */
-    internal var selectedPage: Int = pagerState.currentPage
+    /** Current ViewModel selection, read synchronously (no recomposition round-trip lag). */
+    val selectedPage: Int get() = tabs.pageIndexOf(selection.value)
+
+    /** ViewModel setter (updated every composition). */
     internal var onSelect: (T) -> Unit = {}
 
     /** Page highlighted in the chip row / driving FABs. */
@@ -104,22 +111,25 @@ internal class SubTabPagerController<T>(
 @Composable
 internal fun <T> rememberSubTabPager(
     tabs: List<T>,
-    selectedTab: T,
+    selection: StateFlow<T>,
     onSelectTab: (T) -> Unit,
 ): SubTabPagerController<T> {
-    val selectedPage = tabs.pageIndexOf(selectedTab)
-    val pagerState = rememberPagerState(initialPage = selectedPage) { tabs.size }
+    // Only used as a recomposition / effect trigger; decisions re-read `selection.value`.
+    val observedTab by selection.collectAsState()
+    val pagerState = rememberPagerState(initialPage = tabs.pageIndexOf(observedTab)) { tabs.size }
     val scope = rememberCoroutineScope()
-    val controller = remember(tabs, pagerState, scope) { SubTabPagerController(tabs, pagerState, scope) }
+    val controller = remember(tabs, pagerState, scope, selection) {
+        SubTabPagerController(tabs, pagerState, scope, selection)
+    }
     val latestOnSelect by rememberUpdatedState(onSelectTab)
-    controller.selectedPage = selectedPage
     controller.onSelect = { latestOnSelect(it) }
 
-    // External ViewModel change (or a redirect while a programmatic scroll is in flight).
-    LaunchedEffect(controller, selectedPage) {
+    // External ViewModel change (or a redirect while a programmatic scroll is in flight). A stale
+    // emission that the ViewModel has already moved past is harmless: the fresh value is used.
+    LaunchedEffect(controller, observedTab) {
         SubTabPagerSync.externalSyncTarget(
             state = controller.syncState,
-            selectedPage = selectedPage,
+            selectedPage = controller.selectedPage,
             currentPage = pagerState.currentPage,
             isScrollInProgress = pagerState.isScrollInProgress,
             pageCount = tabs.size,
@@ -137,12 +147,7 @@ internal fun <T> rememberSubTabPager(
                 isScrollInProgress = scrolling,
                 selectedPage = controller.selectedPage,
                 pageCount = tabs.size,
-            )?.let { page ->
-                // Optimistically record it so a re-emission before the ViewModel round-trips
-                // cannot commit the same page twice.
-                controller.selectedPage = page
-                latestOnSelect(tabs.tabAtPage(page))
-            }
+            )?.let { page -> latestOnSelect(tabs.tabAtPage(page)) }
         }
     }
     return controller

@@ -40,7 +40,6 @@ fun PlaylistsScreen(
     onExportM3uRequest: (Long, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val filter by viewModel.playlistFilter.collectAsState()
     val searchQuery by viewModel.playlistSearchQuery.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val bookmarkedTracks by viewModel.bookmarkedTracks.collectAsState()
@@ -63,7 +62,7 @@ fun PlaylistsScreen(
     val playlistTabs = SubTabOrder.PLAYLISTS
     val subTabs = rememberSubTabPager(
         tabs = playlistTabs,
-        selectedTab = filter,
+        selection = viewModel.playlistFilter,
         onSelectTab = { viewModel.selectPlaylistFilter(it) },
     )
     val displayedFilter = subTabs.displayedTab

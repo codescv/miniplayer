@@ -62,9 +62,14 @@ class SubTabSyncTest {
     /**
      * Mirrors `SubTabPagerController` / `rememberSubTabPager` wiring with a fake pager + ViewModel,
      * recording every ViewModel write and every chip highlight so flicker / ping-pong is assertable.
+     *
+     * [vmSelected] is the ViewModel `StateFlow.value` (written and read synchronously, exactly like
+     * the controller does). [propSelected] is the lagging `collectAsState()` snapshot that only
+     * triggers the external-sync effect; it catches up only on [deliverProp] / [deliverStaleProp].
      */
     private class Harness(val pageCount: Int, initial: Int = 0) {
         var vmSelected = initial
+        var propSelected = initial
         val vmCommits = mutableListOf<Int>()
         var state = SubTabSyncState()
         var currentPage = initial
@@ -106,9 +111,8 @@ class SubTabSyncTest {
             val decision = SubTabPagerSync.onChipTap(state, page, vmSelected, settledPage, scrolling, pageCount)
                 ?: return null
             decision.commitPage?.let(::commit)
-            val gen = startProgrammatic(decision.scrollTarget)
-            externalEffect() // LaunchedEffect(selectedPage) re-runs after the VM round trip
-            return gen
+            // The collectAsState() round trip (and its LaunchedEffect) happens later: deliverProp().
+            return startProgrammatic(decision.scrollTarget)
         }
 
         /** Programmatic animation passes through [page] (currentPage changes, target stays). */
@@ -144,20 +148,38 @@ class SubTabSyncTest {
             idleCheck()
         }
 
+        /** Runs only the idle collector (no prop delivery). */
+        fun chipIdleCommitViaSettle() = idleCheck()
+
         fun userSettle(page: Int) {
             currentPage = page
             targetPage = page
             settledPage = page
             scrolling = false
             idleCheck()
-            externalEffect()
+            deliverProp()
         }
 
         fun externalSelect(page: Int) {
             vmSelected = page
+            deliverProp()
+        }
+
+        /** collectAsState() catches up with the ViewModel -> LaunchedEffect(observedTab) re-runs. */
+        fun deliverProp() {
+            if (propSelected != vmSelected) {
+                propSelected = vmSelected
+                externalEffect()
+            }
+        }
+
+        /** A lagging intermediate emission (e.g. an older value) re-runs the effect. */
+        fun deliverStaleProp(value: Int) {
+            propSelected = value
             externalEffect()
         }
 
+        /** Effect body: decisions always use the fresh ViewModel value, never [propSelected]. */
         private fun externalEffect() {
             SubTabPagerSync.externalSyncTarget(state, vmSelected, currentPage, scrolling, pageCount)
                 ?.let { startProgrammatic(it) }
@@ -232,6 +254,75 @@ class SubTabSyncTest {
         h.finishProgrammatic(g2)
         assertEquals(listOf(3, 0), h.vmCommits)
         assertEquals(0, h.vmSelected)
+    }
+
+    @Test
+    fun twoChipTapsWithinOneFrame_beforeVmPropRoundTrip_secondTapWins() {
+        val h = Harness(pageCount = 4)
+        val g1 = h.tapChip(3)!!
+        assertEquals(0, h.propSelected) // collectAsState() has not caught up yet
+        val g2 = h.tapChip(0)!!
+        assertEquals(listOf(3, 0), h.vmCommits) // tap 2 sees the fresh VM value 3 and writes 0 back
+        assertEquals(0, h.vmSelected)
+        assertEquals(0, h.state.pendingTarget)
+        // animateScrollToPage(0) returns at once (pager never left page 0); older scroll cancelled.
+        h.cancelProgrammatic(g1)
+        h.finishProgrammatic(g2)
+        // Lagging props arrive afterwards (stale 3, then 0): no scroll back to 视频.
+        h.deliverStaleProp(3)
+        assertNull(h.state.pendingTarget)
+        h.deliverProp()
+        assertNull(h.state.pendingTarget)
+        assertEquals(0, h.settledPage)
+        assertEquals(0, h.displayed)
+        assertEquals(listOf(3, 0), h.vmCommits)
+    }
+
+    @Test
+    fun doubleTapSameChipWithinOneFrame_beforeVmPropRoundTrip_commitsAndAnimatesOnce() {
+        val h = Harness(pageCount = 4)
+        h.tapChip(3)!!
+        assertNull(h.tapChip(3))
+        assertEquals(listOf(3), h.vmCommits)
+        assertEquals(1L, h.state.generation) // running animation was not restarted
+        h.animateThrough(1)
+        h.deliverProp()
+        h.animateThrough(2)
+        h.finishProgrammatic()
+        assertEquals(listOf(3), h.vmCommits)
+        assertEquals(listOf(0, 3), h.displayedHistory)
+    }
+
+    @Test
+    fun staleIntermediatePropEmission_duringChipAnimation_neverRedirectsPager() {
+        val h = Harness(pageCount = 4)
+        h.tapChip(2)
+        h.animateThrough(1)
+        val g = h.tapChip(3)!!
+        // Recomposition with the stale initial value and then an intermediate one.
+        h.deliverStaleProp(0)
+        h.deliverStaleProp(2)
+        assertEquals(3, h.state.pendingTarget)
+        assertEquals(g, h.state.generation)
+        h.deliverProp()
+        h.finishProgrammatic(g)
+        assertEquals(listOf(2, 3), h.vmCommits)
+        assertEquals(3, h.settledPage)
+        assertEquals(listOf(0, 2, 3), h.displayedHistory)
+    }
+
+    @Test
+    fun userSettleCommit_thenStalePropBeforeRoundTrip_doesNotScrollBack() {
+        val h = Harness(pageCount = 3)
+        h.userDrag(0, 1)
+        h.currentPage = 1; h.targetPage = 1; h.settledPage = 1; h.scrolling = false
+        h.chipIdleCommitViaSettle()
+        assertEquals(listOf(1), h.vmCommits)
+        h.deliverStaleProp(0) // recomposition before collectAsState() caught up
+        assertNull(h.state.pendingTarget)
+        h.deliverProp()
+        assertNull(h.state.pendingTarget)
+        assertEquals(1, h.displayed)
     }
 
     // ---------------------------------------------------------------- user swipe

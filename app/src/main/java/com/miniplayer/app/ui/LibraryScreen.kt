@@ -46,7 +46,6 @@ fun LibraryScreen(
     onAddFolderClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val activeView by viewModel.libraryView.collectAsState()
     val folderMode by viewModel.folderDisplayMode.collectAsState()
     val searchQuery by viewModel.librarySearchQuery.collectAsState()
     val safRoots by viewModel.safRoots.collectAsState()
@@ -77,7 +76,7 @@ fun LibraryScreen(
     val libraryTabs = SubTabOrder.LIBRARY
     val subTabs = rememberSubTabPager(
         tabs = libraryTabs,
-        selectedTab = activeView,
+        selection = viewModel.libraryView,
         onSelectTab = { viewModel.selectLibraryView(it) },
     )
     val displayedView = subTabs.displayedTab
