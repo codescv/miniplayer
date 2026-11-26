@@ -18,6 +18,7 @@ import com.miniplayer.app.core.feedback.FeedbackEmailTargetResolver
 import com.miniplayer.app.core.feedback.FeedbackSendIntentSpec
 import com.miniplayer.app.core.feedback.FeedbackPreferenceStore
 import com.miniplayer.app.core.feedback.ResolvedEmailActivity
+import com.miniplayer.app.core.i18n.AppStrings
 import java.io.File
 import java.io.IOException
 
@@ -77,9 +78,10 @@ object AgentFeedbackLauncher {
         val feedbackDir = File(appContext.cacheDir, "feedback").apply { mkdirs() }
         purgeStaleAttachments(feedbackDir)
 
+        val strings = AppStrings.current()
         val destFile = File(feedbackDir, "fb_${System.currentTimeMillis()}_$safeName")
         val inputStream = cr.openInputStream(sourceUri)
-            ?: throw IOException("无法读取所选图片")
+            ?: throw IOException(strings.feedbackCannotReadImage)
 
         var totalBytes = 0L
         var copiedOk = false
@@ -93,7 +95,7 @@ object AgentFeedbackLauncher {
                         if (n == 0) continue
                         totalBytes += n
                         if (totalBytes > MAX_ATTACHMENT_BYTES) {
-                            throw IOException("截图文件超过 20 MB 上限")
+                            throw IOException(strings.feedbackImageTooLarge)
                         }
                         out.write(buf, 0, n)
                     }
@@ -101,7 +103,7 @@ object AgentFeedbackLauncher {
                 }
             }
             if (totalBytes <= 0L) {
-                throw IOException("所选图片内容为空")
+                throw IOException(strings.feedbackImageEmpty)
             }
             copiedOk = true
         } finally {
@@ -166,7 +168,7 @@ object AgentFeedbackLauncher {
                 putExtra(Intent.EXTRA_SUBJECT, payload.subject)
                 putExtra(Intent.EXTRA_TEXT, payload.body)
             }
-            val chooser = Intent.createChooser(fallbackSend, "发送反馈给 Agent").apply {
+            val chooser = Intent.createChooser(fallbackSend, AppStrings.current().feedbackEntryTitle).apply {
                 if (needNewTask) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             return context.tryStart(chooser)
@@ -216,7 +218,7 @@ object AgentFeedbackLauncher {
             clipData = ClipData.newRawUri(FeedbackEmailTargetResolver.CLIP_LABEL, attachment.contentUri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        val chooser = Intent.createChooser(fallbackSend, "发送反馈给 Agent").apply {
+        val chooser = Intent.createChooser(fallbackSend, AppStrings.current().feedbackEntryTitle).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (needNewTask) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }

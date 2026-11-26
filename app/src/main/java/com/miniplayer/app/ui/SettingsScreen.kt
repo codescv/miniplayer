@@ -1,4 +1,7 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+)
 
 package com.miniplayer.app.ui
 
@@ -14,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.*
@@ -29,18 +33,19 @@ import androidx.compose.ui.unit.dp
 import com.miniplayer.app.BuildConfig
 import com.miniplayer.app.core.feedback.AgentFeedbackHelper
 import com.miniplayer.app.core.feedback.AgentFeedbackRequest
+import com.miniplayer.app.core.i18n.AppLanguage
 import com.miniplayer.app.ui.theme.tnum
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Minimalist Settings Screen (`DESIGN.md` §4.4) organized into 3 clean groups:
- * 1. `本地媒体库与无线连接` (PC LAN Web Studio entry, launch incremental rescan)
- * 2. `本地缓存` (local cover & waveform cache cleanup)
- * 3. `关于与自动更新` (GitHub Release checker, changelog, SHA-256 + signature verified APK updater,
- *    and a single unified `发送反馈` entry that opens [AgentFeedbackSheet], which hosts the local-only
- *    `Agent 反馈邮箱` input + inline `保存`, and the 3 core fields `标题` / `问题描述` / `增加图片`; `v1.0.14`)
+ * Minimalist Settings Screen (`DESIGN.md` §4.4) organized into clean groups:
+ * 1. Language (System Default / 中文 / English / 日本語 — immediate switch without restart)
+ * 2. Local Library & Wireless (PC LAN Web Studio entry, launch incremental rescan)
+ * 3. Local Cache (local cover & waveform cache cleanup)
+ * 4. About & Auto-Update (GitHub Release checker, changelog, SHA-256 + signature verified APK updater,
+ *    and a single unified feedback entry that opens [AgentFeedbackSheet])
  */
 @Composable
 fun SettingsScreen(
@@ -48,6 +53,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     val settings by viewModel.settings.collectAsState()
     val cacheBytes by viewModel.cacheSizeBytes.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
@@ -71,10 +77,10 @@ fun SettingsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("设置") },
+                title = { Text(s.settings) },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = s.back)
                     }
                 },
             )
@@ -88,28 +94,77 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // === Group 1: 本地媒体库与无线连接 ===
-            SettingsSectionCard(title = "本地媒体库与无线连接") {
-                // Row 1: PC 局域网 Web 管理台
+            // === Group 0: Language (Immediate Switch) ===
+            SettingsSectionCard(title = s.settingsLanguageSection) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = s.settingsLanguageTitle,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            text = s.settingsLanguageSubtitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        AppLanguage.entries.forEach { option ->
+                            val selected = settings.appLanguage == option
+                            FilterChip(
+                                selected = selected,
+                                onClick = { viewModel.setAppLanguage(option) },
+                                label = { Text(s.languageOptionLabel(option)) },
+                                leadingIcon = if (selected) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                                modifier = Modifier.defaultMinSize(minHeight = 40.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // === Group 1: Local Library & Wireless ===
+            SettingsSectionCard(title = s.settingsLibrarySection) {
+                // Row 1: PC LAN Web Studio
                 SettingsClickableRow(
-                    title = "PC 局域网 Web 管理台",
-                    subtitle = "在同一 Wi-Fi 下用电脑浏览器无线传歌、批量改标签与管理播放列表",
+                    title = s.settingsLanStudioTitle,
+                    subtitle = s.settingsLanStudioSubtitle,
                     trailing = {
                         FilledTonalButton(
                             onClick = { viewModel.setLanStudioVisible(true) },
                             modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                         ) {
-                            Text("打开")
+                            Text(s.open)
                         }
                     },
                     onClick = { viewModel.setLanStudioVisible(true) },
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp))
 
-                // Row 2: 启动时后台增量刷新已添加目录
+                // Row 2: Auto-rescan on launch
                 SettingsSwitchRow(
-                    title = "启动时后台增量刷新已添加目录",
-                    subtitle = "游标级快速跳过未变更文件，未挂载 OTG 自动保留书签",
+                    title = s.settingsAutoRescanTitle,
+                    subtitle = s.settingsAutoRescanSubtitle,
                     checked = settings.autoRescanOnLaunch,
                     onCheckedChange = { enabled ->
                         viewModel.updateAppSettings { it.copy(autoRescanOnLaunch = enabled) }
@@ -117,25 +172,25 @@ fun SettingsScreen(
                 )
             }
 
-            // === Group 2: 本地缓存 ===
-            SettingsSectionCard(title = "本地缓存") {
+            // === Group 2: Local Cache ===
+            SettingsSectionCard(title = s.settingsCacheSection) {
                 SettingsClickableRow(
-                    title = "清理本地封面与波形缓存",
-                    subtitle = "当前占用 ${MiniPlayerViewModel.formatByteSize(cacheBytes)}（不删除音乐文件与练习书签）",
+                    title = s.settingsClearCacheTitle,
+                    subtitle = s.fmt(s.settingsClearCacheSubtitleTpl, MiniPlayerViewModel.formatByteSize(cacheBytes)),
                     trailing = {
                         FilledTonalButton(
                             onClick = { viewModel.clearLocalCaches() },
                             modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                         ) {
-                            Text("清理")
+                            Text(s.clear)
                         }
                     },
                     onClick = { viewModel.clearLocalCaches() },
                 )
             }
 
-            // === Group 3: 关于与自动更新 ===
-            SettingsSectionCard(title = "关于与自动更新") {
+            // === Group 3: About & Auto-Update ===
+            SettingsSectionCard(title = s.settingsAboutSection) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -153,7 +208,7 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium.tnum(),
                             )
                             Text(
-                                text = "纯本地受控扫描 · Material You · GitHub 安全签名校验更新",
+                                text = s.settingsAboutTagline,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -163,7 +218,7 @@ fun SettingsScreen(
                             enabled = updateState !is UiUpdateState.Checking && updateState !is UiUpdateState.Downloading,
                             modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                         ) {
-                            Text(if (updateState is UiUpdateState.Checking) "检查中…" else "检查 GitHub 更新")
+                            Text(if (updateState is UiUpdateState.Checking) s.settingsCheckingUpdate else s.settingsCheckUpdateBtn)
                         }
                     }
 
@@ -186,7 +241,11 @@ fun SettingsScreen(
                                 ) {
                                     if (info.updateAvailable) {
                                         Text(
-                                            text = "发现新版本 ${info.latestTag} (${MiniPlayerViewModel.formatByteSize(info.apkSizeBytes)})",
+                                            text = s.fmt(
+                                                s.settingsNewVersionTpl,
+                                                info.latestTag,
+                                                MiniPlayerViewModel.formatByteSize(info.apkSizeBytes),
+                                            ),
                                             style = MaterialTheme.typography.titleMedium.tnum(),
                                             color = MaterialTheme.colorScheme.primary,
                                         )
@@ -204,11 +263,11 @@ fun SettingsScreen(
                                             },
                                             modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                                         ) {
-                                            Text("下载并安装更新 (SHA-256 + 签名校验)")
+                                            Text(s.settingsDownloadInstallBtn)
                                         }
                                     } else {
                                         Text(
-                                            text = "当前已是最新版本 (${info.latestTag})",
+                                            text = s.fmt(s.settingsAlreadyLatestTpl, info.latestTag),
                                             style = MaterialTheme.typography.bodyMedium.tnum(),
                                         )
                                     }
@@ -224,7 +283,12 @@ fun SettingsScreen(
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 LinearProgressIndicator(progress = { frac }, modifier = Modifier.fillMaxWidth())
                                 Text(
-                                    text = "正在下载 ${state.info.apkName}：${MiniPlayerViewModel.formatByteSize(state.downloadedBytes)} / ${MiniPlayerViewModel.formatByteSize(state.totalBytes)}",
+                                    text = s.fmt(
+                                        s.settingsDownloadingApkTpl,
+                                        state.info.apkName,
+                                        MiniPlayerViewModel.formatByteSize(state.downloadedBytes),
+                                        MiniPlayerViewModel.formatByteSize(state.totalBytes),
+                                    ),
                                     style = MaterialTheme.typography.labelMedium.tnum(),
                                 )
                             }
@@ -240,7 +304,7 @@ fun SettingsScreen(
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     Text(
-                                        text = "✓ ${state.info.latestTag} 已通过 SHA-256 与签名证书校验",
+                                        text = s.fmt(s.settingsVerifiedApkTpl, state.info.latestTag),
                                         style = MaterialTheme.typography.bodyLarge,
                                         fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -249,7 +313,7 @@ fun SettingsScreen(
                                         onClick = { viewModel.requestInstallApk(state.apkFile, context) },
                                         modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                                     ) {
-                                        Text("立即安装更新")
+                                        Text(s.settingsInstallNowBtn)
                                     }
                                 }
                             }
@@ -277,15 +341,15 @@ fun SettingsScreen(
                                 .padding(end = 12.dp),
                         ) {
                             Text(
-                                text = "发送反馈给 Agent",
+                                text = s.feedbackEntryTitle,
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.Medium,
                             )
                             Text(
                                 text = if (agentFeedbackEmail.isBlank()) {
-                                    "Agent 反馈邮箱：未设置（仅保存在本机）"
+                                    s.feedbackEmailUnset
                                 } else {
-                                    "Agent 反馈邮箱：$agentFeedbackEmail"
+                                    s.fmt(s.feedbackEmailSetTpl, agentFeedbackEmail)
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -297,13 +361,13 @@ fun SettingsScreen(
                             onClick = { showFeedbackSheet = true },
                             modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                         ) {
-                            Text("发送反馈")
+                            Text(s.feedbackSendButton)
                         }
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { showLicensesDialog = true }) {
-                            Text("开源许可声明")
+                            Text(s.openSourceLicensesBtn)
                         }
                     }
                 }
@@ -326,14 +390,10 @@ fun SettingsScreen(
     if (showLicensesDialog) {
         AlertDialog(
             onDismissRequest = { showLicensesDialog = false },
-            title = { Text("开源许可") },
-            text = {
-                Text(
-                    "MiniPlayer 基于 Apache License 2.0 协议构建，使用 Android Jetpack Compose Material 3、AndroidX Media3 (ExoPlayer) 及开放免密钥数据库 MusicBrainz / iTunes Search / LRCLIB。",
-                )
-            },
+            title = { Text(s.openSourceLicensesTitle) },
+            text = { Text(s.openSourceLicensesBody) },
             confirmButton = {
-                TextButton(onClick = { showLicensesDialog = false }) { Text("关闭") }
+                TextButton(onClick = { showLicensesDialog = false }) { Text(s.close) }
             },
         )
     }
@@ -347,6 +407,8 @@ private fun AgentFeedbackSheet(
     onEmitMessage: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
+    val resolvedLanguage = LocalResolvedLanguage.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -372,19 +434,20 @@ private fun AgentFeedbackSheet(
                     stagedAttachment?.file?.let { old -> runCatching { old.delete() } }
                     stagedAttachment = att
                 }.onFailure { err ->
-                    onEmitMessage("读取图片失败：${err.message ?: "请重试"}")
+                    onEmitMessage(s.fmt(s.feedbackReadImageFailedTpl, err.message ?: s.feedbackRetryFallback))
                 }
             }
         }
     }
 
     val hasAttachment = stagedAttachment != null
-    val subjectPreview = remember(summaryInput, detailsInput, hasAttachment) {
+    val subjectPreview = remember(summaryInput, detailsInput, hasAttachment, resolvedLanguage) {
         AgentFeedbackHelper.formatSubject(
             summary = summaryInput,
             versionName = BuildConfig.VERSION_NAME,
             detailsFallback = detailsInput,
             hasAttachment = hasAttachment,
+            language = resolvedLanguage,
         )
     }
 
@@ -393,7 +456,7 @@ private fun AgentFeedbackSheet(
         (normalizedEmail.isEmpty() || AgentFeedbackHelper.isValidEmail(normalizedEmail))
     val emailValid = AgentFeedbackHelper.isValidEmail(normalizedEmail)
     val emailHint = emailError ?: if (normalizedEmail.isNotEmpty() && !emailValid) {
-        "请输入有效的邮箱地址，例如 ${AgentFeedbackHelper.EMAIL_PLACEHOLDER}"
+        s.fmt(s.feedbackEmailInvalidHintTpl, AgentFeedbackHelper.EMAIL_PLACEHOLDER)
     } else {
         null
     }
@@ -410,11 +473,15 @@ private fun AgentFeedbackSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "发送反馈给 Agent",
+                text = s.feedbackEntryTitle,
                 style = MaterialTheme.typography.titleLarge,
             )
             Text(
-                text = "自动生成 ${AgentFeedbackHelper.PROJECT_ROUTING_PREFIX}: [${AgentFeedbackHelper.normalizeVersionTag(BuildConfig.VERSION_NAME)}] 路由前缀，拉起本机邮箱一键发送。",
+                text = s.fmt(
+                    s.feedbackSheetSubtitleTpl,
+                    AgentFeedbackHelper.PROJECT_ROUTING_PREFIX,
+                    AgentFeedbackHelper.normalizeVersionTag(BuildConfig.VERSION_NAME),
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -425,7 +492,7 @@ private fun AgentFeedbackSheet(
                     emailInput = it
                     emailError = null
                 },
-                label = { Text("Agent 反馈邮箱（仅保存在本机）") },
+                label = { Text(s.feedbackEmailLabel) },
                 placeholder = { Text(AgentFeedbackHelper.EMAIL_PLACEHOLDER) },
                 singleLine = true,
                 isError = emailHint != null,
@@ -436,12 +503,12 @@ private fun AgentFeedbackSheet(
                             onClick = {
                                 if (onSaveEmail(normalizedEmail)) {
                                     onEmitMessage(
-                                        if (normalizedEmail.isEmpty()) "已清空 Agent 反馈邮箱" else "已保存 Agent 反馈邮箱",
+                                        if (normalizedEmail.isEmpty()) s.feedbackEmailCleared else s.feedbackEmailSaved,
                                     )
                                 }
                             },
                         ) {
-                            Text("保存")
+                            Text(s.save)
                         }
                     }
                 } else {
@@ -454,12 +521,12 @@ private fun AgentFeedbackSheet(
             OutlinedTextField(
                 value = summaryInput,
                 onValueChange = { summaryInput = it },
-                label = { Text("标题") },
-                placeholder = { Text("例如：练习模式希望支持导出循环片段") },
+                label = { Text(s.feedbackTitleLabel) },
+                placeholder = { Text(s.feedbackTitlePlaceholder) },
                 singleLine = true,
                 supportingText = {
                     Text(
-                        text = "邮件主题：$subjectPreview",
+                        text = s.fmt(s.feedbackEmailSubjectPreviewTpl, subjectPreview),
                         style = MaterialTheme.typography.labelSmall.tnum(),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -471,14 +538,14 @@ private fun AgentFeedbackSheet(
             OutlinedTextField(
                 value = detailsInput,
                 onValueChange = { detailsInput = it },
-                label = { Text("问题描述") },
-                placeholder = { Text("补充使用场景、复现步骤或改进建议") },
+                label = { Text(s.feedbackDetailsLabel) },
+                placeholder = { Text(s.feedbackDetailsPlaceholder) },
                 minLines = 3,
                 maxLines = 6,
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // 增加图片 (Android Photo Picker -> FileProvider EXTRA_STREAM attachment)
+            // Add Image (Android Photo Picker -> FileProvider EXTRA_STREAM attachment)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -501,9 +568,9 @@ private fun AgentFeedbackSheet(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         when {
-                            isStagingImage -> "处理中…"
-                            stagedAttachment != null -> "更换图片"
-                            else -> "增加图片"
+                            isStagingImage -> s.feedbackStagingImage
+                            stagedAttachment != null -> s.feedbackChangeImage
+                            else -> s.feedbackAddImage
                         },
                     )
                 }
@@ -534,7 +601,7 @@ private fun AgentFeedbackSheet(
                             ) {
                                 Icon(
                                     imageVector = Icons.Outlined.Close,
-                                    contentDescription = "移除图片",
+                                    contentDescription = s.feedbackRemoveImageDesc,
                                     modifier = Modifier.size(16.dp),
                                 )
                             }
@@ -558,12 +625,12 @@ private fun AgentFeedbackSheet(
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                         Text(
-                            text = "附带版本与播放/练习状态信息",
+                            text = s.feedbackIncludeDiagnosticsTitle,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
                         )
                         Text(
-                            text = "仅包含版本号、速度、变调与循环时间点，不包含本地目录路径",
+                            text = s.feedbackIncludeDiagnosticsSubtitle,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -576,8 +643,8 @@ private fun AgentFeedbackSheet(
             }
 
             val sendBlockedHint = when {
-                normalizedEmail.isEmpty() -> "请先填写 Agent 反馈邮箱"
-                !hasContent -> "请至少填写标题、问题描述或增加图片中的一项"
+                normalizedEmail.isEmpty() -> s.feedbackHintMissingEmail
+                !hasContent -> s.feedbackHintMissingContent
                 else -> null
             }
             if (sendBlockedHint != null) {
@@ -597,17 +664,17 @@ private fun AgentFeedbackSheet(
                     onClick = onDismiss,
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("取消")
+                    Text(s.cancel)
                 }
                 Button(
                     onClick = {
                         val targetEmail = AgentFeedbackHelper.normalizeEmail(emailInput)
                         if (!AgentFeedbackHelper.isValidEmail(targetEmail)) {
-                            emailError = "请先填写有效的 Agent 反馈邮箱，例如 ${AgentFeedbackHelper.EMAIL_PLACEHOLDER}"
+                            emailError = s.fmt(s.feedbackEmailRequiredErrorTpl, AgentFeedbackHelper.EMAIL_PLACEHOLDER)
                             return@Button
                         }
                         if (!AgentFeedbackHelper.hasFeedbackContent(summaryInput, detailsInput, stagedAttachment != null)) {
-                            onEmitMessage("请至少填写标题、问题描述或增加图片中的一项")
+                            onEmitMessage(s.feedbackHintMissingContent)
                             return@Button
                         }
                         onSaveEmail(targetEmail)
@@ -617,7 +684,7 @@ private fun AgentFeedbackSheet(
                             null
                         }
                         val payload = AgentFeedbackHelper.buildPayload(
-                            AgentFeedbackRequest(
+                            request = AgentFeedbackRequest(
                                 recipientEmail = targetEmail,
                                 summary = summaryInput,
                                 details = detailsInput,
@@ -626,6 +693,7 @@ private fun AgentFeedbackSheet(
                                 diagnostics = diagnostics,
                                 hasAttachment = stagedAttachment != null,
                             ),
+                            language = resolvedLanguage,
                         )
                         val launched = AgentFeedbackLauncher.launchFeedbackEmail(
                             context = context,
@@ -635,13 +703,13 @@ private fun AgentFeedbackSheet(
                         if (launched) {
                             onDismiss()
                         } else {
-                            onEmitMessage("未找到可用的邮件客户端，请先安装邮箱应用")
+                            onEmitMessage(s.feedbackNoMailClient)
                         }
                     },
                     enabled = canSend,
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("发送反馈给 Agent")
+                    Text(s.feedbackEntryTitle)
                 }
             }
         }

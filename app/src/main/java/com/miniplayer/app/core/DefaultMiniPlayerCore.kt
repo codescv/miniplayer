@@ -3,6 +3,7 @@ package com.miniplayer.app.core
 import android.content.Context
 import com.miniplayer.app.core.db.MediaRepository
 import com.miniplayer.app.core.db.MiniPlayerDatabase
+import com.miniplayer.app.core.i18n.AppLocaleHolder
 import com.miniplayer.app.core.metadata.DefaultMetadataEngine
 import com.miniplayer.app.core.metadata.LrclibClient
 import com.miniplayer.app.core.metadata.OnlineMetadataCompleter
@@ -54,6 +55,7 @@ class DefaultMiniPlayerCore(
     override val updater: AppUpdateContract get() = updateService
 
     init {
+        AppLocaleHolder.setPreference(mediaRepository.settings.value.appLanguage)
         if (mediaRepository.settings.value.autoRescanOnLaunch && mediaRepository.safRoots.value.isNotEmpty()) {
             startupScope.launch {
                 runCatching { safScanner.rescanAll(incremental = true) }

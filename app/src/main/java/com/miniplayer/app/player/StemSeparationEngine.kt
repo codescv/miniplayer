@@ -9,6 +9,7 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.model.MediaItem
 import com.miniplayer.app.core.model.StemType
 import java.io.BufferedOutputStream
@@ -714,7 +715,8 @@ class StemModelManager(
                 if (!validateOnnxModelFile(tmpFile)) {
                     val downloadedLen = tmpFile.length()
                     tmpFile.delete()
-                    throw IOException("校验失败：下载的模型文件不完整或格式无效 (${downloadedLen / 1024} KB)")
+                    val s = AppStrings.current()
+                    throw IOException(s.fmt(s.stemErrVerifyFailedTpl, downloadedLen / 1024))
                 }
                 if (destFile.exists()) destFile.delete()
                 if (!tmpFile.renameTo(destFile)) {
@@ -733,7 +735,7 @@ class StemModelManager(
         }
 
         throw IOException(
-            lastError?.message ?: "无法下载 HTDemucs 模型，请检查网络连接后重试",
+            lastError?.message ?: AppStrings.current().stemErrDownloadNetwork,
             lastError,
         )
     }
@@ -764,13 +766,15 @@ class StemModelManager(
                     conn.disconnect()
                     conn = null
                     if (location.isNullOrBlank() || ++redirects > 8) {
-                        throw IOException("下载重定向过多或无效 ($code)")
+                        val s = AppStrings.current()
+                        throw IOException(s.fmt(s.stemErrTooManyRedirectsTpl, code))
                     }
                     currentUrl = URL(URL(currentUrl), location).toString()
                     continue
                 }
                 if (code !in 200..299) {
-                    throw IOException("服务器返回 HTTP $code")
+                    val s = AppStrings.current()
+                    throw IOException(s.fmt(s.stemErrHttpStatusTpl, code))
                 }
 
                 val expectedBytes = conn.contentLengthLong.takeIf { it > 0L } ?: EXPECTED_MODEL_BYTES
@@ -968,7 +972,7 @@ class StemSeparationEngine(
         } catch (t: Throwable) {
             val missing = !modelManager.isModelReady()
             _stemAnalysisState.value = StemAnalysisState.Error(
-                message = t.message ?: "HTDemucs 模型下载失败",
+                message = t.message ?: AppStrings.current().stemErrDownloadFailed,
                 modelMissing = missing,
             )
             null
@@ -994,7 +998,7 @@ class StemSeparationEngine(
             throw ce
         } catch (t: Throwable) {
             _stemAnalysisState.value = StemAnalysisState.Error(
-                message = t.message ?: "HTDemucs 分轨失败",
+                message = t.message ?: AppStrings.current().stemErrSeparationFailed,
                 modelMissing = !modelManager.isModelReady(),
             )
             null
@@ -1020,7 +1024,7 @@ class StemSeparationEngine(
 
         val modelFile = modelManager.modelFile
             ?.takeIf { StemModelManager.validateOnnxModelFile(it) }
-            ?: throw IOException("尚未下载 HTDemucs 模型")
+            ?: throw IOException(AppStrings.current().stemErrModelMissing)
 
         _stemAnalysisState.value = StemAnalysisState.AnalyzingTrack(
             itemId = item.itemId,
@@ -1043,7 +1047,7 @@ class StemSeparationEngine(
                 onProgress(p)
             }
             if (totalFrames44k1 <= 0) {
-                throw IOException("无法解码当前音频轨道")
+                throw IOException(AppStrings.current().stemErrDecodeFailed)
             }
 
             val ortSession = getOrCreateOrtSession(modelFile)
@@ -1104,7 +1108,7 @@ class StemSeparationEngine(
             }
 
             val mappedCache = StemSeparatedTrackCache.openMapped(cacheFile)
-                ?: throw IOException("无法映射分离后的音轨缓存")
+                ?: throw IOException(AppStrings.current().stemErrMapCacheFailed)
             val prev = activeCache
             activeCache = mappedCache
             if (prev != null && prev !== mappedCache) {

@@ -40,6 +40,7 @@ fun PlaylistsScreen(
     onExportM3uRequest: (Long, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     val searchQuery by viewModel.playlistSearchQuery.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val bookmarkedTracks by viewModel.bookmarkedTracks.collectAsState()
@@ -134,7 +135,7 @@ fun PlaylistsScreen(
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
                 TopAppBar(
                     title = {
-                        Text("播放列表", style = MaterialTheme.typography.titleLarge)
+                        Text(s.tabPlaylists, style = MaterialTheme.typography.titleLarge)
                     },
                     actions = {},
                 )
@@ -143,7 +144,7 @@ fun PlaylistsScreen(
                 SubTabChipRow(
                     tabs = playlistTabs,
                     activeTab = displayedFilter,
-                    label = SubTabOrder::playlistLabel,
+                    label = { SubTabOrder.playlistLabel(it, s) },
                     onChipClick = subTabs::onChipClick,
                 )
             }
@@ -153,7 +154,7 @@ fun PlaylistsScreen(
                 FloatingActionButton(
                     onClick = openCreateDialog,
                 ) {
-                    Icon(Icons.Outlined.Add, contentDescription = "新建播放列表")
+                    Icon(Icons.Outlined.Add, contentDescription = s.newPlaylist)
                 }
             }
         },
@@ -191,9 +192,9 @@ fun PlaylistsScreen(
 
                 if (pagePlaylists.isEmpty()) {
                     EmptyLibraryPlaceholder(
-                        title = playlistPageEmptyTitle(pageFilter),
-                        subtitle = "可将音频伴奏与教学视频混排在同一练习列表中，点播自动展开练习工作台。",
-                        actionLabel = "新建播放列表",
+                        title = playlistPageEmptyTitle(pageFilter, s),
+                        subtitle = s.emptyPlaylistsSubtitle,
+                        actionLabel = s.newPlaylist,
                         onAction = {
                             createDialogPractice = pageFilter == PlaylistFilter.PRACTICE_ONLY
                             showCreateDialog = true
@@ -260,6 +261,7 @@ private fun PlaylistSummaryCard(
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     var menuOpen by remember { mutableStateOf(false) }
 
     Surface(
@@ -288,17 +290,17 @@ private fun PlaylistSummaryCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (playlist.isPracticePlaylist) {
-                        PracticeBadgePill("练习")
+                        PracticeBadgePill(s.badgePractice)
                     }
                 }
                 Spacer(Modifier.height(3.dp))
                 Text(
                     text = buildString {
-                        append("${playlist.itemCount} 首音视频")
+                        append(s.fmt(s.playlistItemsCountTpl, playlist.itemCount))
                         if (playlist.totalBookmarks > 0) {
-                            append(" · 含 ${playlist.totalBookmarks} 个段落书签")
+                            append(s.fmt(s.playlistBookmarksSuffixTpl, playlist.totalBookmarks))
                         } else if (!playlist.isPracticePlaylist) {
-                            append(" · 普通播放列表")
+                            append(s.normalPlaylistSuffix)
                         }
                     },
                     style = MaterialTheme.typography.bodyMedium.tnum(),
@@ -307,12 +309,12 @@ private fun PlaylistSummaryCard(
             }
             Box {
                 IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = "播放列表菜单")
+                    Icon(Icons.Outlined.MoreVert, contentDescription = s.playlistMenuDesc)
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
                         text = {
-                            Text(if (playlist.isPracticePlaylist) "切换为普通播放列表" else "设为练习列表")
+                            Text(if (playlist.isPracticePlaylist) s.switchToNormalPlaylist else s.setAsPracticePlaylist)
                         },
                         leadingIcon = { Icon(GuitarIcon, contentDescription = null) },
                         onClick = {
@@ -321,7 +323,7 @@ private fun PlaylistSummaryCard(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("重命名") },
+                        text = { Text(s.rename) },
                         leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                         onClick = {
                             menuOpen = false
@@ -329,7 +331,7 @@ private fun PlaylistSummaryCard(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("导出 .m3u8") },
+                        text = { Text(s.exportM3u8) },
                         leadingIcon = { Icon(Icons.Outlined.IosShare, contentDescription = null) },
                         onClick = {
                             menuOpen = false
@@ -338,7 +340,7 @@ private fun PlaylistSummaryCard(
                     )
                     HorizontalDivider()
                     DropdownMenuItem(
-                        text = { Text("删除列表", color = MaterialTheme.colorScheme.error) },
+                        text = { Text(s.deletePlaylist, color = MaterialTheme.colorScheme.error) },
                         leadingIcon = {
                             Icon(
                                 Icons.Outlined.DeleteOutline,
@@ -391,6 +393,7 @@ private fun BookmarkedTracksSection(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
 ) {
+    val s = LocalAppStrings.current
     val filtered = remember(items, searchQuery) {
         if (searchQuery.isBlank()) items
         else items.filter { entry ->
@@ -402,7 +405,7 @@ private fun BookmarkedTracksSection(
     if (filtered.isEmpty()) {
         Box(modifier = modifier.padding(32.dp), contentAlignment = Alignment.Center) {
             Text(
-                text = "暂无已保存的 A-B 段落书签。在播放页展开「练习模式」设好 A/B 点后保存书签即可在此处一键直达。",
+                text = s.emptyBookmarksMessage,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -440,7 +443,11 @@ private fun BookmarkedTracksSection(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = "${entry.mediaItem.artist} · ${entry.bookmarks.size} 个段落",
+                                text = s.fmt(
+                                    s.artistBookmarksCountTpl,
+                                    s.displayArtist(entry.mediaItem.artist),
+                                    entry.bookmarks.size,
+                                ),
                                 style = MaterialTheme.typography.bodyMedium.tnum(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -499,6 +506,7 @@ private fun PlaylistDetailContent(
     onEditTrackMetadata: (MediaItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     var topMenuOpen by remember { mutableStateOf(false) }
     var showAddTracksSheet by remember { mutableStateOf(false) }
 
@@ -516,17 +524,17 @@ private fun PlaylistDetailContent(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = s.back)
                     }
                 },
                 actions = {
                     Box {
                         IconButton(onClick = { topMenuOpen = true }, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.MoreVert, contentDescription = "列表更多操作")
+                            Icon(Icons.Outlined.MoreVert, contentDescription = s.playlistMoreActionsDesc)
                         }
                         DropdownMenu(expanded = topMenuOpen, onDismissRequest = { topMenuOpen = false }) {
                             DropdownMenuItem(
-                                text = { Text("重命名") },
+                                text = { Text(s.rename) },
                                 leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                                 onClick = {
                                     topMenuOpen = false
@@ -534,7 +542,7 @@ private fun PlaylistDetailContent(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("导出 .m3u8") },
+                                text = { Text(s.exportM3u8) },
                                 leadingIcon = { Icon(Icons.Outlined.IosShare, contentDescription = null) },
                                 onClick = {
                                     topMenuOpen = false
@@ -543,7 +551,7 @@ private fun PlaylistDetailContent(
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
-                                text = { Text("删除列表", color = MaterialTheme.colorScheme.error) },
+                                text = { Text(s.deletePlaylist, color = MaterialTheme.colorScheme.error) },
                                 leadingIcon = {
                                     Icon(
                                         Icons.Outlined.DeleteOutline,
@@ -571,7 +579,7 @@ private fun PlaylistDetailContent(
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // Header toggle card: `练习列表模式` (§4.2)
+                    // Header toggle card: Practice Playlist Mode (§4.2)
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = if (detail.summary.isPracticePlaylist) {
@@ -589,7 +597,7 @@ private fun PlaylistDetailContent(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "练习列表模式",
+                                    text = s.practicePlaylistModeTitle,
                                     style = MaterialTheme.typography.titleMedium,
                                     color = if (detail.summary.isPracticePlaylist) {
                                         MaterialTheme.colorScheme.onTertiaryContainer
@@ -598,7 +606,7 @@ private fun PlaylistDetailContent(
                                     },
                                 )
                                 Text(
-                                    text = "播放列表内任意音频或教学视频时自动展开练习工作台",
+                                    text = s.practicePlaylistModeSubtitle,
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = if (detail.summary.isPracticePlaylist) {
                                         MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f)
@@ -625,7 +633,7 @@ private fun PlaylistDetailContent(
                         ) {
                             Icon(Icons.Outlined.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text(if (detail.summary.isPracticePlaylist) "全部练习播放" else "全部播放")
+                            Text(if (detail.summary.isPracticePlaylist) s.practicePlayAllPlaylist else s.playAll)
                         }
                         FilledTonalButton(
                             onClick = { showAddTracksSheet = true },
@@ -633,7 +641,7 @@ private fun PlaylistDetailContent(
                         ) {
                             Icon(Icons.Outlined.Add, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("添加曲目/视频")
+                            Text(s.addTracksOrVideos)
                         }
                     }
                 }
@@ -707,7 +715,7 @@ private fun PlaylistDetailContent(
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.DragHandle,
-                                contentDescription = "长按上下拖拽排序",
+                                contentDescription = s.dragReorderDesc,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -728,16 +736,16 @@ private fun PlaylistDetailContent(
                             )
                             Text(
                                 text = buildString {
-                                    if (item.isVideo) append("视频 · ") else append("${item.artist} · ")
+                                    if (item.isVideo) append("${s.video} · ") else append("${s.displayArtist(item.artist)} · ")
                                     if (item.savedPracticeSpeed != 1.0f) {
                                         append("${String.format("%.2fx", item.savedPracticeSpeed)} · ")
                                     }
                                     if (item.savedSemitones != 0) {
                                         val sign = if (item.savedSemitones > 0) "+" else ""
-                                        append("$sign${item.savedSemitones} 半音 · ")
+                                        append(s.fmt(s.semitonesShortTpl, "$sign${item.savedSemitones}") + " · ")
                                     }
                                     if (item.bookmarkCount > 0) {
-                                        append("${item.bookmarkCount} 段 · ")
+                                        append(s.fmt(s.bookmarkCountShortTpl, item.bookmarkCount) + " · ")
                                     }
                                     append(PracticeMath.formatTimeMs(item.durationMs))
                                 },
@@ -750,12 +758,12 @@ private fun PlaylistDetailContent(
 
                         Box {
                             IconButton(onClick = { rowMenuOpen = true }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.MoreVert, contentDescription = "曲目菜单")
+                                Icon(Icons.Outlined.MoreVert, contentDescription = s.trackMenuDesc)
                             }
                             DropdownMenu(expanded = rowMenuOpen, onDismissRequest = { rowMenuOpen = false }) {
                                 if (idx > 0) {
                                     DropdownMenuItem(
-                                        text = { Text("上移一位") },
+                                        text = { Text(s.moveUp) },
                                         leadingIcon = { Icon(Icons.Outlined.ArrowUpward, contentDescription = null) },
                                         onClick = {
                                             rowMenuOpen = false
@@ -767,7 +775,7 @@ private fun PlaylistDetailContent(
                                 }
                                 if (idx < localOrder.lastIndex) {
                                     DropdownMenuItem(
-                                        text = { Text("下移一位") },
+                                        text = { Text(s.moveDown) },
                                         leadingIcon = { Icon(Icons.Outlined.ArrowDownward, contentDescription = null) },
                                         onClick = {
                                             rowMenuOpen = false
@@ -778,7 +786,7 @@ private fun PlaylistDetailContent(
                                     )
                                 }
                                 DropdownMenuItem(
-                                    text = { Text("编辑标签信息") },
+                                    text = { Text(s.editTrackTags) },
                                     leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                                     onClick = {
                                         rowMenuOpen = false
@@ -786,7 +794,7 @@ private fun PlaylistDetailContent(
                                     },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("从列表移除", color = MaterialTheme.colorScheme.error) },
+                                    text = { Text(s.removeFromPlaylist, color = MaterialTheme.colorScheme.error) },
                                     leadingIcon = {
                                         Icon(
                                             Icons.Outlined.RemoveCircleOutline,
@@ -828,19 +836,20 @@ private fun CreateOrRenamePlaylistDialog(
     onConfirm: (String, Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     var name by remember { mutableStateOf(initialName) }
     var isPractice by remember { mutableStateOf(initialPractice) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isRenameOnly) "重命名播放列表" else "新建播放列表") },
+        title = { Text(if (isRenameOnly) s.renamePlaylistTitle else s.newPlaylist) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("列表名称") },
-                    placeholder = { Text("例如：本周乐队排练曲目") },
+                    label = { Text(s.playlistNameLabel) },
+                    placeholder = { Text(s.playlistNamePlaceholder) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -857,9 +866,9 @@ private fun CreateOrRenamePlaylistDialog(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("设为练习列表", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                                Text(s.setAsPracticePlaylist, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                                 Text(
-                                    text = "播放时自动开启练习模式",
+                                    text = s.setAsPracticePlaylistSubtitle,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -875,11 +884,11 @@ private fun CreateOrRenamePlaylistDialog(
                 onClick = { onConfirm(name, isPractice) },
                 enabled = name.isNotBlank(),
             ) {
-                Text(if (isRenameOnly) "保存" else "创建")
+                Text(if (isRenameOnly) s.save else s.create)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(s.cancel) }
         },
     )
 }
@@ -891,6 +900,7 @@ private fun MultiSelectTracksToAddSheet(
     onAddSelected: (List<Long>) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     var query by remember { mutableStateOf("") }
     val selectedIds = remember { mutableStateListOf<Long>() }
     val candidates = remember(allItems, existingIds, query) {
@@ -909,19 +919,19 @@ private fun MultiSelectTracksToAddSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("添加音频或教学视频", style = MaterialTheme.typography.titleMedium)
+                Text(s.addAudioOrVideoTitle, style = MaterialTheme.typography.titleMedium)
                 Button(
                     onClick = { onAddSelected(selectedIds.toList()) },
                     enabled = selectedIds.isNotEmpty(),
                 ) {
-                    Text("添加 (${selectedIds.size})")
+                    Text(s.fmt(s.addSelectedCountTpl, selectedIds.size))
                 }
             }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("筛选曲目或视频…") },
+                placeholder = { Text(s.filterTracksPlaceholder) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -956,7 +966,8 @@ private fun MultiSelectTracksToAddSheet(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = (if (item.isVideo) "视频 · " else "") + "${item.artist} · ${PracticeMath.formatTimeMs(item.durationMs)}",
+                                text = (if (item.isVideo) "${s.video} · " else "") +
+                                    "${s.displayArtist(item.artist)} · ${PracticeMath.formatTimeMs(item.durationMs)}",
                                 style = MaterialTheme.typography.bodyMedium.tnum(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -970,7 +981,7 @@ private fun MultiSelectTracksToAddSheet(
 
 /**
  * Reusable M3 Bottom Sheet for adding track(s) in 1 tap to an existing
- * normal playlist or Practice Playlist (`练习列表`), or creating a new playlist on the spot.
+ * normal playlist or Practice Playlist, or creating a new playlist on the spot.
  */
 @Composable
 fun AddToPlaylistBottomSheet(
@@ -980,6 +991,7 @@ fun AddToPlaylistBottomSheet(
     onCreateAndAdd: (name: String, isPractice: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     var creatingNew by remember { mutableStateOf(false) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -990,7 +1002,7 @@ fun AddToPlaylistBottomSheet(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "加入播放列表 (${targetItems.size} 首)",
+                text = s.fmt(s.addToPlaylistHeaderTpl, targetItems.size),
                 style = MaterialTheme.typography.titleMedium,
             )
             FilledTonalButton(
@@ -999,7 +1011,7 @@ fun AddToPlaylistBottomSheet(
             ) {
                 Icon(Icons.Outlined.Add, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text("新建播放列表 / 练习列表")
+                Text(s.newPlaylistOrPracticeBtn)
             }
 
             playlists.forEach { pl ->
@@ -1020,13 +1032,13 @@ fun AddToPlaylistBottomSheet(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(pl.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                             Text(
-                                text = "${pl.itemCount} 首",
+                                text = s.fmt(s.trackCountShortTpl, pl.itemCount),
                                 style = MaterialTheme.typography.labelMedium.tnum(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         if (pl.isPracticePlaylist) {
-                            PracticeBadgePill("练习")
+                            PracticeBadgePill(s.badgePractice)
                         }
                     }
                 }

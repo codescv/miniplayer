@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.miniplayer.app.core.i18n.AppLanguage
 import com.miniplayer.app.core.metadata.SplitArtist
 import com.miniplayer.app.core.model.AppSettings
 import com.miniplayer.app.core.model.BeatGridSource
@@ -1433,6 +1434,7 @@ class SqliteMediaStoreBackend(
             "writeTagsToFileDefault" to settings.writeTagsToFileDefault.toString(),
             "countInClickSound" to settings.countInClickSound.toString(),
             "keepScreenOnInPractice" to settings.keepScreenOnInPractice.toString(),
+            "appLanguage" to settings.appLanguage.storageValue,
         )
         for ((k, v) in entries) {
             val cv = ContentValues().apply {
@@ -1673,6 +1675,7 @@ class SqliteMediaStoreBackend(
             writeTagsToFileDefault = map["writeTagsToFileDefault"]?.toBooleanStrictOrNull() ?: defaults.writeTagsToFileDefault,
             countInClickSound = map["countInClickSound"]?.toBooleanStrictOrNull() ?: defaults.countInClickSound,
             keepScreenOnInPractice = map["keepScreenOnInPractice"]?.toBooleanStrictOrNull() ?: defaults.keepScreenOnInPractice,
+            appLanguage = AppLanguage.fromStorageValue(map["appLanguage"]),
         )
     }
 

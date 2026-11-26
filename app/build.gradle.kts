@@ -15,8 +15,8 @@ android {
         applicationId = "com.miniplayer.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10017
-        versionName = "1.0.17"
+        versionCode = 10018
+        versionName = "1.0.18"
 
         val apiBase = System.getenv("MINIPLAYER_UPDATE_API_BASE")
             ?.takeIf { it.isNotBlank() }

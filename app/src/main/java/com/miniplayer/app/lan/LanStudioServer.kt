@@ -1,6 +1,9 @@
 package com.miniplayer.app.lan
 
 import com.miniplayer.app.core.MiniPlayerCoreProvider
+import com.miniplayer.app.core.i18n.AppStrings
+import com.miniplayer.app.core.i18n.LanWebStrings
+import com.miniplayer.app.core.i18n.ResolvedLanguage
 import com.miniplayer.app.core.model.AlbumSummary
 import com.miniplayer.app.core.model.ArtistSummary
 import com.miniplayer.app.core.model.BatchMatchItem
@@ -558,6 +561,10 @@ class LanStudioServer(
             msg.contains("connection abort")
     }
 
+    private fun currentLanguage(): ResolvedLanguage = core.library.settings.value.appLanguage.resolve()
+
+    private fun currentStrings(): AppStrings = AppStrings.forLanguage(currentLanguage())
+
     private fun handleWebRoot(
         clientIp: String,
         query: Map<String, String>,
@@ -565,7 +572,7 @@ class LanStudioServer(
         headOnly: Boolean,
         closeConnection: Boolean,
     ): Boolean {
-        val htmlBytes = LanStudioWebApp.renderHtml().toByteArray(Charsets.UTF_8)
+        val htmlBytes = LanStudioWebApp.renderHtml(language = currentLanguage()).toByteArray(Charsets.UTF_8)
         val extraHeaders = ArrayList<Pair<String, String>>(2)
         val expectedPin = sessionPin?.takeIf { it.isNotBlank() }
         val providedToken = query["token"]
@@ -997,7 +1004,8 @@ class LanStudioServer(
         val clean = LanPathUtils.validateLeafName(rawName)
         val ext = LanPathUtils.extensionOf(clean)
         if (ext.isEmpty() || ext !in config.allowedUploadExtensions) {
-            throw LanHttpException(400, "Bad Request", "Unsupported upload file extension '.$ext'")
+            val message = LanWebStrings.forLanguage(currentLanguage()).uploadUnsupportedExtTpl.replace("{0}", ext)
+            throw LanHttpException(400, "Bad Request", message)
         }
         return clean
     }
@@ -1740,12 +1748,12 @@ class LanStudioServer(
             val json = LanJson.parseObject(rawBody)
             fallbackName = json.str("name")?.trim()?.takeIf { it.isNotEmpty() }
                 ?: query["name"]?.trim()?.takeIf { it.isNotEmpty() }
-                ?: "导入列表"
+                ?: currentStrings().importedPlaylistFallback
             m3uContent = json.str("content")
                 ?: throw LanHttpException(400, "Bad Request", "Missing 'content' in JSON M3U8 import")
         } else {
             fallbackName = query["name"]?.trim()?.removeSuffix(".m3u8")?.removeSuffix(".m3u")?.takeIf { it.isNotEmpty() }
-                ?: "导入列表"
+                ?: currentStrings().importedPlaylistFallback
             m3uContent = rawBody
         }
 
@@ -2040,7 +2048,7 @@ class LanStudioServer(
             "item" to serializeMediaItem(item),
             "state" to serializePracticeState(practiceState),
             "bookmarks" to JsonValue.Arr(bookmarks.map(::serializeBookmark)),
-            "presetLabels" to JsonValue.Arr(PracticeMath.PRESET_SECTION_LABELS.map(JsonValue::Str)),
+            "presetLabels" to JsonValue.Arr(currentStrings().presetSectionLabels.map(JsonValue::Str)),
             "speedPresets" to JsonValue.Arr(PracticeMath.SPEED_PRESETS.map { JsonValue.Num(it) }),
             "lyrics" to (lyrics?.let { lyr ->
                 LanJson.obj(
@@ -2206,7 +2214,7 @@ class LanStudioServer(
 
         val normalized = PracticeMath.normalizeLoopPoints(rawAMs, rawBMs, item.durationMs)
             ?: throw LanHttpException(400, "Bad Request", "Invalid A-B loop points ($rawAMs..$rawBMs)")
-        val label = json.str("label")?.trim()?.takeIf { it.isNotEmpty() } ?: "段落"
+        val label = json.str("label")?.trim()?.takeIf { it.isNotEmpty() } ?: currentStrings().defaultSectionLabel
         val savedSpeed = json.floatOrNull("savedSpeed")?.let(PracticeMath::clampSpeed)
         val bookmarkId = json.longOrNull("bookmarkId")
 

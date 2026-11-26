@@ -16,6 +16,7 @@ import com.miniplayer.app.core.db.MovedMediaUpdate
 import com.miniplayer.app.core.db.SafRootRow
 import com.miniplayer.app.core.db.ScannedFolderRow
 import com.miniplayer.app.core.db.joinRelSegments
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.metadata.ArtistSplitter
 import com.miniplayer.app.core.metadata.AudioTagCodec
 import com.miniplayer.app.core.metadata.LrcParser
@@ -500,7 +501,12 @@ class AndroidSafTreeDataSource(
         val sub = docId.substringAfter(':', "").trim('/')
         if (sub.isNotEmpty()) return sub.substringAfterLast('/')
         val vol = docId.substringBefore(':', "")
-        return if (vol.equals("primary", ignoreCase = true)) "内置存储" else vol.ifBlank { "本地文件夹" }
+        val strings = AppStrings.current()
+        return if (vol.equals("primary", ignoreCase = true)) {
+            strings.internalStorage
+        } else {
+            vol.ifBlank { strings.localFolder }
+        }
     }
 }
 
@@ -557,7 +563,10 @@ class SafFolderScanner(
         val grant = try {
             dataSource.takePersistableGrant(treeUri)
         } catch (e: Exception) {
-            return@withContext AddRootResult.Error("无法获取目录持久化访问授权: ${e.message ?: "权限被拒绝"}")
+            val strings = AppStrings.current()
+            return@withContext AddRootResult.Error(
+                strings.fmt(strings.msgSafPermissionFailedTpl, e.message ?: strings.msgPermissionDenied),
+            )
         }
 
         addSafRootFromGrant(grant)

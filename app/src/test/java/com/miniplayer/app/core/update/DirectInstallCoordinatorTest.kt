@@ -3,6 +3,7 @@ package com.miniplayer.app.core.update
 import java.io.File
 import java.nio.file.Files
 import org.junit.After
+import com.miniplayer.app.core.i18n.AppStrings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -104,12 +105,14 @@ class DirectInstallCoordinatorTest {
         val viewModel = File(repoRoot, "app/src/main/java/com/miniplayer/app/ui/MiniPlayerViewModel.kt").readText()
 
         // Download button immediately triggers requestInstallApk without requiring a second tap
-        assertTrue(settings.contains("Text(\"下载并安装更新 (SHA-256 + 签名校验)\")"))
+        assertTrue(settings.contains("Text(s.settingsDownloadInstallBtn)"))
+        assertEquals("下载并安装更新 (SHA-256 + 签名校验)", AppStrings.ZH.settingsDownloadInstallBtn)
         assertFalse(settings.contains("Text(\"下载并校验更新 (SHA-256 + 签名校验)\")"))
         assertTrue(settings.contains("viewModel.downloadAndVerifyUpdate(info)"))
         assertTrue(settings.contains("viewModel.requestInstallApk(apkFile, context)"))
         // Fallback button stays in ReadyToInstall if user dismissed the system installer dialog
-        assertTrue(settings.contains("Text(\"立即安装更新\")"))
+        assertTrue(settings.contains("Text(s.settingsInstallNowBtn)"))
+        assertEquals("立即安装更新", AppStrings.ZH.settingsInstallNowBtn)
         assertTrue(settings.contains("viewModel.requestInstallApk(state.apkFile, context)"))
         // Both normal foreground return and recreated-Activity ON_START resume pending install
         assertTrue(mainActivity.contains("viewModel.onAppForegrounded()"))

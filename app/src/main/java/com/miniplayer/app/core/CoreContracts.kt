@@ -3,6 +3,7 @@ package com.miniplayer.app.core
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.model.*
 import java.io.File
 import kotlinx.coroutines.flow.Flow
@@ -120,7 +121,10 @@ interface MetadataEngineContract {
     suspend fun getLyrics(item: MediaItem, fetchOnlineIfMissing: Boolean = true): LyricsData?
 
     suspend fun exportPlaylistM3u8(playlistId: Long, outputUri: Uri): Boolean
-    suspend fun importPlaylistM3u8(inputUri: Uri, fallbackName: String = "导入列表"): M3uImportResult
+    suspend fun importPlaylistM3u8(
+        inputUri: Uri,
+        fallbackName: String = AppStrings.current().importedPlaylistFallback,
+    ): M3uImportResult
 }
 
 interface AppUpdateContract {

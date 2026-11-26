@@ -41,8 +41,10 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.player.AbLoopUiState
 import com.miniplayer.app.player.PracticeLoopEngine
@@ -70,6 +72,7 @@ fun WaveformLoopRuler(
     barSnapEnabled: Boolean = false,
     onDragLoopPointsWithHandle: ((aMs: Long, bMs: Long, commitPersist: Boolean, draggingHandle: String?) -> Unit)? = null,
 ) {
+    val s = LocalAppStrings.current
     val safeDuration = durationMs.coerceAtLeast(1L)
     var widthPx by remember { mutableFloatStateOf(1f) }
     var draggingHandle by remember { mutableStateOf<String?>(null) } // "A" or "B"
@@ -147,17 +150,18 @@ fun WaveformLoopRuler(
                     if (shownBMs != null) {
                         if (barSnapEnabled && beatGrid != null) {
                             val barCountInLoop = beatGrid.countBarsBetween(shownAMs, shownBMs)
+                            val barsText = s.fmt(s.barsCountTpl, barCountInLoop)
                             if (loopEnabled) {
-                                append(" ━━● ${barCountInLoop}小节 ●━━ ")
+                                append(" ━━● $barsText ●━━ ")
                             } else {
-                                append(" ╌╌○ ${barCountInLoop}小节 ○╌╌ ")
+                                append(" ╌╌○ $barsText ○╌╌ ")
                             }
                         } else {
                             append(if (loopEnabled) " ━━●━━ " else " ╌╌○╌╌ ")
                         }
                         append("B ${PracticeMath.formatTimeMs(shownBMs, includeTenths = true)}")
                     } else {
-                        append(" · 待设 B 点")
+                        append(s.waitingPointB)
                     }
                 }
                 Text(
@@ -188,7 +192,7 @@ fun WaveformLoopRuler(
                 .height(canvasHeight)
                 .onSizeChanged { widthPx = it.width.toFloat().coerceAtLeast(1f) }
                 .semantics {
-                    contentDescription = "音频波形与 A-B 循环标尺，当前播放位置 ${PracticeMath.formatTimeMs(positionMs, true)}"
+                    contentDescription = s.fmt(s.waveformRulerDescTpl, PracticeMath.formatTimeMs(positionMs, true))
                 }
                 .pointerInput(safeDuration) {
                     detectTapGestures { offset ->
@@ -494,6 +498,7 @@ fun SectionBookmarksRow(
     modifier: Modifier = Modifier,
 ) {
     if (bookmarks.isEmpty()) return
+    val s = LocalAppStrings.current
 
     var editingBookmark by remember { mutableStateOf<PracticeBookmark?>(null) }
     var renameText by remember { mutableStateOf("") }
@@ -552,7 +557,7 @@ fun SectionBookmarksRow(
                 ) {
                     if (hasActiveLoop) {
                         DropdownMenuItem(
-                            text = { Text("用当前 A-B 更新范围") },
+                            text = { Text(s.updateBookmarkRange) },
                             leadingIcon = { Icon(Icons.Outlined.Update, contentDescription = null) },
                             onClick = {
                                 menuExpanded = false
@@ -561,7 +566,7 @@ fun SectionBookmarksRow(
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text("重命名书签") },
+                        text = { Text(s.renameBookmark) },
                         leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                         onClick = {
                             menuExpanded = false
@@ -570,7 +575,7 @@ fun SectionBookmarksRow(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("删除书签", color = MaterialTheme.colorScheme.error) },
+                        text = { Text(s.deleteBookmark, color = MaterialTheme.colorScheme.error) },
                         leadingIcon = {
                             Icon(
                                 Icons.Outlined.DeleteOutline,
@@ -591,7 +596,7 @@ fun SectionBookmarksRow(
     editingBookmark?.let { target ->
         AlertDialog(
             onDismissRequest = { editingBookmark = null },
-            title = { Text("重命名段落书签") },
+            title = { Text(s.renameBookmarkTitle) },
             text = {
                 OutlinedTextField(
                     value = renameText,
@@ -608,10 +613,10 @@ fun SectionBookmarksRow(
                             editingBookmark = null
                         }
                     },
-                ) { Text("确定") }
+                ) { Text(s.confirm) }
             },
             dismissButton = {
-                TextButton(onClick = { editingBookmark = null }) { Text("取消") }
+                TextButton(onClick = { editingBookmark = null }) { Text(s.cancel) }
             },
         )
     }
@@ -622,6 +627,7 @@ internal fun BookmarkPresetSaveSheet(
     onSaveNewBookmark: (label: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     var customLabel by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -630,9 +636,9 @@ internal fun BookmarkPresetSaveSheet(
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("保存段落书签（单手点选预设即刻保存）", style = MaterialTheme.typography.titleMedium)
+            Text(s.saveBookmarkSheetTitle, style = MaterialTheme.typography.titleMedium)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                PracticeMath.PRESET_SECTION_LABELS.chunked(4).forEach { rowPresets ->
+                s.presetSectionLabels.chunked(4).forEach { rowPresets ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -648,7 +654,7 @@ internal fun BookmarkPresetSaveSheet(
                                     .defaultMinSize(minHeight = 48.dp),
                                 contentPadding = PaddingValues(horizontal = 6.dp),
                             ) {
-                                Text(preset, maxLines = 1)
+                                Text(preset, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -662,7 +668,7 @@ internal fun BookmarkPresetSaveSheet(
                 OutlinedTextField(
                     value = customLabel,
                     onValueChange = { customLabel = it },
-                    placeholder = { Text("或输入自定义备注（如：扫拨难点）") },
+                    placeholder = { Text(s.customBookmarkPlaceholder) },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
@@ -677,7 +683,7 @@ internal fun BookmarkPresetSaveSheet(
                     enabled = customLabel.isNotBlank(),
                     modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("保存")
+                    Text(s.save)
                 }
             }
         }
@@ -878,6 +884,7 @@ internal fun AbControlStrip(
     onSaveBookmarkClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     val hasA = activeAMs != null
     val hasB = activeBMs != null
     val hasBoth = hasA && hasB
@@ -934,7 +941,7 @@ internal fun AbControlStrip(
                 ),
                 contentPadding = PaddingValues(horizontal = 6.dp),
                 modifier = aButtonModifier.semantics {
-                    contentDescription = "设当前位置为 A 起点，当前 $aText"
+                    contentDescription = s.fmt(s.setPointADescTpl, aText)
                 },
             ) {
                 Text(
@@ -987,7 +994,7 @@ internal fun AbControlStrip(
                 ),
                 contentPadding = PaddingValues(horizontal = 6.dp),
                 modifier = bButtonModifier.semantics {
-                    contentDescription = "设当前位置为 B 终点，当前 $bText"
+                    contentDescription = s.fmt(s.setPointBDescTpl, bText)
                 },
             ) {
                 Text(
@@ -1021,7 +1028,7 @@ internal fun AbControlStrip(
         ) {
             Icon(
                 imageVector = Icons.Outlined.Repeat,
-                contentDescription = if (loopEnabled) "挂起循环" else "恢复循环",
+                contentDescription = if (loopEnabled) s.suspendLoopDesc else s.resumeLoopDesc,
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -1039,7 +1046,7 @@ internal fun AbControlStrip(
         ) {
             Icon(
                 imageVector = Icons.Outlined.Close,
-                contentDescription = "清除循环",
+                contentDescription = s.clearLoopDesc,
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -1057,7 +1064,7 @@ internal fun AbControlStrip(
         ) {
             Icon(
                 imageVector = Icons.Outlined.BookmarkAdd,
-                contentDescription = "保存段落书签",
+                contentDescription = s.saveBookmarkDesc,
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -1081,6 +1088,7 @@ private fun SpeedAndSecondaryStrip(
     onToggleKeepScreenOn: () -> Unit,
     onToggleVideoMirror: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     val toggleWidth = if (isVideo) 32.dp else 36.dp
     val spacing = if (isVideo) 3.dp else 4.dp
     val stepperTextStyle = MaterialTheme.typography.labelMedium.tnum().copy(
@@ -1132,7 +1140,7 @@ private fun SpeedAndSecondaryStrip(
                     .weight(1.22f)
                     .height(44.dp)
                     .semantics {
-                        contentDescription = "当前练习倍速 ${String.format("%.2f", practiceState.practiceSpeed)} 倍，点击恢复 1.0 倍原速"
+                        contentDescription = s.fmt(s.speedResetDescTpl, String.format("%.2f", practiceState.practiceSpeed))
                     },
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -1179,7 +1187,7 @@ private fun SpeedAndSecondaryStrip(
             val pitchShifted = practiceState.pitchSemitones != 0 || practiceState.pitchCents != 0
             DeckIconToggleButton(
                 icon = Icons.Outlined.MusicNote,
-                contentDescription = "调整音调",
+                contentDescription = s.pitchControlDesc,
                 highlighted = pitchShifted || pitchDrawerOpen,
                 onClick = onTogglePitchDrawer,
                 modifier = Modifier.size(width = toggleWidth, height = 44.dp),
@@ -1187,7 +1195,7 @@ private fun SpeedAndSecondaryStrip(
 
             DeckIconToggleButton(
                 icon = Icons.Outlined.Tune,
-                contentDescription = "分轨乐器音量 (人声/吉他/Bass/鼓/其他)",
+                contentDescription = s.stemMixerDesc,
                 highlighted = !practiceState.stemMix.isUnity || stemDrawerOpen,
                 onClick = onToggleStemDrawer,
                 modifier = Modifier.size(width = toggleWidth, height = 44.dp),
@@ -1196,9 +1204,9 @@ private fun SpeedAndSecondaryStrip(
             val countInActive = practiceState.countInMode != CountInMode.OFF
             DeckIconToggleButton(
                 icon = Icons.Outlined.Timer,
-                contentDescription = if (countInActive) "预备拍：4拍（已开启）" else "预备拍：已关闭",
+                contentDescription = if (countInActive) s.countInOnDesc else s.countInOffDesc,
                 highlighted = countInActive,
-                badgeText = if (countInActive) "4拍" else null,
+                badgeText = if (countInActive) s.countInBadge4 else null,
                 onClick = onCycleCountIn,
                 onLongClick = onToggleBpmDrawer,
                 modifier = Modifier.size(width = toggleWidth, height = 44.dp),
@@ -1213,7 +1221,7 @@ private fun SpeedAndSecondaryStrip(
 
             DeckIconToggleButton(
                 icon = Icons.Outlined.LightMode,
-                contentDescription = if (keepScreenOn) "练习常亮：已开启" else "练习常亮：已关闭",
+                contentDescription = if (keepScreenOn) s.keepScreenOnEnabledDesc else s.keepScreenOnDisabledDesc,
                 highlighted = keepScreenOn,
                 onClick = onToggleKeepScreenOn,
                 modifier = Modifier.size(width = toggleWidth, height = 44.dp),
@@ -1222,7 +1230,7 @@ private fun SpeedAndSecondaryStrip(
             if (isVideo) {
                 DeckIconToggleButton(
                     icon = Icons.Outlined.Flip,
-                    contentDescription = if (practiceState.videoMirror) "视频水平镜像：已开启" else "视频水平镜像：已关闭",
+                    contentDescription = if (practiceState.videoMirror) s.videoMirrorOnDesc else s.videoMirrorOffDesc,
                     highlighted = practiceState.videoMirror,
                     onClick = onToggleVideoMirror,
                     modifier = Modifier.size(width = toggleWidth, height = 44.dp),
@@ -1239,6 +1247,7 @@ internal fun BpmCompactChipButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     val containerColor = if (highlighted) {
         MaterialTheme.colorScheme.tertiaryContainer
     } else {
@@ -1257,7 +1266,7 @@ internal fun BpmCompactChipButton(
             .defaultMinSize(minWidth = 36.dp, minHeight = 44.dp)
             .semantics {
                 role = Role.Button
-                contentDescription = "BPM 速度 $bpm，点击展开或收起 BPM 与自动测速栏"
+                contentDescription = s.fmt(s.bpmChipDescTpl, bpm)
             },
     ) {
         Column(
@@ -1314,6 +1323,7 @@ internal fun BpmQuickBar(
     onShiftDownbeatBeats: (Int) -> Unit = {},
     onNudgeDownbeatMs: (Long) -> Unit = {},
 ) {
+    val s = LocalAppStrings.current
     val confidence = beatGridControls.detectedGrid?.confidence
     val halfBarAmbiguous = confidence?.halfBarAmbiguous == true &&
         beatGridSource != BeatGridSource.MANUAL
@@ -1344,9 +1354,9 @@ internal fun BpmQuickBar(
                     )
                     Text(
                         text = buildString {
-                            append("慢放 ≈ $effectiveBpm")
+                            append(s.fmt(s.effectiveBpmTpl, effectiveBpm))
                             if (detectedBpm != null && detectedBpm != bpm) {
-                                append(" · 测得 $detectedBpm")
+                                append(s.fmt(s.detectedBpmSuffixTpl, detectedBpm))
                             }
                         },
                         style = MaterialTheme.typography.labelSmall.tnum(),
@@ -1362,20 +1372,20 @@ internal fun BpmQuickBar(
                         onClick = { onAdjustBpm(-1) },
                         modifier = Modifier.size(38.dp),
                     ) {
-                        Icon(Icons.Outlined.Remove, contentDescription = "BPM 减 1", modifier = Modifier.size(18.dp))
+                        Icon(Icons.Outlined.Remove, contentDescription = s.bpmMinusDesc, modifier = Modifier.size(18.dp))
                     }
                     OutlinedIconButton(
                         onClick = { onAdjustBpm(1) },
                         modifier = Modifier.size(38.dp),
                     ) {
-                        Icon(Icons.Outlined.Add, contentDescription = "BPM 加 1", modifier = Modifier.size(18.dp))
+                        Icon(Icons.Outlined.Add, contentDescription = s.bpmPlusDesc, modifier = Modifier.size(18.dp))
                     }
                     FilledTonalButton(
                         onClick = onTapTempo,
                         contentPadding = PaddingValues(horizontal = 10.dp),
                         modifier = Modifier.height(38.dp),
                     ) {
-                        Text("Tap", maxLines = 1, softWrap = false)
+                        Text(s.tapTempoLabel, maxLines = 1, softWrap = false)
                     }
                     FilledTonalButton(
                         onClick = onAutoDetectBpm,
@@ -1388,7 +1398,7 @@ internal fun BpmQuickBar(
                         modifier = Modifier.height(38.dp),
                     ) {
                         Text(
-                            text = if (isDetectingBpm) "检测中…" else "自动",
+                            text = if (isDetectingBpm) s.detectingLabel else s.autoDetectLabel,
                             maxLines = 1,
                             softWrap = false,
                         )
@@ -1407,7 +1417,7 @@ internal fun BpmQuickBar(
                     onClick = onToggleBarSnap,
                     label = {
                         Text(
-                            text = "小节对齐",
+                            text = s.barSnapLabel,
                             style = MaterialTheme.typography.labelMedium,
                             maxLines = 1,
                             softWrap = false,
@@ -1421,11 +1431,11 @@ internal fun BpmQuickBar(
                     modifier = Modifier
                         .height(34.dp)
                         .semantics {
-                            contentDescription = "将当前播放位置校准为小节第1拍起点"
+                            contentDescription = s.alignDownbeatDesc
                         },
                 ) {
                     Text(
-                        text = "对齐第1拍",
+                        text = s.alignDownbeatLabel,
                         style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
                         softWrap = false,
@@ -1433,10 +1443,13 @@ internal fun BpmQuickBar(
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
-                    text = "首拍 ${PracticeMath.formatTimeMs(
-                        firstNonNegativeDownbeatMs(firstDownbeatMs, bpmPrecise, beatsPerBar),
-                        includeTenths = true,
-                    )}" + beatGridSourceLabel(beatGridSource),
+                    text = s.fmt(
+                        s.firstDownbeatTpl,
+                        PracticeMath.formatTimeMs(
+                            firstNonNegativeDownbeatMs(firstDownbeatMs, bpmPrecise, beatsPerBar),
+                            includeTenths = true,
+                        ),
+                    ) + beatGridSourceLabel(beatGridSource, s),
                     style = MaterialTheme.typography.labelSmall.tnum(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -1493,12 +1506,8 @@ internal fun firstNonNegativeDownbeatMs(anchorMs: Long, bpm: Double, beatsPerBar
     return (anchorMs + k * barMs).roundToInt().toLong().coerceAtLeast(0L)
 }
 
-private fun beatGridSourceLabel(source: BeatGridSource): String = when (source) {
-    BeatGridSource.MANUAL -> " · 手动"
-    BeatGridSource.AUTO_STEMS -> " · 分轨"
-    BeatGridSource.EMBEDDED_TAG -> " · 标签"
-    BeatGridSource.AUTO_MIX, BeatGridSource.AUTO_LEGACY -> ""
-}
+private fun beatGridSourceLabel(source: BeatGridSource, strings: AppStrings): String =
+    strings.beatGridSourceSuffix(source)
 
 @Composable
 private fun DownbeatFixRow(
@@ -1506,6 +1515,7 @@ private fun DownbeatFixRow(
     onShiftDownbeatBeats: (Int) -> Unit,
     onNudgeDownbeatMs: (Long) -> Unit,
 ) {
+    val s = LocalAppStrings.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1514,26 +1524,22 @@ private fun DownbeatFixRow(
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Text(
-            text = "第1拍",
+            text = s.beatOneLabel,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             softWrap = false,
         )
-        DownbeatFixButton(label = "-1拍", description = "第一拍提前1拍") { onShiftDownbeatBeats(-1) }
-        DownbeatFixButton(label = "+1拍", description = "第一拍推后1拍") { onShiftDownbeatBeats(1) }
+        DownbeatFixButton(label = s.shiftBeatMinusLabel, description = s.shiftBeatMinusDesc) { onShiftDownbeatBeats(-1) }
+        DownbeatFixButton(label = s.shiftBeatPlusLabel, description = s.shiftBeatPlusDesc) { onShiftDownbeatBeats(1) }
         DownbeatFixButton(
-            label = "±2拍",
-            description = if (halfBarAmbiguous) {
-                "第1拍与第3拍难以区分，点按换到第3拍"
-            } else {
-                "第一拍换到第3拍（半小节翻转）"
-            },
+            label = s.shiftHalfBarLabel,
+            description = if (halfBarAmbiguous) s.shiftHalfBarAmbiguousDesc else s.shiftHalfBarDesc,
             highlighted = halfBarAmbiguous,
         ) { onShiftDownbeatBeats(2) }
         Spacer(Modifier.width(6.dp))
-        DownbeatFixButton(label = "-10ms", description = "第一拍提前10毫秒") { onNudgeDownbeatMs(-10L) }
-        DownbeatFixButton(label = "+10ms", description = "第一拍推后10毫秒") { onNudgeDownbeatMs(10L) }
+        DownbeatFixButton(label = "-10ms", description = s.nudgeMsMinusDesc) { onNudgeDownbeatMs(-10L) }
+        DownbeatFixButton(label = "+10ms", description = s.nudgeMsPlusDesc) { onNudgeDownbeatMs(10L) }
     }
 }
 
@@ -1576,6 +1582,7 @@ private fun PendingStemsGridChip(
     onApply: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -1585,7 +1592,7 @@ private fun PendingStemsGridChip(
             onClick = onApply,
             label = {
                 Text(
-                    text = "检测到更准的节拍网格 (${formatBpmForDisplay(pendingGrid.bpmPrecise)}) — 应用?",
+                    text = s.fmt(s.pendingStemsGridTpl, formatBpmForDisplay(pendingGrid.bpmPrecise)),
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     softWrap = false,
@@ -1594,7 +1601,7 @@ private fun PendingStemsGridChip(
             modifier = Modifier.weight(1f),
         )
         TextButton(onClick = onDismiss, modifier = Modifier.height(32.dp)) {
-            Text("忽略", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            Text(s.ignore, style = MaterialTheme.typography.labelMedium, maxLines = 1)
         }
     }
 }
@@ -1704,6 +1711,7 @@ private fun PitchShiftInlinePanel(
     cents: Int,
     onUpdatePitch: (Int, Int) -> Unit,
 ) {
+    val s = LocalAppStrings.current
     val isShifted = semitones != 0 || cents != 0
     Surface(
         shape = RoundedCornerShape(16.dp),
@@ -1724,7 +1732,7 @@ private fun PitchShiftInlinePanel(
                     enabled = semitones > -6,
                     modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 ) {
-                    Text("-1 半音")
+                    Text(s.pitchMinusSt)
                 }
                 TextButton(
                     onClick = { onUpdatePitch(0, 0) },
@@ -1734,9 +1742,9 @@ private fun PitchShiftInlinePanel(
                     val stSign = if (semitones > 0) "+" else ""
                     Text(
                         text = if (!isShifted) {
-                            "原调 (0 st)"
+                            s.pitchOriginal
                         } else {
-                            "${stSign}${semitones} st · 恢复原调"
+                            s.fmt(s.pitchResetTpl, "$stSign$semitones")
                         },
                         style = MaterialTheme.typography.labelLarge.tnum(),
                         fontWeight = FontWeight.SemiBold,
@@ -1747,15 +1755,15 @@ private fun PitchShiftInlinePanel(
                     enabled = semitones < 6,
                     modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 ) {
-                    Text("+1 半音")
+                    Text(s.pitchPlusSt)
                 }
             }
 
             Text(
                 text = when (semitones) {
-                    -1 -> "提示：将标准调原曲降半音至 Eb（无需改调弦）"
-                    1 -> "提示：+1 半音 = 用标准调弦吉他跟弹 Eb 降半音原曲"
-                    else -> "范围 ±6 半音；下方可做 ±50 ct 音分微调校准"
+                    -1 -> s.pitchHintMinus1
+                    1 -> s.pitchHintPlus1
+                    else -> s.pitchHintDefault
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1782,7 +1790,7 @@ private fun PitchShiftInlinePanel(
                     modifier = Modifier
                         .weight(1f)
                         .semantics {
-                            contentDescription = "音分微调 $cents ct"
+                            contentDescription = s.fmt(s.centsSliderDescTpl, cents)
                         },
                 )
                 Text(
@@ -1816,6 +1824,7 @@ private fun StemMixerInlinePanel(
     onToggleStemSolo: (StemType) -> Unit,
     onResetStemMix: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     val isTrackReady = stemAnalysisState is StemAnalysisState.Ready &&
         (itemId <= 0L || stemAnalysisState.itemId == itemId)
     val isModelMissing = stemAnalysisState is StemAnalysisState.ModelNotInstalled ||
@@ -1847,7 +1856,7 @@ private fun StemMixerInlinePanel(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
-                            text = "首次使用需下载 HTDemucs 6s 专业分离模型 (~100 MB)",
+                            text = s.stemModelTitle,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -1856,7 +1865,7 @@ private fun StemMixerInlinePanel(
                             text = if (stemAnalysisState is StemAnalysisState.Error) {
                                 stemAnalysisState.message
                             } else {
-                                "Meta HTDemucs 混合 Transformer 端侧离线分离 5 轨音频（下载一次后永久本地可用）"
+                                s.stemModelSubtitle
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = if (stemAnalysisState is StemAnalysisState.Error) {
@@ -1874,7 +1883,7 @@ private fun StemMixerInlinePanel(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "正在下载 HTDemucs 模型 $pct%...",
+                                    text = s.fmt(s.stemDownloadingTpl, pct),
                                     style = MaterialTheme.typography.labelMedium.tnum(),
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.primary,
@@ -1884,7 +1893,7 @@ private fun StemMixerInlinePanel(
                                     contentPadding = PaddingValues(horizontal = 8.dp),
                                     modifier = Modifier.height(32.dp),
                                 ) {
-                                    Text("取消", style = MaterialTheme.typography.labelMedium)
+                                    Text(s.cancel, style = MaterialTheme.typography.labelMedium)
                                 }
                             }
                             LinearProgressIndicator(
@@ -1909,7 +1918,7 @@ private fun StemMixerInlinePanel(
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    text = "下载 HTDemucs 模型",
+                                    text = s.stemDownloadBtn,
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold,
                                 )
@@ -1935,9 +1944,14 @@ private fun StemMixerInlinePanel(
                         ) {
                             val pct = (stemAnalysisState.progress * 100f).roundToInt().coerceIn(0, 100)
                             val statusText = if (stemAnalysisState.totalSegments > 0 && stemAnalysisState.currentSegment > 0) {
-                                "正在分离音轨 ${stemAnalysisState.currentSegment}/${stemAnalysisState.totalSegments} ($pct%)..."
+                                s.fmt(
+                                    s.stemSeparatingSegTpl,
+                                    stemAnalysisState.currentSegment,
+                                    stemAnalysisState.totalSegments,
+                                    pct,
+                                )
                             } else {
-                                "正在解码音频准备分离 ($pct%)..."
+                                s.fmt(s.stemDecodingTpl, pct)
                             }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1966,7 +1980,7 @@ private fun StemMixerInlinePanel(
                                     contentPadding = PaddingValues(horizontal = 8.dp),
                                     modifier = Modifier.height(32.dp),
                                 ) {
-                                    Text("取消", style = MaterialTheme.typography.labelMedium)
+                                    Text(s.cancel, style = MaterialTheme.typography.labelMedium)
                                 }
                             }
                             LinearProgressIndicator(
@@ -2004,11 +2018,12 @@ private fun StemMixerInlinePanel(
                                     )
                                     Spacer(Modifier.width(6.dp))
                                     Text(
-                                        text = "使用 HTDemucs 分离当前曲目 (5轨)",
+                                        text = s.stemSeparateTrackBtn,
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
                                         softWrap = false,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 if (!stemMix.isUnity) {
@@ -2019,7 +2034,7 @@ private fun StemMixerInlinePanel(
                                         modifier = Modifier.height(38.dp),
                                     ) {
                                         Text(
-                                            text = "重置",
+                                            text = s.reset,
                                             style = MaterialTheme.typography.labelLarge,
                                             fontWeight = FontWeight.SemiBold,
                                         )
@@ -2041,7 +2056,7 @@ private fun StemMixerInlinePanel(
                         color = MaterialTheme.colorScheme.tertiaryContainer,
                     ) {
                         Text(
-                            text = "HTDemucs 5轨已就绪",
+                            text = s.stemReadyBadge,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -2056,7 +2071,7 @@ private fun StemMixerInlinePanel(
                         modifier = Modifier.height(34.dp),
                     ) {
                         Text(
-                            text = "重置",
+                            text = s.reset,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -2064,9 +2079,10 @@ private fun StemMixerInlinePanel(
                 }
             }
 
-            // 5 Independent Stem Rows: 人声 / 吉他 / Bass / 鼓 / 其他 (0%–150%, Mute M, Solo S)
+            // 5 Independent Stem Rows (0%–150%, Mute M, Solo S)
             val controlsEnabled = !isModelMissing
             StemType.entries.forEach { stem ->
+                val stemName = s.stemLabel(stem)
                 val sliderGain = stemMix.sliderGain(stem)
                 val effectiveGain = stemMix.effectiveGain(stem)
                 val isMuted = stem in stemMix.mutedStems
@@ -2081,7 +2097,7 @@ private fun StemMixerInlinePanel(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = stem.label,
+                        text = stemName,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (isSolo || abs(sliderGain - 1.0f) >= 0.01f) {
                             FontWeight.SemiBold
@@ -2095,7 +2111,8 @@ private fun StemMixerInlinePanel(
                         },
                         maxLines = 1,
                         softWrap = false,
-                        modifier = Modifier.width(34.dp),
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.width(56.dp),
                     )
 
                     Slider(
@@ -2111,7 +2128,7 @@ private fun StemMixerInlinePanel(
                         modifier = Modifier
                             .weight(1f)
                             .semantics {
-                                contentDescription = "${stem.label} 音量 ${(sliderGain * 100f).roundToInt()}%"
+                                contentDescription = s.fmt(s.stemVolumeDescTpl, stemName, (sliderGain * 100f).roundToInt())
                             },
                     )
 
@@ -2143,7 +2160,11 @@ private fun StemMixerInlinePanel(
                             .size(width = 30.dp, height = 30.dp)
                             .semantics {
                                 role = Role.Button
-                                contentDescription = if (isMuted) "${stem.label} 取消静音" else "${stem.label} 静音"
+                                contentDescription = if (isMuted) {
+                                    s.fmt(s.stemUnmuteDescTpl, stemName)
+                                } else {
+                                    s.fmt(s.stemMuteDescTpl, stemName)
+                                }
                             },
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -2174,7 +2195,11 @@ private fun StemMixerInlinePanel(
                             .size(width = 30.dp, height = 30.dp)
                             .semantics {
                                 role = Role.Button
-                                contentDescription = if (isSolo) "${stem.label} 取消独奏" else "${stem.label} 独奏"
+                                contentDescription = if (isSolo) {
+                                    s.fmt(s.stemUnsoloDescTpl, stemName)
+                                } else {
+                                    s.fmt(s.stemSoloDescTpl, stemName)
+                                }
                             },
                     ) {
                         Box(contentAlignment = Alignment.Center) {

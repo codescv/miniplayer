@@ -184,156 +184,159 @@ fun MiniPlayerAppShell(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (showSettings) {
-            SettingsScreen(
-                viewModel = viewModel,
-                onBack = { viewModel.setSettingsVisible(false) },
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            Scaffold(
-                snackbarHost = { SnackbarHost(snackbarHostState) },
-                bottomBar = {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        // Docked Persistent MiniPlayer Bar right above the 2-Tab NavigationBar (§3.2 & §4.3)
-                        if (snapshot.currentItem != null) {
-                            MiniPlayerBar(
-                                snapshot = snapshot,
-                                practiceModeActive = practiceModeActive,
-                                practiceState = practiceState,
-                                isCountingIn = countInProgress != null,
-                                onExpand = { viewModel.setNowPlayingVisible(true) },
-                                onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
-                                onNext = { viewModel.playerController.skipToNext() },
-                            )
-                        }
+        ProvideAppLanguage(preferredLanguage = settings.appLanguage) {
+            val strings = LocalAppStrings.current
+            if (showSettings) {
+                SettingsScreen(
+                    viewModel = viewModel,
+                    onBack = { viewModel.setSettingsVisible(false) },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Scaffold(
+                    snackbarHost = { SnackbarHost(snackbarHostState) },
+                    bottomBar = {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            // Docked Persistent MiniPlayer Bar right above the 2-Tab NavigationBar (§3.2 & §4.3)
+                            if (snapshot.currentItem != null) {
+                                MiniPlayerBar(
+                                    snapshot = snapshot,
+                                    practiceModeActive = practiceModeActive,
+                                    practiceState = practiceState,
+                                    isCountingIn = countInProgress != null,
+                                    onExpand = { viewModel.setNowPlayingVisible(true) },
+                                    onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
+                                    onNext = { viewModel.playerController.skipToNext() },
+                                )
+                            }
 
-                        // Strict 2 Top-Level Bottom Tabs: `媒体库` & `播放列表` (§3.2)
-                        NavigationBar {
-                            NavigationBarItem(
-                                selected = selectedTab == MainTab.LIBRARY,
-                                onClick = { viewModel.selectTab(MainTab.LIBRARY) },
-                                icon = {
-                                    Icon(
-                                        imageVector = if (selectedTab == MainTab.LIBRARY) {
-                                            Icons.Filled.LibraryMusic
-                                        } else {
-                                            Icons.Outlined.LibraryMusic
-                                        },
-                                        contentDescription = "媒体库",
-                                    )
-                                },
-                                label = { Text("媒体库") },
-                            )
-                            NavigationBarItem(
-                                selected = selectedTab == MainTab.PLAYLISTS,
-                                onClick = { viewModel.selectTab(MainTab.PLAYLISTS) },
-                                icon = {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Outlined.QueueMusic,
-                                        contentDescription = "播放列表",
-                                    )
-                                },
-                                label = { Text("播放列表") },
-                            )
+                            // Strict 2 Top-Level Bottom Tabs: Library & Playlists (§3.2)
+                            NavigationBar {
+                                NavigationBarItem(
+                                    selected = selectedTab == MainTab.LIBRARY,
+                                    onClick = { viewModel.selectTab(MainTab.LIBRARY) },
+                                    icon = {
+                                        Icon(
+                                            imageVector = if (selectedTab == MainTab.LIBRARY) {
+                                                Icons.Filled.LibraryMusic
+                                            } else {
+                                                Icons.Outlined.LibraryMusic
+                                            },
+                                            contentDescription = strings.tabLibrary,
+                                        )
+                                    },
+                                    label = { Text(strings.tabLibrary) },
+                                )
+                                NavigationBarItem(
+                                    selected = selectedTab == MainTab.PLAYLISTS,
+                                    onClick = { viewModel.selectTab(MainTab.PLAYLISTS) },
+                                    icon = {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Outlined.QueueMusic,
+                                            contentDescription = strings.tabPlaylists,
+                                        )
+                                    },
+                                    label = { Text(strings.tabPlaylists) },
+                                )
+                            }
                         }
-                    }
-                },
-            ) { rootPadding ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(bottom = rootPadding.calculateBottomPadding()),
-                ) {
-                    when (selectedTab) {
-                        MainTab.LIBRARY -> {
-                            LibraryScreen(
-                                viewModel = viewModel,
-                                onAddFolderClick = { openTreeLauncher.launch(null) },
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                        MainTab.PLAYLISTS -> {
-                            PlaylistsScreen(
-                                viewModel = viewModel,
-                                onExportM3uRequest = { playlistId, playlistName ->
-                                    pendingExportPlaylistId = playlistId
-                                    exportM3uLauncher.launch("${playlistName.ifBlank { "playlist" }}.m3u8")
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                            )
+                    },
+                ) { rootPadding ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(bottom = rootPadding.calculateBottomPadding()),
+                    ) {
+                        when (selectedTab) {
+                            MainTab.LIBRARY -> {
+                                LibraryScreen(
+                                    viewModel = viewModel,
+                                    onAddFolderClick = { openTreeLauncher.launch(null) },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            MainTab.PLAYLISTS -> {
+                                PlaylistsScreen(
+                                    viewModel = viewModel,
+                                    onExportM3uRequest = { playlistId, playlistName ->
+                                        pendingExportPlaylistId = playlistId
+                                        exportM3uLauncher.launch("${playlistName.ifBlank { "playlist" }}.m3u8")
+                                    },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Full-Screen Unified Audio/Video Now Playing Overlay
-        if (showNowPlaying && snapshot.currentItem != null) {
-            NowPlayingSheet(
-                viewModel = viewModel,
-                onDismiss = { viewModel.setNowPlayingVisible(false) },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
-        // Add-to-Playlist (`[+ 列表]`) Bottom Sheet
-        if (playlistPickerItems.isNotEmpty()) {
-            AddToPlaylistBottomSheet(
-                targetItems = playlistPickerItems,
-                playlists = playlists,
-                onSelectPlaylist = { plId ->
-                    viewModel.addItemsToPlaylist(plId, playlistPickerItems.map { it.itemId })
-                },
-                onCreateAndAdd = { name, isPractice ->
-                    viewModel.createPlaylist(name, isPractice, playlistPickerItems.map { it.itemId })
-                    viewModel.closeAddToPlaylistPicker()
-                },
-                onDismiss = { viewModel.closeAddToPlaylistPicker() },
-            )
-        }
-
-        // Simple 6-Field Metadata Editor & Online Match Candidate Sheet
-        if (metadataTargets.isNotEmpty()) {
-            MetadataEditorSheet(
-                targets = metadataTargets,
-                defaultWriteBackToFile = settings.writeTagsToFileDefault,
-                candidates = onlineCandidates,
-                isSearchingOnline = isSearchingCandidates,
-                onSearchOnline = { item, titleQ, artistQ ->
-                    viewModel.searchSingleTrackOnlineCandidates(item, titleQ, artistQ)
-                },
-                onApplyCandidateDirectly = { item, cand, preserveBacking, writeBack ->
-                    viewModel.applySingleCandidateDirectly(item, cand, preserveBacking, writeBack)
-                },
-                onSaveDraft = { draft -> viewModel.saveMetadataDraft(draft) },
-                onResetOverrides = { items -> viewModel.resetMetadataOverrides(items) },
-                onDismiss = { viewModel.closeMetadataEditor() },
-            )
-        }
-
-        // Batch Folder / `未知专辑` Online Auto-Completion Sheet
-        if (batchPreview != null || batchProgress != null) {
-            BatchMetadataCompletionSheet(
-                previewItems = batchPreview,
-                progress = batchProgress,
-                isCommitting = isCommittingBatch,
-                defaultWriteBack = settings.writeTagsToFileDefault,
-                onSelectCandidate = { idx, candIdx -> viewModel.updateBatchMatchSelection(idx, candIdx) },
-                onTogglePreserveBacking = { idx -> viewModel.toggleBatchPreserveBacking(idx) },
-                onCommit = { writeBack -> viewModel.commitBatchAutoCompletion(writeBack) },
-                onDismiss = { viewModel.dismissBatchAutoCompletion() },
-            )
-        }
-
-        // PC LAN Web Studio Sheet (opened from SettingsScreen)
-        if (showLanStudio) {
-            if (lanStudioSheetSlot != null) {
-                lanStudioSheetSlot { viewModel.setLanStudioVisible(false) }
-            } else {
-                LanStudioSheet(
-                    onDismiss = { viewModel.setLanStudioVisible(false) },
+            // Full-Screen Unified Audio/Video Now Playing Overlay
+            if (showNowPlaying && snapshot.currentItem != null) {
+                NowPlayingSheet(
+                    viewModel = viewModel,
+                    onDismiss = { viewModel.setNowPlayingVisible(false) },
+                    modifier = Modifier.fillMaxSize(),
                 )
+            }
+
+            // Add-to-Playlist Bottom Sheet
+            if (playlistPickerItems.isNotEmpty()) {
+                AddToPlaylistBottomSheet(
+                    targetItems = playlistPickerItems,
+                    playlists = playlists,
+                    onSelectPlaylist = { plId ->
+                        viewModel.addItemsToPlaylist(plId, playlistPickerItems.map { it.itemId })
+                    },
+                    onCreateAndAdd = { name, isPractice ->
+                        viewModel.createPlaylist(name, isPractice, playlistPickerItems.map { it.itemId })
+                        viewModel.closeAddToPlaylistPicker()
+                    },
+                    onDismiss = { viewModel.closeAddToPlaylistPicker() },
+                )
+            }
+
+            // Simple 6-Field Metadata Editor & Online Match Candidate Sheet
+            if (metadataTargets.isNotEmpty()) {
+                MetadataEditorSheet(
+                    targets = metadataTargets,
+                    defaultWriteBackToFile = settings.writeTagsToFileDefault,
+                    candidates = onlineCandidates,
+                    isSearchingOnline = isSearchingCandidates,
+                    onSearchOnline = { item, titleQ, artistQ ->
+                        viewModel.searchSingleTrackOnlineCandidates(item, titleQ, artistQ)
+                    },
+                    onApplyCandidateDirectly = { item, cand, preserveBacking, writeBack ->
+                        viewModel.applySingleCandidateDirectly(item, cand, preserveBacking, writeBack)
+                    },
+                    onSaveDraft = { draft -> viewModel.saveMetadataDraft(draft) },
+                    onResetOverrides = { items -> viewModel.resetMetadataOverrides(items) },
+                    onDismiss = { viewModel.closeMetadataEditor() },
+                )
+            }
+
+            // Batch Folder / Unknown Album Online Auto-Completion Sheet
+            if (batchPreview != null || batchProgress != null) {
+                BatchMetadataCompletionSheet(
+                    previewItems = batchPreview,
+                    progress = batchProgress,
+                    isCommitting = isCommittingBatch,
+                    defaultWriteBack = settings.writeTagsToFileDefault,
+                    onSelectCandidate = { idx, candIdx -> viewModel.updateBatchMatchSelection(idx, candIdx) },
+                    onTogglePreserveBacking = { idx -> viewModel.toggleBatchPreserveBacking(idx) },
+                    onCommit = { writeBack -> viewModel.commitBatchAutoCompletion(writeBack) },
+                    onDismiss = { viewModel.dismissBatchAutoCompletion() },
+                )
+            }
+
+            // PC LAN Web Studio Sheet (opened from SettingsScreen)
+            if (showLanStudio) {
+                if (lanStudioSheetSlot != null) {
+                    lanStudioSheetSlot { viewModel.setLanStudioVisible(false) }
+                } else {
+                    LanStudioSheet(
+                        onDismiss = { viewModel.setLanStudioVisible(false) },
+                    )
+                }
             }
         }
     }

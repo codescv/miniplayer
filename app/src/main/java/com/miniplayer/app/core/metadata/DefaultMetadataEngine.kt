@@ -7,6 +7,7 @@ import com.miniplayer.app.core.db.LyricsCacheRow
 import com.miniplayer.app.core.db.MediaItemRow
 import com.miniplayer.app.core.db.MediaRepository
 import com.miniplayer.app.core.db.MetadataOverrideRow
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.model.*
 import java.io.File
 import java.io.FileOutputStream
@@ -502,7 +503,10 @@ class DefaultMetadataEngine(
         importPlaylistM3u8Text(decoded, fallbackName)
     }
 
-    suspend fun importPlaylistM3u8Text(rawContent: String, fallbackName: String = "导入列表"): M3uImportResult =
+    suspend fun importPlaylistM3u8Text(
+        rawContent: String,
+        fallbackName: String = AppStrings.current().importedPlaylistFallback,
+    ): M3uImportResult =
         withContext(ioDispatcher) {
             val allItems = repository.allMediaItems.value
             val rootsById = repository.safRoots.value.associateBy { it.rootId }

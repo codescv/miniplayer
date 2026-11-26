@@ -1,5 +1,8 @@
 package com.miniplayer.app.core.feedback
 
+import com.miniplayer.app.core.i18n.AppLocaleHolder
+import com.miniplayer.app.core.i18n.AppStrings
+import com.miniplayer.app.core.i18n.ResolvedLanguage
 import com.miniplayer.app.core.model.PracticeMath
 import com.miniplayer.app.core.model.PracticeState
 import com.miniplayer.app.core.update.SemanticVersion
@@ -68,10 +71,7 @@ object AgentFeedbackHelper {
     const val DEFAULT_EMAIL = ""
     const val EMAIL_PLACEHOLDER = "agent@example.com"
     const val PROJECT_ROUTING_PREFIX = "play"
-    const val DEFAULT_SUMMARY = "使用反馈"
-    /** `v1.0.14`: subject/body fallback when only an image (`增加图片`) is attached without 标题/问题描述. */
-    const val ATTACHMENT_ONLY_SUMMARY = "图片反馈"
-    const val DEFAULT_VERSION_TAG = "v1.0.17"
+    const val DEFAULT_VERSION_TAG = "v1.0.18"
     const val MAX_SUMMARY_LENGTH = 120
     private const val FALLBACK_SUMMARY_LENGTH = 60
 
@@ -106,10 +106,15 @@ object AgentFeedbackHelper {
     fun loadAgentEmail(store: FeedbackPreferenceStore): String =
         normalizeEmail(store.getString(KEY_AGENT_EMAIL, DEFAULT_EMAIL))
 
-    fun saveAgentEmail(store: FeedbackPreferenceStore, rawEmail: String): String {
+    fun saveAgentEmail(
+        store: FeedbackPreferenceStore,
+        rawEmail: String,
+        language: ResolvedLanguage = AppLocaleHolder.activeLanguage,
+    ): String {
         val normalized = normalizeEmail(rawEmail)
+        val strings = AppStrings.forLanguage(language)
         require(normalized.isEmpty() || isValidEmail(normalized)) {
-            "Invalid Agent feedback email address"
+            strings.feedbackInvalidEmailError
         }
         store.putString(KEY_AGENT_EMAIL, normalized)
         return normalized
@@ -144,6 +149,7 @@ object AgentFeedbackHelper {
         summary: String?,
         detailsFallback: String? = null,
         hasAttachment: Boolean = false,
+        language: ResolvedLanguage = AppLocaleHolder.activeLanguage,
     ): String {
         val collapsed = collapseSingleLine(summary)
         if (collapsed.isNotEmpty()) {
@@ -157,7 +163,8 @@ object AgentFeedbackHelper {
         if (firstDetailLine.isNotEmpty()) {
             return truncateWithEllipsis(firstDetailLine, FALLBACK_SUMMARY_LENGTH)
         }
-        return if (hasAttachment) ATTACHMENT_ONLY_SUMMARY else DEFAULT_SUMMARY
+        val strings = AppStrings.forLanguage(language)
+        return if (hasAttachment) strings.feedbackAttachmentOnlySummary else strings.feedbackDefaultSummary
     }
 
     /** "128" for integral tempos, "120.4" / "120.39" for fractional ones. */
@@ -175,35 +182,40 @@ object AgentFeedbackHelper {
         versionName: String?,
         detailsFallback: String? = null,
         hasAttachment: Boolean = false,
+        language: ResolvedLanguage = AppLocaleHolder.activeLanguage,
     ): String {
         val versionTag = normalizeVersionTag(versionName)
-        val cleanSummary = sanitizeSummary(summary, detailsFallback, hasAttachment)
+        val cleanSummary = sanitizeSummary(summary, detailsFallback, hasAttachment, language)
         return "$PROJECT_ROUTING_PREFIX: [$versionTag] $cleanSummary"
     }
 
-    fun formatDiagnosticsBlock(diagnostics: FeedbackDiagnostics): String {
+    fun formatDiagnosticsBlock(
+        diagnostics: FeedbackDiagnostics,
+        language: ResolvedLanguage = AppLocaleHolder.activeLanguage,
+    ): String {
+        val s = AppStrings.forLanguage(language)
         return buildString {
             appendLine("---")
-            appendLine("诊断信息 (Play)")
+            appendLine(s.feedbackDiagHeader)
             val versionTag = normalizeVersionTag(diagnostics.versionName)
             val codeSuffix = diagnostics.versionCode?.let { " ($it)" }.orEmpty()
-            appendLine("应用版本: $versionTag$codeSuffix")
+            appendLine("${s.feedbackDiagAppVersion}: $versionTag$codeSuffix")
 
             val sysParts = listOfNotNull(
                 diagnostics.androidVersion?.trim()?.takeIf { it.isNotEmpty() },
                 diagnostics.deviceModel?.trim()?.takeIf { it.isNotEmpty() },
             )
             if (sysParts.isNotEmpty()) {
-                appendLine("设备环境: ${sysParts.joinToString(" · ")}")
+                appendLine("${s.feedbackDiagDevice}: ${sysParts.joinToString(" · ")}")
             }
 
             val track = diagnostics.currentTrackTitle?.trim()?.takeIf { it.isNotEmpty() }
             if (track != null) {
-                val kind = if (diagnostics.isVideo) "视频" else "音频"
-                val stateLabel = if (diagnostics.isPlaying) "播放中" else "已暂停"
+                val kind = if (diagnostics.isVideo) s.video else s.audio
+                val stateLabel = if (diagnostics.isPlaying) s.feedbackDiagPlaying else s.feedbackDiagPaused
                 val pos = PracticeMath.formatTimeMs(diagnostics.positionMs, includeTenths = true)
                 val dur = PracticeMath.formatTimeMs(diagnostics.durationMs, includeTenths = true)
-                appendLine("当前媒体: $track ($kind · $stateLabel · $pos / $dur)")
+                appendLine("${s.feedbackDiagMedia}: $track ($kind · $stateLabel · $pos / $dur)")
             }
 
             val ps = diagnostics.practiceState
@@ -219,22 +231,26 @@ object AgentFeedbackHelper {
                 val loopStr = if (ps.activeAMs != null && ps.activeBMs != null) {
                     val a = PracticeMath.formatTimeMs(ps.activeAMs, includeTenths = true)
                     val b = PracticeMath.formatTimeMs(ps.activeBMs, includeTenths = true)
-                    val activeFlag = if (ps.loopEnabled) "激活" else "挂起"
+                    val activeFlag = if (ps.loopEnabled) s.feedbackDiagLoopActive else s.feedbackDiagLoopSuspended
                     "A $a - B $b ($activeFlag)"
                 } else {
-                    "未设循环"
+                    s.feedbackDiagNoLoop
                 }
-                appendLine("练习状态: 速度 $speedStr · 变调 $pitchStr · BPM ${formatPreciseBpm(ps.exactBpm)} · $loopStr")
                 appendLine(
-                    "节拍网格: ${String.format(Locale.US, "%.3f", ps.exactBpm)} BPM · ${ps.beatsPerBar}/4 · " +
-                        "第一拍 ${ps.firstDownbeatMs}ms · 乐句偏移 ${ps.phraseOffsetBars} · 来源 ${ps.beatGridSource.name}",
+                    "${s.feedbackDiagPracticeState}: ${s.feedbackDiagSpeed} $speedStr · " +
+                        "${s.feedbackDiagPitch} $pitchStr · BPM ${formatPreciseBpm(ps.exactBpm)} · $loopStr",
+                )
+                appendLine(
+                    "${s.feedbackDiagBeatGrid}: ${String.format(Locale.US, "%.3f", ps.exactBpm)} BPM · ${ps.beatsPerBar}/4 · " +
+                        "${s.feedbackDiagBeatOne} ${ps.firstDownbeatMs}ms · ${s.feedbackDiagPhraseOffset} ${ps.phraseOffsetBars} · " +
+                        "${s.feedbackDiagSource} ${ps.beatGridSource.name}",
                 )
             } else if (track != null) {
-                appendLine("播放模式: 听歌模式")
+                appendLine("${s.feedbackDiagPlaybackMode}: ${s.feedbackDiagCasualMode}")
             }
 
             diagnostics.attachmentFileName?.trim()?.takeIf { it.isNotEmpty() }?.let { fileName ->
-                appendLine("附加截图: $fileName")
+                appendLine("${s.feedbackDiagAttachment}: $fileName")
             }
         }.trimEnd()
     }
@@ -245,15 +261,16 @@ object AgentFeedbackHelper {
         includeDiagnostics: Boolean = true,
         diagnostics: FeedbackDiagnostics? = null,
         hasAttachment: Boolean = false,
+        language: ResolvedLanguage = AppLocaleHolder.activeLanguage,
     ): String {
         val normalizedDetails = details
             ?.replace("\r\n", "\n")
             ?.replace('\r', '\n')
             ?.trim()
             .orEmpty()
-        val mainContent = normalizedDetails.ifEmpty { sanitizeSummary(summary, null, hasAttachment) }
+        val mainContent = normalizedDetails.ifEmpty { sanitizeSummary(summary, null, hasAttachment, language) }
         return if (includeDiagnostics && diagnostics != null) {
-            "$mainContent\n\n${formatDiagnosticsBlock(diagnostics)}"
+            "$mainContent\n\n${formatDiagnosticsBlock(diagnostics, language)}"
         } else {
             mainContent
         }
@@ -285,9 +302,11 @@ object AgentFeedbackHelper {
         recipientEmail: String,
         subject: String,
         body: String,
+        language: ResolvedLanguage = AppLocaleHolder.activeLanguage,
     ): String {
         val normalizedEmail = normalizeEmail(recipientEmail)
-        require(isValidEmail(normalizedEmail)) { "Invalid recipient email address" }
+        val strings = AppStrings.forLanguage(language)
+        require(isValidEmail(normalizedEmail)) { strings.feedbackInvalidEmailError }
 
         val atIndex = normalizedEmail.indexOf('@')
         val localPart = normalizedEmail.substring(0, atIndex)
@@ -308,9 +327,13 @@ object AgentFeedbackHelper {
         return "mailto:$encodedAddr?subject=$encodedSubject&body=$encodedBody"
     }
 
-    fun buildPayload(request: AgentFeedbackRequest): AgentFeedbackPayload {
+    fun buildPayload(
+        request: AgentFeedbackRequest,
+        language: ResolvedLanguage = AppLocaleHolder.activeLanguage,
+    ): AgentFeedbackPayload {
         val normalizedEmail = normalizeEmail(request.recipientEmail)
-        require(isValidEmail(normalizedEmail)) { "Invalid recipient email address" }
+        val strings = AppStrings.forLanguage(language)
+        require(isValidEmail(normalizedEmail)) { strings.feedbackInvalidEmailError }
 
         val hasAttachment = request.hasAttachment ||
             !request.diagnostics?.attachmentFileName.isNullOrBlank()
@@ -319,6 +342,7 @@ object AgentFeedbackHelper {
             versionName = request.versionName,
             detailsFallback = request.details,
             hasAttachment = hasAttachment,
+            language = language,
         )
         val body = formatBody(
             summary = request.summary,
@@ -326,11 +350,13 @@ object AgentFeedbackHelper {
             includeDiagnostics = request.includeDiagnostics,
             diagnostics = request.diagnostics,
             hasAttachment = hasAttachment,
+            language = language,
         )
         val mailtoUri = buildMailtoUri(
             recipientEmail = normalizedEmail,
             subject = subject,
             body = body,
+            language = language,
         )
         return AgentFeedbackPayload(
             recipientEmail = normalizedEmail,

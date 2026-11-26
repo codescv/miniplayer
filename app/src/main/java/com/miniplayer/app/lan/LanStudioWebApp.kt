@@ -1,23 +1,37 @@
 package com.miniplayer.app.lan
 
+import com.miniplayer.app.core.i18n.AppLocaleHolder
+import com.miniplayer.app.core.i18n.AppStrings
+import com.miniplayer.app.core.i18n.LanWebStrings
+import com.miniplayer.app.core.i18n.ResolvedLanguage
+
 /**
  * Self-contained Material Design 3 Single-Page Application served by [LanStudioServer] at `GET /`.
- * Zero external CDN dependencies — runs 100% offline over Wi-Fi / Hotspot / USB Tethering LAN.
+ * Zero external CDN dependencies — runs 100% offline over Wi-Fi / Hotspot / USB Tethering LAN,
+ * and mirrors the active app UI language (`zh`, `en`, `ja`).
  */
 internal object LanStudioWebApp {
 
-    fun renderHtml(serverTitle: String = "MiniPlayer · PC 局域网 Web 管理台"): String {
-        val safeTitle = escapeHtml(serverTitle)
-        return buildString(48_000) {
-            append("<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n")
+    fun renderHtml(
+        language: ResolvedLanguage = AppLocaleHolder.activeLanguage,
+        serverTitle: String? = null,
+    ): String {
+        val s = LanWebStrings.forLanguage(language)
+        val appStrings = AppStrings.forLanguage(language)
+        val effectiveTitle = serverTitle ?: s.pageTitle
+        val safeTitle = escapeHtml(effectiveTitle)
+        return buildString(56_000) {
+            append("<!DOCTYPE html>\n<html lang=\"").append(language.htmlLang).append("\">\n<head>\n")
             append("<meta charset=\"utf-8\">\n")
             append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
             append("<title>").append(safeTitle).append("</title>\n")
             append("<style>\n")
             append(CSS)
             append("\n</style>\n</head>\n<body>\n")
-            append(BODY_HTML)
+            append(renderBodyHtml(s, effectiveTitle))
             append("\n<script>\n")
+            append("const I18N = ").append(encodeJsonObject(s.toJsMap())).append(";\n")
+            append("const DEFAULT_PRESET_LABELS = ").append(encodeJsonArray(appStrings.presetSectionLabels)).append(";\n")
             append(APP_JS)
             append("\n</script>\n</body>\n</html>\n")
         }
@@ -34,6 +48,46 @@ internal object LanStudioWebApp {
                 else -> append(ch)
             }
         }
+    }
+
+    private fun escapeJsJsonString(text: String): String = buildString(text.length + 16) {
+        append('"')
+        for (ch in text) {
+            when (ch) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                '<' -> append("\\u003c")
+                '>' -> append("\\u003e")
+                '&' -> append("\\u0026")
+                '\u2028' -> append("\\u2028")
+                '\u2029' -> append("\\u2029")
+                else -> append(ch)
+            }
+        }
+        append('"')
+    }
+
+    private fun encodeJsonObject(map: Map<String, String>): String = buildString(map.size * 48) {
+        append('{')
+        var first = true
+        for ((k, v) in map) {
+            if (!first) append(',')
+            first = false
+            append(escapeJsJsonString(k)).append(':').append(escapeJsJsonString(v))
+        }
+        append('}')
+    }
+
+    private fun encodeJsonArray(items: List<String>): String = buildString(items.size * 16) {
+        append('[')
+        for ((idx, item) in items.withIndex()) {
+            if (idx > 0) append(',')
+            append(escapeJsJsonString(item))
+        }
+        append(']')
     }
 
     private val CSS = """
@@ -89,7 +143,7 @@ internal object LanStudioWebApp {
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans", "Noto Sans SC", "Noto Sans JP", Roboto, sans-serif;
   background: var(--bg);
   color: var(--fg);
   line-height: 1.45;
@@ -238,30 +292,32 @@ tr:hover td { background: var(--hover); }
 .drag-row.dragging { opacity: 0.45; }
     """.trimIndent()
 
-    private val BODY_HTML = """
+    private fun renderBodyHtml(s: LanWebStrings, title: String): String {
+        val h = ::escapeHtml
+        return """
 <div class="app-shell">
   <header class="topbar">
     <div class="brand">
       <div class="brand-logo">MP</div>
       <div>
-        <h1>MiniPlayer · PC 局域网 Web 管理台</h1>
+        <h1>${h(title)}</h1>
         <div class="brand-sub">
-          <span><span class="dot-live"></span> <span id="stat-summary">正在连接手机曲库…</span></span>
-          <span id="stat-scan" class="badge badge-muted hidden">扫描中…</span>
+          <span><span class="dot-live"></span> <span id="stat-summary">${h(s.connectingLibrary)}</span></span>
+          <span id="stat-scan" class="badge badge-muted hidden">${h(s.scanning)}</span>
         </div>
       </div>
     </div>
 
     <nav class="nav-tabs" role="tablist">
-      <button class="nav-tab active" data-tab="folders" onclick="switchTab('folders')">无线传文件与目录</button>
-      <button class="nav-tab" data-tab="metadata" onclick="switchTab('metadata')">曲库表格与联网补全</button>
-      <button class="nav-tab" data-tab="playlists" onclick="switchTab('playlists')">播放列表与练习列表</button>
-      <button class="nav-tab" data-tab="studio" onclick="switchTab('studio')">PC 预听与 A-B 打点器</button>
+      <button class="nav-tab active" data-tab="folders" onclick="switchTab('folders')">${h(s.tabFolders)}</button>
+      <button class="nav-tab" data-tab="metadata" onclick="switchTab('metadata')">${h(s.tabMetadata)}</button>
+      <button class="nav-tab" data-tab="playlists" onclick="switchTab('playlists')">${h(s.tabPlaylists)}</button>
+      <button class="nav-tab" data-tab="studio" onclick="switchTab('studio')">${h(s.tabStudio)}</button>
     </nav>
 
     <div class="top-actions">
-      <button class="btn btn-outline" onclick="triggerRescanAll()" title="增量扫描所有已添加文件夹">刷新曲库</button>
-      <button class="btn btn-outline" onclick="toggleTheme()" id="theme-btn" title="切换深色/浅色主题">主题</button>
+      <button class="btn btn-outline" onclick="triggerRescanAll()" title="${h(s.rescanLibraryTooltip)}">${h(s.rescanLibraryBtn)}</button>
+      <button class="btn btn-outline" onclick="toggleTheme()" id="theme-btn" title="${h(s.themeTooltip)}">${h(s.themeBtn)}</button>
     </div>
   </header>
 
@@ -270,12 +326,12 @@ tr:hover td { background: var(--hover); }
     <div class="grid-sidebar">
       <aside class="card">
         <div class="card-title">
-          <span>已挂载文件夹</span>
+          <span>${h(s.mountedFoldersTitle)}</span>
           <span class="badge badge-muted tnum" id="roots-count">0</span>
         </div>
         <div id="roots-list"></div>
         <p style="font-size:12px;color:var(--muted);margin:12px 0 0;">
-          提示：出于 Android SAF 隐私安全规范，新增顶层文件夹请在手机端点击右下角「添加文件夹」按钮授权；授权后即可在此无线上传文件、建子目录或标记练习目录。
+          ${h(s.safTip)}
         </p>
       </aside>
 
@@ -285,10 +341,10 @@ tr:hover td { background: var(--hover); }
           <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer;" class="badge badge-practice">
               <input type="checkbox" id="folder-practice-toggle" onchange="toggleCurrentFolderPractice(this.checked)">
-              设为练习文件夹（手机点播自动开练习模式，且不混入专辑/歌手/视频）
+              ${h(s.practiceFolderToggleLabel)}
             </label>
-            <button class="btn btn-tonal" onclick="promptCreateSubfolder()">+ 新建子文件夹</button>
-            <label class="btn btn-primary" for="upload-input">上传音视频 / 歌词</label>
+            <button class="btn btn-tonal" onclick="promptCreateSubfolder()">${h(s.newSubfolderBtn)}</button>
+            <label class="btn btn-primary" for="upload-input">${h(s.uploadMediaBtn)}</label>
             <input id="upload-input" type="file" multiple hidden
                    accept=".mp3,.flac,.wav,.m4a,.aac,.ogg,.opus,.mp4,.mkv,.webm,.mov,.lrc,.jpg,.jpeg,.png,.m3u,.m3u8"
                    onchange="uploadFilesToCurrentFolder(this.files); this.value='';">
@@ -297,14 +353,14 @@ tr:hover td { background: var(--hover); }
 
         <div id="dropzone" class="dropzone">
           <div style="font-size:15px;font-weight:600;margin-bottom:4px;">
-            拖拽 .mp3 / .flac / .wav / .m4a / .mp4 / .mkv / .lrc 文件到此处无线直传手机当前目录
+            ${h(s.dropzoneTitle)}
           </div>
           <div style="font-size:12px;color:var(--muted);">
-            支持多文件连续流式上传，上传完成后自动触发增量扫描入库
+            ${h(s.dropzoneSubtitle)}
           </div>
           <div id="upload-progress-box" class="hidden" style="margin-top:10px;text-align:left;">
             <div style="display:flex;justify-content:space-between;font-size:12px;" class="tnum">
-              <span id="upload-status-text">准备上传…</span>
+              <span id="upload-status-text">${h(s.uploadPreparing)}</span>
               <span id="upload-pct-text">0%</span>
             </div>
             <div class="progress-bar"><div id="upload-bar-fill" class="progress-fill"></div></div>
@@ -315,11 +371,11 @@ tr:hover td { background: var(--hover); }
           <table>
             <thead>
               <tr>
-                <th>名称</th>
-                <th>类型 / 规格</th>
-                <th>歌手 / 专辑</th>
-                <th>练习标记</th>
-                <th style="text-align:right;">操作</th>
+                <th>${h(s.colName)}</th>
+                <th>${h(s.colTypeSpec)}</th>
+                <th>${h(s.colArtistAlbum)}</th>
+                <th>${h(s.colPracticeTags)}</th>
+                <th style="text-align:right;">${h(s.colActions)}</th>
               </tr>
             </thead>
             <tbody id="folder-entries-tbody"></tbody>
@@ -333,26 +389,26 @@ tr:hover td { background: var(--hover); }
   <section id="ws-metadata" class="workspace">
     <div class="card">
       <div class="chip-row">
-        <button class="chip active" data-filter="all" onclick="setMetaFilter('all')">全部曲库</button>
-        <button class="chip" data-filter="folder" onclick="setMetaFilter('folder')">按文件夹</button>
-        <button class="chip" data-filter="album" onclick="setMetaFilter('album')">按专辑</button>
-        <button class="chip" data-filter="unknown_album" onclick="setMetaFilter('unknown_album')">未知专辑</button>
-        <button class="chip" data-filter="artist" onclick="setMetaFilter('artist')">按歌手</button>
-        <button class="chip" data-filter="video" onclick="setMetaFilter('video')">视频</button>
+        <button class="chip active" data-filter="all" onclick="setMetaFilter('all')">${h(s.filterAllLibrary)}</button>
+        <button class="chip" data-filter="folder" onclick="setMetaFilter('folder')">${h(s.filterByFolder)}</button>
+        <button class="chip" data-filter="album" onclick="setMetaFilter('album')">${h(s.filterByAlbum)}</button>
+        <button class="chip" data-filter="unknown_album" onclick="setMetaFilter('unknown_album')">${h(s.filterUnknownAlbum)}</button>
+        <button class="chip" data-filter="artist" onclick="setMetaFilter('artist')">${h(s.filterByArtist)}</button>
+        <button class="chip" data-filter="video" onclick="setMetaFilter('video')">${h(s.filterVideo)}</button>
 
         <select id="meta-subfilter" class="hidden" onchange="onMetaSubfilterChange()"></select>
         <input id="meta-search" class="input" style="min-width:240px;margin-left:auto;"
-               placeholder="搜索标题 / 歌手 / 专辑 / 文件名…" oninput="renderMetadataTable()">
-        <button class="btn btn-tertiary" onclick="runBatchAutoCompletePreview()">批量联网补全当前列表</button>
+               placeholder="${h(s.metaSearchPlaceholder)}" oninput="renderMetadataTable()">
+        <button class="btn btn-tertiary" onclick="runBatchAutoCompletePreview()">${h(s.batchAutoCompleteListBtn)}</button>
       </div>
 
       <div id="meta-batch-bar" class="batch-bar hidden">
-        <div>已选中 <strong id="meta-sel-count" class="tnum">0</strong> 项（双击表格单元格可直接行内快改）</div>
+        <div>${h(s.batchSelectedPrefix)}<strong id="meta-sel-count" class="tnum">0</strong>${h(s.batchSelectedSuffix)}</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
-          <button class="btn btn-primary btn-xs" onclick="openBatchEditModal()">批量修改专辑/歌手/年份</button>
-          <button class="btn btn-tertiary btn-xs" onclick="runBatchAutoCompleteSelected()">批量自动联网补全</button>
-          <button class="btn btn-outline btn-xs" onclick="openAddSelectedToPlaylistModal()">加入播放/练习列表</button>
-          <button class="btn btn-danger btn-xs" onclick="resetSelectedMetadata()">恢复原始标签</button>
+          <button class="btn btn-primary btn-xs" onclick="openBatchEditModal()">${h(s.batchEditBtn)}</button>
+          <button class="btn btn-tertiary btn-xs" onclick="runBatchAutoCompleteSelected()">${h(s.batchAutoCompleteSelectedBtn)}</button>
+          <button class="btn btn-outline btn-xs" onclick="openAddSelectedToPlaylistModal()">${h(s.batchAddToPlaylistBtn)}</button>
+          <button class="btn btn-danger btn-xs" onclick="resetSelectedMetadata()">${h(s.batchResetMetadataBtn)}</button>
         </div>
       </div>
 
@@ -361,13 +417,13 @@ tr:hover td { background: var(--hover); }
           <thead>
             <tr>
               <th style="width:36px;"><input type="checkbox" id="meta-select-all" onchange="toggleSelectAllMeta(this.checked)"></th>
-              <th style="width:52px;">音轨#</th>
-              <th>标题 (双击行内编辑)</th>
-              <th>歌手</th>
-              <th>专辑</th>
-              <th style="width:68px;">年份</th>
-              <th style="width:90px;">时长/格式</th>
-              <th style="text-align:right;width:230px;">操作</th>
+              <th style="width:60px;">${h(s.colTrackNum)}</th>
+              <th>${h(s.colTitleInline)}</th>
+              <th>${h(s.colArtist)}</th>
+              <th>${h(s.colAlbum)}</th>
+              <th style="width:68px;">${h(s.colYear)}</th>
+              <th style="width:96px;">${h(s.colDurationFormat)}</th>
+              <th style="text-align:right;width:230px;">${h(s.colActions)}</th>
             </tr>
           </thead>
           <tbody id="meta-tbody"></tbody>
@@ -381,22 +437,22 @@ tr:hover td { background: var(--hover); }
     <div class="grid-sidebar">
       <aside class="card">
         <div class="card-title">
-          <span>播放列表</span>
+          <span>${h(s.playlistsTitle)}</span>
           <div style="display:flex;gap:6px;">
-            <button class="btn btn-tonal btn-xs" onclick="openCreatePlaylistModal()">+ 新建</button>
-            <label class="btn btn-outline btn-xs" for="m3u-import-input">导入 .m3u8</label>
+            <button class="btn btn-tonal btn-xs" onclick="openCreatePlaylistModal()">${h(s.newPlaylistBtn)}</button>
+            <label class="btn btn-outline btn-xs" for="m3u-import-input">${h(s.importM3uBtn)}</label>
             <input id="m3u-import-input" type="file" accept=".m3u,.m3u8" hidden onchange="importM3uFile(this.files[0]); this.value='';">
           </div>
         </div>
         <div class="chip-row" style="margin-bottom:8px;">
-          <button class="chip active" id="pl-filter-all" onclick="setPlaylistFilter('all')">全部</button>
-          <button class="chip" id="pl-filter-practice" onclick="setPlaylistFilter('practice')">练习列表</button>
+          <button class="chip active" id="pl-filter-all" onclick="setPlaylistFilter('all')">${h(s.filterAll)}</button>
+          <button class="chip" id="pl-filter-practice" onclick="setPlaylistFilter('practice')">${h(s.filterPracticeLists)}</button>
         </div>
         <div id="playlists-sidebar"></div>
       </aside>
 
       <main class="card" id="playlist-detail-pane">
-        <div style="padding:36px;text-align:center;color:var(--muted);">请选择左侧播放列表，或点击「+ 新建」创建练习列表</div>
+        <div style="padding:36px;text-align:center;color:var(--muted);">${h(s.playlistPaneEmptyInitial)}</div>
       </main>
     </div>
   </section>
@@ -406,17 +462,17 @@ tr:hover td { background: var(--hover); }
     <div class="grid-sidebar">
       <aside class="card">
         <div class="card-title">
-          <span>选择曲目 / 视频</span>
+          <span>${h(s.selectTrackVideoTitle)}</span>
           <span class="badge badge-muted tnum" id="studio-track-count">0</span>
         </div>
         <input id="studio-search" class="input" style="width:100%;margin-bottom:10px;"
-               placeholder="筛选伴奏或教学视频…" oninput="renderStudioTrackList()">
+               placeholder="${h(s.studioSearchPlaceholder)}" oninput="renderStudioTrackList()">
         <div id="studio-track-list" style="max-height:560px;overflow-y:auto;"></div>
       </aside>
 
       <main class="card">
         <div id="studio-empty" style="padding:40px;text-align:center;color:var(--muted);">
-          请从左侧选择一首伴奏音频或教学视频开始 PC 预听与 A-B 段落书签打点
+          ${h(s.studioEmptyHint)}
         </div>
 
         <div id="studio-main" class="hidden">
@@ -427,10 +483,10 @@ tr:hover td { background: var(--hover); }
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <label id="studio-mirror-wrap" class="btn btn-outline btn-xs hidden" style="cursor:pointer;">
-                <input type="checkbox" id="studio-mirror-chk" onchange="toggleVideoMirror(this.checked)"> 视频水平镜像
+                <input type="checkbox" id="studio-mirror-chk" onchange="toggleVideoMirror(this.checked)"> ${h(s.videoMirrorLabel)}
               </label>
               <span style="font-size:12px;color:var(--muted);">
-                快捷键: <span class="kbd">Space</span> 播/停 · <span class="kbd">[</span> 设A · <span class="kbd">]</span> 设B · <span class="kbd">\</span> 循环开关 · <span class="kbd">R</span> 回A
+                ${h(s.shortcutsLabel)} <span class="kbd">Space</span> ${h(s.shortcutPlayPause)} · <span class="kbd">[</span> ${h(s.shortcutSetA)} · <span class="kbd">]</span> ${h(s.shortcutSetB)} · <span class="kbd">\</span> ${h(s.shortcutLoopToggle)} · <span class="kbd">R</span> ${h(s.shortcutBackToA)}
               </span>
             </div>
           </div>
@@ -438,16 +494,16 @@ tr:hover td { background: var(--hover); }
           <div class="player-stage">
             <video id="studio-video" class="hidden" controls playsinline></video>
             <div id="studio-audio-box" class="audio-hero">
-              <div style="font-size:13px;font-weight:600;letter-spacing:0.08em;opacity:0.75;margin-bottom:10px;">AUDIO PREVIEW</div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:0.08em;opacity:0.75;margin-bottom:10px;">${h(s.audioPreviewBanner)}</div>
               <audio id="studio-audio" controls style="width:min(560px,92%);"></audio>
             </div>
           </div>
 
           <!-- Interactive A-B Timeline -->
           <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;" class="tnum">
-            <span>当前: <strong id="studio-cur-time">00:00.0</strong></span>
-            <span id="studio-ab-readout">A-B 区间: 未设置</span>
-            <span>总长: <span id="studio-dur-time">00:00.0</span></span>
+            <span>${h(s.curTimeLabel)} <strong id="studio-cur-time">00:00.0</strong></span>
+            <span id="studio-ab-readout">${h(s.abRangeUnset)}</span>
+            <span>${h(s.durTimeLabel)} <span id="studio-dur-time">00:00.0</span></span>
           </div>
           <div id="studio-timeline" class="timeline-box" onclick="seekOnTimeline(event)">
             <div id="tl-progress" class="timeline-progress"></div>
@@ -460,9 +516,9 @@ tr:hover td { background: var(--hover); }
           <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;">
             <button class="btn btn-tertiary" onclick="setPointA()">[ A (<span id="btn-a-label" class="tnum">--:--</span>)</button>
             <button class="btn btn-tertiary" onclick="setPointB()">] B (<span id="btn-b-label" class="tnum">--:--</span>)</button>
-            <button class="btn btn-tonal" id="btn-loop-toggle" onclick="toggleAbLoop()">循环: 关</button>
-            <button class="btn btn-outline" onclick="jumpToPointA()">回 A</button>
-            <button class="btn btn-outline" onclick="clearAbPoints()">清除 A-B</button>
+            <button class="btn btn-tonal" id="btn-loop-toggle" onclick="toggleAbLoop()">${h(s.loopOff)}</button>
+            <button class="btn btn-outline" onclick="jumpToPointA()">${h(s.jumpToABtn)}</button>
+            <button class="btn btn-outline" onclick="clearAbPoints()">${h(s.clearAbBtn)}</button>
             <span style="margin-left:auto;display:flex;gap:4px;flex-wrap:wrap;">
               <button class="btn btn-outline btn-xs" onclick="nudgePoint('A', -500)">A -0.5s</button>
               <button class="btn btn-outline btn-xs" onclick="nudgePoint('A', -100)">A -0.1s</button>
@@ -478,52 +534,52 @@ tr:hover td { background: var(--hover); }
           <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:14px;">
             <!-- Named Bookmarks Card -->
             <div class="card" style="background:var(--surface-low);box-shadow:none;">
-              <div class="card-title"><span>段落书签（直存手机数据库）</span></div>
+              <div class="card-title"><span>${h(s.bookmarksCardTitle)}</span></div>
               <div class="chip-row" id="preset-label-chips"></div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-                <input id="bm-label-input" class="input" placeholder="书签名称，如 Solo 1" style="flex:1;min-width:130px;">
+                <input id="bm-label-input" class="input" placeholder="${h(s.bookmarkInputPlaceholder)}" style="flex:1;min-width:130px;">
                 <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
-                  <input type="checkbox" id="bm-save-speed" checked> 关联当前倍速
+                  <input type="checkbox" id="bm-save-speed" checked> ${h(s.bookmarkSaveSpeedLabel)}
                 </label>
-                <button class="btn btn-primary" onclick="saveCurrentBookmark()">+ 保存段落书签</button>
+                <button class="btn btn-primary" onclick="saveCurrentBookmark()">${h(s.saveBookmarkBtn)}</button>
               </div>
               <div id="studio-bookmarks-list"></div>
             </div>
 
             <!-- Practice Speed / Pitch / BPM State Card -->
             <div class="card" style="background:var(--surface-low);box-shadow:none;">
-              <div class="card-title"><span>手机默认练习状态配置</span></div>
+              <div class="card-title"><span>${h(s.practiceStateCardTitle)}</span></div>
               <div class="form-grid">
                 <div class="form-field full">
-                  <label>变速不变调倍速 (<strong id="speed-val" class="tnum">1.00x</strong> — 浏览器实时同步预听)</label>
+                  <label>${h(s.speedSliderLabelPrefix)}<strong id="speed-val" class="tnum">1.00x</strong>${h(s.speedSliderLabelSuffix)}</label>
                   <input type="range" id="practice-speed-range" min="0.25" max="2.00" step="0.05" value="1.00"
                          oninput="onSpeedSliderChange(this.value)">
                   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
                     <button class="btn btn-outline btn-xs" onclick="stepSpeedSlider(-0.05)">-5%</button>
-                    <button class="btn btn-outline btn-xs" onclick="onSpeedSliderChange(1.0)">1.00x 复位</button>
+                    <button class="btn btn-outline btn-xs" onclick="onSpeedSliderChange(1.0)">${h(s.speedResetBtn)}</button>
                     <button class="btn btn-outline btn-xs" onclick="stepSpeedSlider(0.05)">+5%</button>
                   </div>
                 </div>
                 <div class="form-field">
-                  <label>手机升降调半音 (-6 ~ +6 st)</label>
+                  <label>${h(s.pitchSemitonesLabel)}</label>
                   <input type="number" id="practice-pitch-input" class="input tnum" min="-6" max="6" value="0">
                 </div>
                 <div class="form-field">
-                  <label>曲速 BPM (30 ~ 300)</label>
+                  <label>${h(s.bpmLabel)}</label>
                   <div style="display:flex;gap:4px;">
                     <input type="number" id="practice-bpm-input" class="input tnum" min="30" max="300" step="0.01" value="120" style="width:82px;">
-                    <button class="btn btn-outline btn-xs" onclick="tapTempo()">点按测速</button>
+                    <button class="btn btn-outline btn-xs" onclick="tapTempo()">${h(s.tapTempoBtn)}</button>
                   </div>
                 </div>
                 <div class="form-field full">
-                  <label>循环前预备拍 (Count-In)</label>
+                  <label>${h(s.countInLabel)}</label>
                   <select id="practice-countin-select">
-                    <option value="OFF">关闭（无缝连续循环）</option>
-                    <option value="BEAT_4">4 拍木鱼节拍倒计时（随 BPM×倍速自动缩放）</option>
+                    <option value="OFF">${h(s.countInOffOption)}</option>
+                    <option value="BEAT_4">${h(s.countInBeat4Option)}</option>
                   </select>
                 </div>
               </div>
-              <button class="btn btn-primary" style="width:100%;" onclick="savePracticeStateToPhone()">保存练习参数到手机</button>
+              <button class="btn btn-primary" style="width:100%;" onclick="savePracticeStateToPhone()">${h(s.savePracticeStateBtn)}</button>
             </div>
           </div>
         </div>
@@ -539,9 +595,42 @@ tr:hover td { background: var(--hover); }
 
 <!-- Toast -->
 <div id="toast" class="toast hidden"></div>
-    """.trimIndent()
+        """.trimIndent()
+    }
 
     private val APP_JS = """
+const UNKNOWN_ALBUM_SENTINEL = '\u672a\u77e5\u4e13\u8f91';
+const UNKNOWN_ARTIST_SENTINEL = '\u672a\u77e5\u6b4c\u624b';
+const VARIOUS_ARTISTS_SENTINEL = 'Various Artists';
+
+function t(key) {
+  let out = I18N[key] != null ? I18N[key] : key;
+  for (let i = 1; i < arguments.length; i++) {
+    out = out.split('{' + (i - 1) + '}').join(String(arguments[i]));
+  }
+  return out;
+}
+
+function displayAlbum(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s || s === UNKNOWN_ALBUM_SENTINEL) return t('unknownAlbum');
+  return s;
+}
+
+function displayArtist(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s || s === UNKNOWN_ARTIST_SENTINEL) return t('unknownArtist');
+  if (s === VARIOUS_ARTISTS_SENTINEL) return t('variousArtists');
+  return s;
+}
+
+function displayMountState(raw) {
+  if (raw === 'MOUNTED') return t('mountMounted');
+  if (raw === 'OFFLINE_UNMOUNTED') return t('mountOffline');
+  if (raw === 'PERMISSION_REVOKED') return t('mountPermissionRevoked');
+  return String(raw || '');
+}
+
 const state = {
   roots: [],
   currentRootId: null,
@@ -564,7 +653,7 @@ const state = {
   pointBMs: null,
   loopEnabled: false,
   tapTimes: [],
-  presetLabels: ['Intro', 'Verse', 'Pre-Chorus', 'Chorus', 'Bridge', 'Solo 1', 'Solo 2', 'Outro']
+  presetLabels: DEFAULT_PRESET_LABELS.slice()
 };
 
 function esc(str) {
@@ -624,22 +713,22 @@ async function api(path, opts) {
   const res = await fetch(path, options);
   if (res.status === 401) {
     promptPinAuth();
-    throw new Error('需要输入访问 PIN 码');
+    throw new Error(t('pinRequiredError'));
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.ok === false) {
-    throw new Error(data.error || ('请求失败 (' + res.status + ')'));
+    throw new Error(data.error || t('requestFailedTpl', res.status));
   }
   return data;
 }
 
 function promptPinAuth() {
   const box = document.getElementById('modal-box');
-  box.innerHTML = '<h3 style="margin-top:0;">输入局域网访问 PIN 码</h3>' +
-    '<p style="font-size:13px;color:var(--muted);">请在手机端「PC 局域网 Web 管理台」面板查看 4 位 PIN 码：</p>' +
-    '<input id="pin-modal-input" class="input tnum" style="width:100%;font-size:18px;margin-bottom:14px;" placeholder="例如 1234">' +
+  box.innerHTML = '<h3 style="margin-top:0;">' + esc(t('pinModalTitle')) + '</h3>' +
+    '<p style="font-size:13px;color:var(--muted);">' + esc(t('pinModalHint')) + '</p>' +
+    '<input id="pin-modal-input" class="input tnum" style="width:100%;font-size:18px;margin-bottom:14px;" placeholder="' + esc(t('pinModalPlaceholder')) + '">' +
     '<div style="display:flex;justify-content:flex-end;gap:8px;">' +
-    '<button class="btn btn-primary" onclick="submitPinAuth()">验证并进入</button></div>';
+    '<button class="btn btn-primary" onclick="submitPinAuth()">' + esc(t('pinSubmitBtn')) + '</button></div>';
   document.getElementById('modal-root').classList.remove('hidden');
 }
 
@@ -651,9 +740,9 @@ async function submitPinAuth() {
     await api('/api/auth', { method: 'POST', json: { pin: pin } });
     closeModal();
     await bootstrapAll();
-    showToast('已解锁局域网管理台');
+    showToast(t('pinUnlockedToast'));
   } catch (e) {
-    alert(e.message || 'PIN 码错误');
+    alert(e.message || t('pinWrongError'));
   }
 }
 
@@ -674,10 +763,10 @@ function switchTab(tab) {
 async function refreshStatus() {
   const st = await api('/api/status');
   document.getElementById('stat-summary').textContent =
-    '曲库 ' + st.itemCount + ' 首 (视频 ' + st.videoCount + ') · 列表 ' + st.playlistCount + ' 个 · 书签曲目 ' + st.bookmarkedTrackCount;
+    t('statSummaryTpl', st.itemCount, st.videoCount, st.playlistCount, st.bookmarkedTrackCount);
   const scanBadge = document.getElementById('stat-scan');
   if (st.scan && st.scan.isScanning) {
-    scanBadge.textContent = '扫描中 (' + st.scan.scannedCount + ')…';
+    scanBadge.textContent = t('scanningCountTpl', st.scan.scannedCount);
     scanBadge.classList.remove('hidden');
   } else {
     scanBadge.classList.add('hidden');
@@ -696,26 +785,26 @@ async function loadRootsAndCurrentFolder() {
   if (state.currentRootId != null) {
     await browseFolder(state.currentRootId, state.currentRelPath);
   } else {
-    document.getElementById('folder-crumbs').innerHTML = '<span style="color:var(--muted);">尚未在手机上添加本地文件夹</span>';
+    document.getElementById('folder-crumbs').innerHTML = '<span style="color:var(--muted);">' + esc(t('noFolderAddedCrumbs')) + '</span>';
     document.getElementById('folder-entries-tbody').innerHTML =
-      '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">请先在手机端 MiniPlayer 点击右下角「添加文件夹」按钮挂载音乐或练习伴奏目录</td></tr>';
+      '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">' + esc(t('noFolderAddedEmpty')) + '</td></tr>';
   }
 }
 
 function renderRootsSidebar() {
   const container = document.getElementById('roots-list');
   if (!state.roots.length) {
-    container.innerHTML = '<div style="color:var(--muted);font-size:13px;">暂无已挂载目录</div>';
+    container.innerHTML = '<div style="color:var(--muted);font-size:13px;">' + esc(t('noMountedFolders')) + '</div>';
     return;
   }
   container.innerHTML = state.roots.map(r => {
     const sel = r.rootId === state.currentRootId ? ' selected' : '';
-    const ro = r.isWritable ? '' : ' <span class="badge badge-warn">只读</span>';
-    const pf = r.isPracticeFolder ? ' <span class="badge badge-practice">练习</span>' : '';
+    const ro = r.isWritable ? '' : ' <span class="badge badge-warn">' + esc(t('badgeReadOnly')) + '</span>';
+    const pf = r.isPracticeFolder ? ' <span class="badge badge-practice">' + esc(t('badgePracticeShort')) + '</span>' : '';
     return '<div class="list-item' + sel + '" onclick="selectRoot(' + r.rootId + ')">' +
       '<div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
       esc(r.displayName) + pf + ro + '</div>' +
-      '<div style="font-size:11px;opacity:0.78;" class="tnum">' + r.itemCount + ' 项 · ' + esc(r.mountState) + '</div></div></div>';
+      '<div style="font-size:11px;opacity:0.78;" class="tnum">' + esc(t('itemsCountTpl', r.itemCount)) + ' · ' + esc(displayMountState(r.mountState)) + '</div></div></div>';
   }).join('');
 }
 
@@ -734,7 +823,7 @@ async function browseFolder(rootId, relPath) {
   document.getElementById('folder-practice-toggle').checked = !!data.isCurrentPracticeFolder;
 
   // Breadcrumbs
-  const rootName = (data.root && data.root.displayName) || '根目录';
+  const rootName = (data.root && data.root.displayName) || t('rootFolderFallback');
   let crumbsHtml = '<button class="crumb-link" onclick="browseFolder(' + rootId + ', \'\')">' + esc(rootName) + '</button>';
   const parts = state.currentRelPath ? state.currentRelPath.split('/').filter(Boolean) : [];
   let acc = '';
@@ -747,47 +836,49 @@ async function browseFolder(rootId, relPath) {
 
   const subRows = (data.subfolders || []).map(sf => {
     const safeRel = escJs(sf.relPath || '');
-    const pfBadge = sf.isPracticeFolder ? '<span class="badge badge-practice">练习目录</span>' : '<span class="badge badge-muted">普通目录</span>';
+    const pfBadge = sf.isPracticeFolder
+      ? '<span class="badge badge-practice">' + esc(t('badgePracticeDir')) + '</span>'
+      : '<span class="badge badge-muted">' + esc(t('badgeNormalDir')) + '</span>';
     return '<tr>' +
       '<td><a href="javascript:void(0)" onclick="browseFolder(' + rootId + ', \'' + safeRel + '\')" style="color:var(--primary);font-weight:600;text-decoration:none;">' + esc(sf.name) + ' /</a></td>' +
-      '<td class="tnum">子文件夹 · ' + (sf.itemCount || 0) + ' 项</td>' +
+      '<td class="tnum">' + esc(t('subfolderCountTpl', sf.itemCount || 0)) + '</td>' +
       '<td>—</td>' +
       '<td>' + pfBadge + '</td>' +
       '<td style="text-align:right;"><button class="btn btn-outline btn-xs" onclick="toggleSubfolderPractice(' + rootId + ', \'' + safeRel + '\', ' + (!sf.isPracticeFolder) + ')">' +
-      (sf.isPracticeFolder ? '取消练习标记' : '设为练习目录') + '</button></td></tr>';
+      esc(sf.isPracticeFolder ? t('unsetPracticeDirBtn') : t('setPracticeDirBtn')) + '</button></td></tr>';
   });
 
   const itemRows = (data.mediaItems || []).map(it => {
-    const kind = it.isVideo ? ('视频' + (it.resolutionBadge ? ' ' + it.resolutionBadge : '')) : '音频';
+    const kind = it.isVideo ? (t('video') + (it.resolutionBadge ? ' ' + it.resolutionBadge : '')) : t('audio');
     const badges = [];
-    if (it.isInPracticeFolder) badges.push('<span class="badge badge-practice">练习目录</span>');
-    if (it.bookmarkCount > 0) badges.push('<span class="badge badge-ok">书签 ' + it.bookmarkCount + ' 段</span>');
+    if (it.isInPracticeFolder) badges.push('<span class="badge badge-practice">' + esc(t('badgePracticeDir')) + '</span>');
+    if (it.bookmarkCount > 0) badges.push('<span class="badge badge-ok">' + esc(t('bookmarksCountBadgeTpl', it.bookmarkCount)) + '</span>');
     return '<tr>' +
       '<td><div style="font-weight:600;">' + esc(it.title) + '</div><div style="font-size:11px;color:var(--muted);">' + esc(it.fileName) + '</div></td>' +
       '<td class="tnum">' + esc(kind) + ' · ' + fmtMs(it.durationMs, false) + ' · ' + fmtBytes(it.sizeBytes) + '</td>' +
-      '<td>' + esc(it.artist) + ' · <span style="color:var(--muted);">' + esc(it.displayAlbum) + '</span></td>' +
+      '<td>' + esc(displayArtist(it.artist)) + ' · <span style="color:var(--muted);">' + esc(displayAlbum(it.displayAlbum)) + '</span></td>' +
       '<td>' + (badges.join(' ') || '—') + '</td>' +
       '<td style="text-align:right;white-space:nowrap;">' +
-      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">预听/打点</button> ' +
-      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ')">标签</button></td></tr>';
+      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">' + esc(t('previewMarkBtn')) + '</button> ' +
+      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ')">' + esc(t('tagsBtn')) + '</button></td></tr>';
   });
 
   const allRows = subRows.concat(itemRows);
   document.getElementById('folder-entries-tbody').innerHTML = allRows.length
     ? allRows.join('')
-    : '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">此目录为空，可直接拖拽音视频文件到上方区域无线上传</td></tr>';
+    : '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">' + esc(t('folderEmptyHint')) + '</td></tr>';
 }
 
 async function promptCreateSubfolder() {
-  if (state.currentRootId == null) { alert('请先在手机上添加文件夹'); return; }
-  const name = window.prompt('新建子文件夹名称（如 Backing 或 J-Rock）：');
+  if (state.currentRootId == null) { alert(t('alertAddFolderFirst')); return; }
+  const name = window.prompt(t('promptNewSubfolderName'));
   if (!name || !name.trim()) return;
   try {
     await api('/api/folders/mkdir', {
       method: 'POST',
       json: { rootId: state.currentRootId, relPath: state.currentRelPath, name: name.trim() }
     });
-    showToast('已创建文件夹: ' + name.trim());
+    showToast(t('toastFolderCreatedTpl', name.trim()));
     await browseFolder(state.currentRootId, state.currentRelPath);
     await loadRootsAndCurrentFolder();
   } catch (e) { alert(e.message); }
@@ -800,7 +891,7 @@ async function toggleCurrentFolderPractice(checked) {
       method: 'POST',
       json: { rootId: state.currentRootId, relPath: state.currentRelPath, isPracticeFolder: checked }
     });
-    showToast(checked ? '已标记为练习文件夹' : '已切换为普通文件夹');
+    showToast(checked ? t('toastMarkedPracticeFolder') : t('toastUnmarkedPracticeFolder'));
     await loadAllItems();
     await loadRootsAndCurrentFolder();
   } catch (e) {
@@ -815,7 +906,7 @@ async function toggleSubfolderPractice(rootId, relPath, isPractice) {
       method: 'POST',
       json: { rootId: rootId, relPath: relPath, isPracticeFolder: isPractice }
     });
-    showToast(isPractice ? '子目录已设为练习目录' : '已取消练习目录标记');
+    showToast(isPractice ? t('toastSubfolderMarkedPractice') : t('toastSubfolderUnmarkedPractice'));
     await browseFolder(state.currentRootId, state.currentRelPath);
     await loadAllItems();
   } catch (e) { alert(e.message); }
@@ -837,21 +928,21 @@ function sendSingleUpload(rootId, relPath, file, onProgress) {
         resolve();
       } else if (xhr.status === 401) {
         promptPinAuth();
-        reject(new Error('需要输入访问 PIN 码'));
+        reject(new Error(t('pinRequiredError')));
       } else {
-        let msg = '上传失败 (' + xhr.status + ')';
+        let msg = t('uploadFailedStatusTpl', xhr.status);
         try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) {}
         reject(new Error(msg));
       }
     };
-    xhr.onerror = () => reject(new Error('网络中断，上传失败'));
+    xhr.onerror = () => reject(new Error(t('uploadNetworkError')));
     xhr.send(file);
   });
 }
 
 async function uploadFilesToCurrentFolder(fileList) {
   if (!fileList || !fileList.length) return;
-  if (state.currentRootId == null) { alert('请先在手机端挂载至少一个可写文件夹'); return; }
+  if (state.currentRootId == null) { alert(t('alertMountWritableFirst')); return; }
   const files = Array.from(fileList);
   const box = document.getElementById('upload-progress-box');
   const txt = document.getElementById('upload-status-text');
@@ -864,7 +955,7 @@ async function uploadFilesToCurrentFolder(fileList) {
   try {
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      txt.textContent = '正在上传 (' + (i + 1) + '/' + files.length + '): ' + f.name;
+      txt.textContent = t('uploadingProgressTpl', i + 1, files.length, f.name);
       await sendSingleUpload(state.currentRootId, state.currentRelPath, f, (loaded) => {
         const pct = totalBytes > 0 ? Math.min(100, Math.round(((doneBytes + loaded) / totalBytes) * 100)) : 100;
         pctEl.textContent = pct + '%';
@@ -872,10 +963,10 @@ async function uploadFilesToCurrentFolder(fileList) {
       });
       doneBytes += (f.size || 0);
     }
-    showToast('已成功上传 ' + files.length + ' 个文件并自动入库！');
+    showToast(t('toastUploadedCountTpl', files.length));
     await bootstrapAll();
   } catch (e) {
-    alert(e.message || '上传失败');
+    alert(e.message || t('uploadFailedGeneric'));
   } finally {
     box.classList.add('hidden');
     bar.style.width = '0%';
@@ -886,7 +977,7 @@ async function triggerRescanAll() {
   try {
     await api('/api/folders/rescan', { method: 'POST', json: {} });
     await bootstrapAll();
-    showToast('已完成曲库增量扫描');
+    showToast(t('toastRescanComplete'));
   } catch (e) { alert(e.message); }
 }
 
@@ -907,22 +998,22 @@ function setMetaFilter(filter) {
   const sub = document.getElementById('meta-subfilter');
   if (filter === 'folder') {
     const folders = Array.from(new Set(state.items.map(i => i.rootId + '::' + (i.parentRelPath || '')))).sort();
-    sub.innerHTML = '<option value="">全部文件夹</option>' + folders.map(k => {
+    sub.innerHTML = '<option value="">' + esc(t('subfilterAllFolders')) + '</option>' + folders.map(k => {
       const idx = k.indexOf('::');
       const rId = Number(k.slice(0, idx));
       const rel = k.slice(idx + 2);
-      const rName = (state.roots.find(r => r.rootId === rId) || {}).displayName || ('Root #' + rId);
+      const rName = (state.roots.find(r => r.rootId === rId) || {}).displayName || t('rootFallbackTpl', rId);
       return '<option value="' + esc(k) + '">' + esc(rName + (rel ? '/' + rel : '')) + '</option>';
     }).join('');
     sub.classList.remove('hidden');
   } else if (filter === 'album') {
-    sub.innerHTML = '<option value="">全部专辑</option>' + state.albums.map(a =>
-      '<option value="' + esc(a.albumKey) + '">' + esc(a.title) + ' (' + a.trackCount + ')</option>'
+    sub.innerHTML = '<option value="">' + esc(t('subfilterAllAlbums')) + '</option>' + state.albums.map(a =>
+      '<option value="' + esc(a.albumKey) + '">' + esc(displayAlbum(a.title)) + ' (' + a.trackCount + ')</option>'
     ).join('');
     sub.classList.remove('hidden');
   } else if (filter === 'artist') {
-    sub.innerHTML = '<option value="">全部歌手</option>' + state.artists.map(a =>
-      '<option value="' + esc(a.artistNorm) + '">' + esc(a.displayName) + ' (' + a.trackCount + ')</option>'
+    sub.innerHTML = '<option value="">' + esc(t('subfilterAllArtists')) + '</option>' + state.artists.map(a =>
+      '<option value="' + esc(a.artistNorm) + '">' + esc(displayArtist(a.displayName)) + ' (' + a.trackCount + ')</option>'
     ).join('');
     sub.classList.remove('hidden');
   } else {
@@ -944,7 +1035,7 @@ function getFilteredMetaItems() {
     }
     if (state.metaFilter === 'unknown_album') {
       if (it.isVideo || it.isInPracticeFolder) return false;
-      if (it.album && it.album.trim() !== '' && it.album !== '未知专辑') return false;
+      if (it.album && it.album.trim() !== '' && it.album !== UNKNOWN_ALBUM_SENTINEL) return false;
     }
     if (state.metaFilter === 'folder' && state.metaSubKey) {
       if ((it.rootId + '::' + (it.parentRelPath || '')) !== state.metaSubKey) return false;
@@ -969,7 +1060,7 @@ function getFilteredMetaItems() {
       }
     }
     if (q) {
-      const hay = ((it.title || '') + ' ' + (it.artist || '') + ' ' + (it.displayAlbum || '') + ' ' + (it.fileName || '')).toLowerCase();
+      const hay = ((it.title || '') + ' ' + (it.artist || '') + ' ' + displayArtist(it.artist) + ' ' + (it.displayAlbum || '') + ' ' + displayAlbum(it.displayAlbum) + ' ' + (it.fileName || '')).toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -980,32 +1071,33 @@ function renderMetadataTable() {
   const rows = getFilteredMetaItems();
   const tbody = document.getElementById('meta-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">没有符合当前筛选条件的曲目</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">' + esc(t('metaEmptyHint')) + '</td></tr>';
     updateBatchBar();
     return;
   }
   tbody.innerHTML = rows.map(it => {
     const checked = state.selectedItemIds.has(it.itemId) ? ' checked' : '';
-    const unknownAlb = !it.album || !it.album.trim();
+    const unknownAlb = !it.album || !it.album.trim() || it.album === UNKNOWN_ALBUM_SENTINEL;
     const albumHtml = unknownAlb
-      ? '<span class="badge badge-warn editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'album\',\'\')">未知专辑</span>'
+      ? '<span class="badge badge-warn editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'album\',\'\')">' + esc(t('unknownAlbum')) + '</span>'
       : '<span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'album\',\'' + escJs(it.album) + '\')">' + esc(it.album) + '</span>';
-    const overrideDot = it.hasMetadataOverride ? ' <span class="badge badge-ok" title="已含本地覆盖标签">已改</span>' : '';
-    const backingDot = it.isBackingTrack ? ' <span class="badge badge-practice">伴奏</span>' : '';
-    const practiceDirDot = it.isInPracticeFolder ? ' <span class="badge badge-practice">练习目录</span>' : '';
+    const editableArtist = (!it.artist || it.artist === UNKNOWN_ARTIST_SENTINEL) ? '' : it.artist;
+    const overrideDot = it.hasMetadataOverride ? ' <span class="badge badge-ok" title="' + esc(t('badgeEditedTooltip')) + '">' + esc(t('badgeEdited')) + '</span>' : '';
+    const backingDot = it.isBackingTrack ? ' <span class="badge badge-practice">' + esc(t('badgeBacking')) + '</span>' : '';
+    const practiceDirDot = it.isInPracticeFolder ? ' <span class="badge badge-practice">' + esc(t('badgePracticeDir')) + '</span>' : '';
     return '<tr>' +
       '<td><input type="checkbox" onchange="toggleSelectItem(' + it.itemId + ', this.checked)"' + checked + '></td>' +
       '<td class="tnum"><span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'trackNumber\',\'' + (it.trackNumber || '') + '\')">' + (it.trackNumber || '—') + '</span></td>' +
       '<td><span class="editable-cell" style="font-weight:600;" ondblclick="inlineEditCell(this,' + it.itemId + ',\'title\',\'' + escJs(it.title) + '\')">' + esc(it.title) + '</span>' + overrideDot + backingDot + practiceDirDot +
       '<div style="font-size:11px;color:var(--muted);">' + esc((it.parentRelPath ? it.parentRelPath + '/' : '') + it.fileName) + '</div></td>' +
-      '<td><span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'artist\',\'' + escJs(it.artist) + '\')">' + esc(it.artist) + '</span></td>' +
+      '<td><span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'artist\',\'' + escJs(editableArtist) + '\')">' + esc(displayArtist(it.artist)) + '</span></td>' +
       '<td>' + albumHtml + '</td>' +
       '<td class="tnum"><span class="editable-cell" ondblclick="inlineEditCell(this,' + it.itemId + ',\'year\',\'' + (it.year || '') + '\')">' + (it.year || '—') + '</span></td>' +
-      '<td class="tnum">' + (it.isVideo ? '视频 ' : '音频 ') + fmtMs(it.durationMs, false) + '</td>' +
+      '<td class="tnum">' + esc(it.isVideo ? t('video') : t('audio')) + ' ' + fmtMs(it.durationMs, false) + '</td>' +
       '<td style="text-align:right;white-space:nowrap;">' +
-      '<button class="btn btn-tertiary btn-xs" onclick="openEditItemModal(' + it.itemId + ', true)">自动联网匹配</button> ' +
-      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ', false)">编辑</button> ' +
-      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">预听</button></td></tr>';
+      '<button class="btn btn-tertiary btn-xs" onclick="openEditItemModal(' + it.itemId + ', true)">' + esc(t('autoMatchOnlineBtn')) + '</button> ' +
+      '<button class="btn btn-outline btn-xs" onclick="openEditItemModal(' + it.itemId + ', false)">' + esc(t('edit')) + '</button> ' +
+      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">' + esc(t('previewBtn')) + '</button></td></tr>';
   }).join('');
   updateBatchBar();
 }
@@ -1046,7 +1138,7 @@ function inlineEditCell(spanEl, itemId, field, currentVal) {
     }
     try {
       await api('/api/metadata/update', { method: 'POST', json: payload });
-      showToast('已更新标签');
+      showToast(t('toastTagUpdated'));
       await loadAllItems();
     } catch (e) {
       alert(e.message);
@@ -1082,10 +1174,10 @@ function updateBatchBar() {
 function applyBackingSuffixJs(baseTitle, isBacking) {
   const clean = String(baseTitle || '').trim();
   if (!isBacking || !clean) return clean;
-  if (/\((伴奏|backing\s*track|instrumental|off\s*vocal|karaoke)\)/i.test(clean) || /（伴奏）/.test(clean)) {
+  if (/\((\u4f34\u594f|backing(\s*track)?|instrumental|off\s*vocal|karaoke)\)/i.test(clean) || /\uff08\u4f34\u594f\uff09/.test(clean)) {
     return clean;
   }
-  return clean + ' (伴奏)';
+  return clean + t('backingTitleSuffix');
 }
 
 function openEditItemModal(itemId, autoSearch) {
@@ -1098,32 +1190,36 @@ function openEditItemModal(itemId, autoSearch) {
 
   const backingToggleHtml = it.isBackingTrack
     ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:8px;">' +
-      '<input type="checkbox" id="ed-preserve-backing" checked onchange="onEditPreserveBackingChanged(' + it.itemId + ', this.checked)"> 标题保留「(伴奏)」后缀，避免与原唱混淆</label>'
+      '<input type="checkbox" id="ed-preserve-backing" checked onchange="onEditPreserveBackingChanged(' + it.itemId + ', this.checked)"> ' +
+      esc(t('preserveBackingCheckboxTpl', t('backingTitleSuffix').trim())) + '</label>'
     : '';
 
+  const artistVal = (!it.artist || it.artist === UNKNOWN_ARTIST_SENTINEL) ? '' : it.artist;
+  const albumVal = (!it.album || it.album === UNKNOWN_ALBUM_SENTINEL) ? '' : it.album;
+
   openModal(
-    '<h3 style="margin-top:0;">编辑曲目元数据</h3>' +
-    '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">文件: ' + esc(it.fileName) + '</div>' +
+    '<h3 style="margin-top:0;">' + esc(t('editModalTitle')) + '</h3>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">' + esc(t('editModalFileTpl', it.fileName)) + '</div>' +
     '<div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">' +
-    '<button type="button" id="ed-auto-match-btn" class="btn btn-tonal btn-sm" onclick="searchEditModalCandidates(' + it.itemId + ')">在线自动补全当前曲目</button>' +
+    '<button type="button" id="ed-auto-match-btn" class="btn btn-tonal btn-sm" onclick="searchEditModalCandidates(' + it.itemId + ')">' + esc(t('editModalAutoMatchBtn')) + '</button>' +
     '<span id="ed-staged-hint" style="font-size:12px;color:var(--primary);font-weight:600;"></span>' +
     '</div>' +
     backingToggleHtml +
     '<div id="ed-candidates-box" style="margin-bottom:12px;"></div>' +
     '<div class="form-grid">' +
-    '<div class="form-field full"><label>标题 (Title)</label><input id="ed-title" class="input" value="' + esc(it.title) + '"></div>' +
-    '<div class="form-field"><label>歌手 (Artist)</label><input id="ed-artist" class="input" value="' + esc(it.artist) + '"></div>' +
-    '<div class="form-field"><label>专辑 (Album)</label><input id="ed-album" class="input" value="' + esc(it.album || '') + '"></div>' +
-    '<div class="form-field"><label>专辑歌手 (Album Artist)</label><input id="ed-album-artist" class="input" value="' + esc(it.albumArtist || '') + '"></div>' +
-    '<div class="form-field"><label>音轨号 / 年份</label><div style="display:flex;gap:6px;">' +
-    '<input id="ed-track" type="number" class="input tnum" placeholder="Track#" value="' + (it.trackNumber || '') + '" style="width:50%;">' +
-    '<input id="ed-year" type="number" class="input tnum" placeholder="Year" value="' + (it.year || '') + '" style="width:50%;"></div></div>' +
+    '<div class="form-field full"><label>' + esc(t('fieldTitle')) + '</label><input id="ed-title" class="input" value="' + esc(it.title) + '"></div>' +
+    '<div class="form-field"><label>' + esc(t('fieldArtist')) + '</label><input id="ed-artist" class="input" value="' + esc(artistVal) + '"></div>' +
+    '<div class="form-field"><label>' + esc(t('fieldAlbum')) + '</label><input id="ed-album" class="input" value="' + esc(albumVal) + '"></div>' +
+    '<div class="form-field"><label>' + esc(t('fieldAlbumArtist')) + '</label><input id="ed-album-artist" class="input" value="' + esc(it.albumArtist || '') + '"></div>' +
+    '<div class="form-field"><label>' + esc(t('fieldTrackYear')) + '</label><div style="display:flex;gap:6px;">' +
+    '<input id="ed-track" type="number" class="input tnum" placeholder="' + esc(t('placeholderTrackNum')) + '" value="' + (it.trackNumber || '') + '" style="width:50%;">' +
+    '<input id="ed-year" type="number" class="input tnum" placeholder="' + esc(t('placeholderYear')) + '" value="' + (it.year || '') + '" style="width:50%;"></div></div>' +
     '</div>' +
     '<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:16px;">' +
-    '<input type="checkbox" id="ed-writeback"' + (it.isRootWritable ? '' : ' disabled') + '> 同时尝试写回原文件内嵌标签（默认仅写手机高速覆盖层）</label>' +
+    '<input type="checkbox" id="ed-writeback"' + (it.isRootWritable ? '' : ' disabled') + '> ' + esc(t('writebackCheckbox')) + '</label>' +
     '<div style="display:flex;justify-content:flex-end;gap:8px;">' +
-    '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
-    '<button class="btn btn-primary" onclick="submitSingleMetadata(' + it.itemId + ')">保存更改</button></div>'
+    '<button class="btn btn-outline" onclick="closeModal()">' + esc(t('cancel')) + '</button>' +
+    '<button class="btn btn-primary" onclick="submitSingleMetadata(' + it.itemId + ')">' + esc(t('saveChanges')) + '</button></div>'
   );
   if (autoSearch) {
     searchEditModalCandidates(itemId);
@@ -1165,9 +1261,11 @@ function selectEditModalCandidate(itemId, idx) {
   if (yearEl && cand.year != null && cand.year > 0) yearEl.value = String(cand.year);
   if (hintEl) {
     const extras = [];
-    if (cand.coverUrl) extras.push('封面');
-    if (cand.syncedLrc || cand.plainLyrics) extras.push('歌词');
-    hintEl.textContent = '已填入候选' + (extras.length ? '（含' + extras.join('+') + '）' : '') + ' · 请点「保存更改」生效';
+    if (cand.coverUrl) extras.push(t('extraCover'));
+    if (cand.syncedLrc || cand.plainLyrics) extras.push(t('extraLyrics'));
+    hintEl.textContent = extras.length
+      ? t('stagedHintWithExtrasTpl', extras.join('+'))
+      : t('stagedHintPlain');
   }
   renderEditModalCandidates(itemId);
 }
@@ -1181,18 +1279,18 @@ function renderEditModalCandidates(itemId) {
     return;
   }
   box.innerHTML =
-    '<div style="font-size:12px;color:var(--muted);margin-bottom:6px;">已匹配 ' + cands.length + ' 个结果（点击填入表单，确认后点下方「保存更改」）：</div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:6px;">' + esc(t('candidatesMatchedHeaderTpl', cands.length)) + '</div>' +
     '<div style="max-height:190px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">' +
     cands.map((c, idx) => {
       const active = idx === state._stagedEditCandidateIdx;
       const borderStyle = active ? 'border:1.5px solid var(--primary);background:rgba(99,102,241,0.10);' : 'border:1px solid var(--border);';
       const score = c.confidence != null ? c.confidence : (c.confidenceScore || 0);
-      const lrcTag = c.syncedLrc ? ' · 歌词✓' : '';
-      const coverTag = c.coverUrl ? ' · 封面✓' : '';
-      const stagedPill = active ? '<span class="badge badge-ok" style="margin-left:6px;">已填入</span>' : '';
+      const lrcTag = c.syncedLrc ? t('candidateLyricsTag') : '';
+      const coverTag = c.coverUrl ? t('candidateCoverTag') : '';
+      const stagedPill = active ? '<span class="badge badge-ok" style="margin-left:6px;">' + esc(t('candidateFilledBadge')) + '</span>' : '';
       return '<div class="list-item" style="' + borderStyle + 'cursor:pointer;padding:8px 10px;" onclick="selectEditModalCandidate(' + itemId + ',' + idx + ')">' +
         '<div><div style="font-weight:600;">' + esc(c.title) + ' — ' + esc(c.artist) + stagedPill + '</div>' +
-        '<div style="font-size:12px;color:var(--muted);">专辑: ' + esc(c.album || '—') + ' · 年份: ' + (c.year || '—') + ' · ' + esc(c.source) + coverTag + lrcTag + '</div></div>' +
+        '<div style="font-size:12px;color:var(--muted);">' + esc(t('candidateMetaLineTpl', c.album || '—', c.year || '—', c.source)) + esc(coverTag + lrcTag) + '</div></div>' +
         '<span class="badge badge-ok tnum">' + score + '%</span></div>';
     }).join('') +
     '</div>';
@@ -1204,7 +1302,7 @@ async function searchEditModalCandidates(itemId) {
   const qTitle = (document.getElementById('ed-title') && document.getElementById('ed-title').value.trim()) || '';
   const qArtist = (document.getElementById('ed-artist') && document.getElementById('ed-artist').value.trim()) || '';
   if (btn) btn.disabled = true;
-  if (box) box.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px 0;">正在免 Key 检索 MusicBrainz / iTunes / LRCLIB…</div>';
+  if (box) box.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px 0;">' + esc(t('searchingOnlineProviders')) + '</div>';
   try {
     const qs = 'itemId=' + encodeURIComponent(itemId) +
       (qTitle ? '&queryTitle=' + encodeURIComponent(qTitle) : '') +
@@ -1213,7 +1311,7 @@ async function searchEditModalCandidates(itemId) {
     const cands = res.candidates || [];
     state._editCandidates = cands;
     if (!cands.length) {
-      if (box) box.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px 0;">未找到匹配的在线候选，可修改标题/歌手关键词后重试</div>';
+      if (box) box.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px 0;">' + esc(t('noOnlineCandidatesRetry')) + '</div>';
       return;
     }
     selectEditModalCandidate(itemId, 0);
@@ -1250,7 +1348,7 @@ async function submitSingleMetadata(itemId) {
       json: payload
     });
     closeModal();
-    showToast('元数据已保存');
+    showToast(t('toastMetadataSaved'));
     await loadAllItems();
   } catch (e) { alert(e.message); }
 }
@@ -1259,17 +1357,17 @@ function openBatchEditModal() {
   const ids = Array.from(state.selectedItemIds);
   if (!ids.length) return;
   openModal(
-    '<h3 style="margin-top:0;">批量修改 ' + ids.length + ' 首曲目元数据</h3>' +
-    '<p style="font-size:12px;color:var(--muted);">仅勾选的字段会被批量覆盖，未勾选字段保持每首曲目原值不变：</p>' +
+    '<h3 style="margin-top:0;">' + esc(t('batchEditTitleTpl', ids.length)) + '</h3>' +
+    '<p style="font-size:12px;color:var(--muted);">' + esc(t('batchEditSubtitle')) + '</p>' +
     '<div class="form-grid">' +
-    '<div class="form-field full"><label><input type="checkbox" id="b-chk-artist"> 统一修改歌手 (Artist)</label><input id="b-artist" class="input" placeholder="歌手名称"></div>' +
-    '<div class="form-field full"><label><input type="checkbox" id="b-chk-album" checked> 统一修改专辑 (Album)</label><input id="b-album" class="input" placeholder="专辑名称"></div>' +
-    '<div class="form-field"><label><input type="checkbox" id="b-chk-aa"> 专辑歌手 (Album Artist)</label><input id="b-aa" class="input" placeholder="专辑歌手"></div>' +
-    '<div class="form-field"><label><input type="checkbox" id="b-chk-year"> 发行年份 (Year)</label><input id="b-year" type="number" class="input tnum" placeholder="如 2024"></div>' +
+    '<div class="form-field full"><label><input type="checkbox" id="b-chk-artist"> ' + esc(t('batchFieldArtist')) + '</label><input id="b-artist" class="input" placeholder="' + esc(t('batchPlaceholderArtist')) + '"></div>' +
+    '<div class="form-field full"><label><input type="checkbox" id="b-chk-album" checked> ' + esc(t('batchFieldAlbum')) + '</label><input id="b-album" class="input" placeholder="' + esc(t('batchPlaceholderAlbum')) + '"></div>' +
+    '<div class="form-field"><label><input type="checkbox" id="b-chk-aa"> ' + esc(t('batchFieldAlbumArtist')) + '</label><input id="b-aa" class="input" placeholder="' + esc(t('batchPlaceholderAlbumArtist')) + '"></div>' +
+    '<div class="form-field"><label><input type="checkbox" id="b-chk-year"> ' + esc(t('batchFieldYear')) + '</label><input id="b-year" type="number" class="input tnum" placeholder="' + esc(t('batchPlaceholderYear')) + '"></div>' +
     '</div>' +
     '<div style="display:flex;justify-content:flex-end;gap:8px;">' +
-    '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
-    '<button class="btn btn-primary" onclick="submitBatchMetadata()">批量应用</button></div>'
+    '<button class="btn btn-outline" onclick="closeModal()">' + esc(t('cancel')) + '</button>' +
+    '<button class="btn btn-primary" onclick="submitBatchMetadata()">' + esc(t('batchApplyBtn')) + '</button></div>'
   );
 }
 
@@ -1284,27 +1382,27 @@ async function submitBatchMetadata() {
     payload.year = y ? parseInt(y, 10) : null;
     anyField = true;
   }
-  if (!anyField) { alert('请至少勾选一个要批量修改的字段'); return; }
+  if (!anyField) { alert(t('alertSelectAtLeastOneField')); return; }
   try {
     const res = await api('/api/metadata/batch-update', { method: 'POST', json: payload });
     closeModal();
-    showToast('已批量更新 ' + res.updatedCount + ' 首曲目');
+    showToast(t('toastBatchUpdatedTpl', res.updatedCount));
     await loadAllItems();
   } catch (e) { alert(e.message); }
 }
 
 async function resetSelectedMetadata() {
   const ids = Array.from(state.selectedItemIds);
-  if (!ids.length || !confirm('确认恢复所选 ' + ids.length + ' 首曲目的原始标签？')) return;
+  if (!ids.length || !confirm(t('confirmResetMetadataTpl', ids.length))) return;
   try {
     await api('/api/metadata/reset', { method: 'POST', json: { itemIds: ids } });
-    showToast('已恢复原始标签');
+    showToast(t('toastMetadataReset'));
     await loadAllItems();
   } catch (e) { alert(e.message); }
 }
 
 async function autoMatchSingle(itemId, previewOnly) {
-  showToast('正在免 Key 检索 MusicBrainz / iTunes / LRCLIB…');
+  showToast(t('searchingOnlineProviders'));
   try {
     const res = await api('/api/metadata/auto-match?itemId=' + encodeURIComponent(itemId), {
       method: 'POST',
@@ -1312,28 +1410,29 @@ async function autoMatchSingle(itemId, previewOnly) {
     });
     if (!previewOnly) {
       if (res.applied) {
-        showToast('已自动匹配: ' + (res.selectedCandidate ? (res.selectedCandidate.artist + ' - ' + res.selectedCandidate.title) : '成功'));
+        const matched = res.selectedCandidate ? (res.selectedCandidate.artist + ' - ' + res.selectedCandidate.title) : t('autoMatchSuccessFallback');
+        showToast(t('toastAutoMatchedTpl', matched));
         await loadAllItems();
       } else {
-        showToast('未找到高置信度在线候选，请打开编辑手动搜索');
+        showToast(t('toastNoHighConfidenceCandidate'));
       }
       return;
     }
     const cands = res.candidates || [];
     if (!cands.length) {
-      alert('未检索到匹配的在线候选结果');
+      alert(t('alertNoOnlineCandidates'));
       return;
     }
     state._lastCandidates = cands;
     openModal(
-      '<h3 style="margin-top:0;">选择在线匹配候选</h3>' +
+      '<h3 style="margin-top:0;">' + esc(t('pickCandidateTitle')) + '</h3>' +
       cands.map((c, idx) =>
         '<div class="list-item" style="border:1px solid var(--border);margin-bottom:8px;" onclick="applyPickedCandidate(' + itemId + ',' + idx + ')">' +
         '<div><div style="font-weight:600;">' + esc(c.title) + ' — ' + esc(c.artist) + '</div>' +
-        '<div style="font-size:12px;color:var(--muted);">专辑: ' + esc(c.album || '—') + ' · 年份: ' + (c.year || '—') + ' · 来源: ' + esc(c.source) + '</div></div>' +
+        '<div style="font-size:12px;color:var(--muted);">' + esc(t('candidateSourceLineTpl', c.album || '—', c.year || '—', c.source)) + '</div></div>' +
         '<span class="badge badge-ok tnum">' + c.confidenceScore + '%</span></div>'
       ).join('') +
-      '<div style="text-align:right;"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div>'
+      '<div style="text-align:right;"><button class="btn btn-outline" onclick="closeModal()">' + esc(t('close')) + '</button></div>'
     );
   } catch (e) { alert(e.message); }
 }
@@ -1346,7 +1445,7 @@ async function applyPickedCandidate(itemId, idx) {
       json: { itemId: itemId, candidateIndex: idx, candidate: picked, previewOnly: false }
     });
     closeModal();
-    showToast('已应用所选在线标签');
+    showToast(t('toastAppliedOnlineTags'));
     await loadAllItems();
   } catch (e) { alert(e.message); }
 }
@@ -1358,18 +1457,18 @@ async function runBatchAutoCompleteSelected() {
 
 async function runBatchAutoCompletePreview() {
   const ids = getFilteredMetaItems().map(i => i.itemId);
-  if (!ids.length) { alert('当前筛选列表为空'); return; }
+  if (!ids.length) { alert(t('alertFilteredListEmpty')); return; }
   await executeBatchAutoComplete(ids);
 }
 
 async function executeBatchAutoComplete(itemIds) {
-  showToast('正在批量联网检索 ' + itemIds.length + ' 首曲目…');
+  showToast(t('toastBatchSearchingTpl', itemIds.length));
   try {
     const res = await api('/api/metadata/batch-auto-complete', {
       method: 'POST',
       json: { itemIds: itemIds, mode: 'auto' }
     });
-    showToast('批量联网补全完成：成功更新 ' + (res.committedCount || 0) + ' 首曲目');
+    showToast(t('toastBatchAutoCompleteDoneTpl', res.committedCount || 0));
     await loadAllItems();
   } catch (e) { alert(e.message); }
 }
@@ -1386,7 +1485,7 @@ async function loadPlaylists() {
   } else {
     state.activePlaylistId = null;
     document.getElementById('playlist-detail-pane').innerHTML =
-      '<div style="padding:36px;text-align:center;color:var(--muted);">暂无播放列表，点击左上角「+ 新建」创建普通列表或练习列表</div>';
+      '<div style="padding:36px;text-align:center;color:var(--muted);">' + esc(t('playlistPaneEmptyNone')) + '</div>';
   }
 }
 
@@ -1401,16 +1500,16 @@ function renderPlaylistsSidebar() {
   const list = state.playlists.filter(p => state.playlistFilter !== 'practice' || p.isPracticePlaylist);
   const el = document.getElementById('playlists-sidebar');
   if (!list.length) {
-    el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:12px 0;">无符合条件的播放列表</div>';
+    el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:12px 0;">' + esc(t('playlistsEmptyFiltered')) + '</div>';
     return;
   }
   el.innerHTML = list.map(p => {
     const sel = p.playlistId === state.activePlaylistId ? ' selected' : '';
-    const badge = p.isPracticePlaylist ? '<span class="badge badge-practice">练习</span>' : '';
+    const badge = p.isPracticePlaylist ? '<span class="badge badge-practice">' + esc(t('badgePracticeShort')) + '</span>' : '';
     return '<div class="list-item' + sel + '" onclick="selectPlaylist(' + p.playlistId + ')">' +
       '<div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
       esc(p.name) + ' ' + badge + '</div>' +
-      '<div style="font-size:11px;opacity:0.78;" class="tnum">' + p.itemCount + ' 首 · 书签 ' + (p.totalBookmarks || 0) + ' 段</div></div></div>';
+      '<div style="font-size:11px;opacity:0.78;" class="tnum">' + esc(t('playlistSidebarMetaTpl', p.itemCount, p.totalBookmarks || 0)) + '</div></div></div>';
   }).join('');
 }
 
@@ -1432,34 +1531,34 @@ function renderPlaylistDetail() {
   const rowsHtml = items.length ? items.map((it, idx) => {
     const speedTag = it.savedPracticeSpeed && Math.abs(it.savedPracticeSpeed - 1.0) > 0.01
       ? '<span class="badge badge-practice tnum">' + Number(it.savedPracticeSpeed).toFixed(2) + 'x</span> ' : '';
-    const bmTag = it.bookmarkCount > 0 ? '<span class="badge badge-ok tnum">书签 ' + it.bookmarkCount + ' 段</span>' : '';
+    const bmTag = it.bookmarkCount > 0 ? '<span class="badge badge-ok tnum">' + esc(t('bookmarksCountBadgeTpl', it.bookmarkCount)) + '</span>' : '';
     return '<tr class="drag-row" draggable="true" data-itemid="' + it.itemId + '" ' +
       'ondragstart="onPlDragStart(event,' + idx + ')" ondragover="event.preventDefault()" ondrop="onPlDrop(event,' + idx + ')">' +
       '<td class="tnum" style="width:44px;color:var(--muted);">' + (idx + 1) + '</td>' +
-      '<td><div style="font-weight:600;">' + (it.isVideo ? '[视频] ' : '') + esc(it.title) + '</div>' +
-      '<div style="font-size:11px;color:var(--muted);">' + esc(it.artist) + ' · ' + esc(it.displayAlbum) + '</div></td>' +
+      '<td><div style="font-weight:600;">' + (it.isVideo ? esc(t('videoTagPrefix')) : '') + esc(it.title) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);">' + esc(displayArtist(it.artist)) + ' · ' + esc(displayAlbum(it.displayAlbum)) + '</div></td>' +
       '<td>' + speedTag + bmTag + '</td>' +
       '<td class="tnum">' + fmtMs(it.durationMs, false) + '</td>' +
       '<td style="text-align:right;white-space:nowrap;">' +
       '<button class="btn btn-outline btn-xs" onclick="movePlItem(' + idx + ',-1)"' + (idx === 0 ? ' disabled' : '') + '>↑</button> ' +
       '<button class="btn btn-outline btn-xs" onclick="movePlItem(' + idx + ',1)"' + (idx === items.length - 1 ? ' disabled' : '') + '>↓</button> ' +
-      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">打点</button> ' +
-      '<button class="btn btn-danger btn-xs" onclick="removePlItem(' + s.playlistId + ',' + it.itemId + ')">移除</button></td></tr>';
-  }).join('') : '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">列表暂无曲目，点击右上角「+ 添加曲目」从曲库选歌或教学视频混排</td></tr>';
+      '<button class="btn btn-tonal btn-xs" onclick="openInStudio(' + it.itemId + ')">' + esc(t('markBtnShort')) + '</button> ' +
+      '<button class="btn btn-danger btn-xs" onclick="removePlItem(' + s.playlistId + ',' + it.itemId + ')">' + esc(t('remove')) + '</button></td></tr>';
+  }).join('') : '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted);">' + esc(t('playlistTracksEmpty')) + '</td></tr>';
 
   pane.innerHTML =
     '<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;">' +
     '<div><h2 style="margin:0;font-size:19px;">' + esc(s.name) + '</h2>' +
-    '<div style="font-size:12px;color:var(--muted);" class="tnum">' + items.length + ' 个音视频条目（支持鼠标拖拽行排序）</div></div>' +
+    '<div style="font-size:12px;color:var(--muted);" class="tnum">' + esc(t('playlistTrackCountHintTpl', items.length)) + '</div></div>' +
     '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">' +
     '<label class="badge badge-practice" style="cursor:pointer;padding:6px 12px;font-size:12px;">' +
-    '<input type="checkbox" ' + (s.isPracticePlaylist ? 'checked' : '') + ' onchange="togglePlaylistPractice(' + s.playlistId + ', this.checked)"> 练习列表（手机播放自动开启练习模式）</label>' +
-    '<button class="btn btn-primary btn-xs" onclick="openAddTracksToActivePlaylist()">+ 添加曲目</button>' +
-    '<button class="btn btn-outline btn-xs" onclick="renameActivePlaylist(' + s.playlistId + ', \'' + escJs(s.name) + '\')">重命名</button>' +
-    '<a class="btn btn-tonal btn-xs" href="/api/playlists/export?id=' + s.playlistId + '">导出 .m3u8</a>' +
-    '<button class="btn btn-danger btn-xs" onclick="deleteActivePlaylist(' + s.playlistId + ')">删除</button>' +
+    '<input type="checkbox" ' + (s.isPracticePlaylist ? 'checked' : '') + ' onchange="togglePlaylistPractice(' + s.playlistId + ', this.checked)"> ' + esc(t('playlistPracticeToggleLabel')) + '</label>' +
+    '<button class="btn btn-primary btn-xs" onclick="openAddTracksToActivePlaylist()">' + esc(t('addTracksBtn')) + '</button>' +
+    '<button class="btn btn-outline btn-xs" onclick="renameActivePlaylist(' + s.playlistId + ', \'' + escJs(s.name) + '\')">' + esc(t('rename')) + '</button>' +
+    '<a class="btn btn-tonal btn-xs" href="/api/playlists/export?id=' + s.playlistId + '">' + esc(t('exportM3uBtn')) + '</a>' +
+    '<button class="btn btn-danger btn-xs" onclick="deleteActivePlaylist(' + s.playlistId + ')">' + esc(t('delete')) + '</button>' +
     '</div></div>' +
-    '<div class="table-wrap"><table><thead><tr><th>序</th><th>曲目 / 视频</th><th>练习标记</th><th>时长</th><th style="text-align:right;">排序 / 操作</th></tr></thead>' +
+    '<div class="table-wrap"><table><thead><tr><th>' + esc(t('colOrder')) + '</th><th>' + esc(t('colTrackVideo')) + '</th><th>' + esc(t('colPracticeTags')) + '</th><th>' + esc(t('colDuration')) + '</th><th style="text-align:right;">' + esc(t('colReorderActions')) + '</th></tr></thead>' +
     '<tbody>' + rowsHtml + '</tbody></table></div>';
 }
 
@@ -1494,33 +1593,33 @@ async function reorderActivePlaylist(orderedIds) {
 
 function openCreatePlaylistModal() {
   openModal(
-    '<h3 style="margin-top:0;">+ 新建播放列表</h3>' +
-    '<div class="form-field" style="margin-bottom:12px;"><label>列表名称</label>' +
-    '<input id="new-pl-name" class="input" placeholder="例如：吉他 Solo 每日必练"></div>' +
+    '<h3 style="margin-top:0;">' + esc(t('createPlaylistTitle')) + '</h3>' +
+    '<div class="form-field" style="margin-bottom:12px;"><label>' + esc(t('playlistNameLabel')) + '</label>' +
+    '<input id="new-pl-name" class="input" placeholder="' + esc(t('playlistNamePlaceholder')) + '"></div>' +
     '<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:16px;cursor:pointer;">' +
-    '<input type="checkbox" id="new-pl-practice" checked> 设为练习列表（在手机端点击曲目自动开启练习模式）</label>' +
+    '<input type="checkbox" id="new-pl-practice" checked> ' + esc(t('newPlaylistPracticeCheckbox')) + '</label>' +
     '<div style="display:flex;justify-content:flex-end;gap:8px;">' +
-    '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
-    '<button class="btn btn-primary" onclick="submitCreatePlaylist()">创建</button></div>'
+    '<button class="btn btn-outline" onclick="closeModal()">' + esc(t('cancel')) + '</button>' +
+    '<button class="btn btn-primary" onclick="submitCreatePlaylist()">' + esc(t('create')) + '</button></div>'
   );
 }
 
 async function submitCreatePlaylist() {
   const name = document.getElementById('new-pl-name').value.trim();
   const isPractice = document.getElementById('new-pl-practice').checked;
-  if (!name) { alert('请输入播放列表名称'); return; }
+  if (!name) { alert(t('alertEnterPlaylistName')); return; }
   try {
     const res = await api('/api/playlists', { method: 'POST', json: { name: name, isPracticePlaylist: isPractice } });
     closeModal();
     state.activePlaylistId = res.playlistId;
     await loadPlaylists();
     await refreshStatus();
-    showToast('已创建列表: ' + name);
+    showToast(t('toastPlaylistCreatedTpl', name));
   } catch (e) { alert(e.message); }
 }
 
 async function renameActivePlaylist(id, oldName) {
-  const name = prompt('重命名播放列表：', oldName);
+  const name = prompt(t('promptRenamePlaylist'), oldName);
   if (!name || !name.trim() || name.trim() === oldName) return;
   try {
     await api('/api/playlists/rename', { method: 'POST', json: { playlistId: id, name: name.trim() } });
@@ -1531,19 +1630,19 @@ async function renameActivePlaylist(id, oldName) {
 async function togglePlaylistPractice(id, isPractice) {
   try {
     await api('/api/playlists/practice-mode', { method: 'POST', json: { playlistId: id, isPracticePlaylist: isPractice } });
-    showToast(isPractice ? '已设为练习列表' : '已切换为普通播放列表');
+    showToast(isPractice ? t('toastSetPracticePlaylist') : t('toastSetNormalPlaylist'));
     await loadPlaylists();
   } catch (e) { alert(e.message); }
 }
 
 async function deleteActivePlaylist(id) {
-  if (!confirm('确认删除该播放列表？（不会删除手机中的原音视频文件）')) return;
+  if (!confirm(t('confirmDeletePlaylist'))) return;
   try {
     await api('/api/playlists?id=' + encodeURIComponent(id), { method: 'DELETE' });
     state.activePlaylistId = null;
     await loadPlaylists();
     await refreshStatus();
-    showToast('已删除播放列表');
+    showToast(t('toastPlaylistDeleted'));
   } catch (e) { alert(e.message); }
 }
 
@@ -1559,16 +1658,16 @@ function openAddTracksToActivePlaylist() {
   const existing = new Set(((state.activePlaylistDetail && state.activePlaylistDetail.items) || []).map(i => i.itemId));
   const candidates = state.items.filter(i => !existing.has(i.itemId));
   openModal(
-    '<h3 style="margin-top:0;">添加曲目/视频到当前列表</h3>' +
+    '<h3 style="margin-top:0;">' + esc(t('addTracksModalTitle')) + '</h3>' +
     '<div style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:12px;padding:8px;margin-bottom:14px;">' +
     (candidates.length ? candidates.map(it =>
       '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;">' +
       '<input type="checkbox" class="pl-add-chk" value="' + it.itemId + '"> ' +
-      '<span>' + (it.isVideo ? '[视频] ' : '') + '<strong>' + esc(it.title) + '</strong> — ' + esc(it.artist) + '</span></label>'
-    ).join('') : '<div style="padding:18px;text-align:center;color:var(--muted);">所有曲库曲目均已在列表中</div>') +
+      '<span>' + (it.isVideo ? esc(t('videoTagPrefix')) : '') + '<strong>' + esc(it.title) + '</strong> — ' + esc(displayArtist(it.artist)) + '</span></label>'
+    ).join('') : '<div style="padding:18px;text-align:center;color:var(--muted);">' + esc(t('allTracksAlreadyInPlaylist')) + '</div>') +
     '</div><div style="display:flex;justify-content:flex-end;gap:8px;">' +
-    '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
-    '<button class="btn btn-primary" onclick="submitAddTracksToActivePlaylist()">添加所选</button></div>'
+    '<button class="btn btn-outline" onclick="closeModal()">' + esc(t('cancel')) + '</button>' +
+    '<button class="btn btn-primary" onclick="submitAddTracksToActivePlaylist()">' + esc(t('addSelectedBtn')) + '</button></div>'
   );
 }
 
@@ -1579,21 +1678,21 @@ async function submitAddTracksToActivePlaylist() {
     await api('/api/playlists/items/add', { method: 'POST', json: { playlistId: state.activePlaylistId, itemIds: ids } });
     closeModal();
     await loadPlaylists();
-    showToast('已添加 ' + ids.length + ' 项到列表');
+    showToast(t('toastAddedTracksTpl', ids.length));
   } catch (e) { alert(e.message); }
 }
 
 function openAddSelectedToPlaylistModal() {
   const ids = Array.from(state.selectedItemIds);
   if (!ids.length) return;
-  if (!state.playlists.length) { alert('请先在「播放列表」页新建一个播放列表'); return; }
+  if (!state.playlists.length) { alert(t('alertCreatePlaylistFirst')); return; }
   openModal(
-    '<h3 style="margin-top:0;">将 ' + ids.length + ' 首曲目加入播放/练习列表</h3>' +
+    '<h3 style="margin-top:0;">' + esc(t('batchAddPlaylistTitleTpl', ids.length)) + '</h3>' +
     '<select id="batch-pl-target" style="width:100%;margin-bottom:16px;">' +
-    state.playlists.map(p => '<option value="' + p.playlistId + '">' + (p.isPracticePlaylist ? '[练习] ' : '') + esc(p.name) + '</option>').join('') +
+    state.playlists.map(p => '<option value="' + p.playlistId + '">' + (p.isPracticePlaylist ? esc(t('practiceTagPrefix')) : '') + esc(p.name) + '</option>').join('') +
     '</select><div style="display:flex;justify-content:flex-end;gap:8px;">' +
-    '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
-    '<button class="btn btn-primary" onclick="submitBatchAddToPlaylist()">加入列表</button></div>'
+    '<button class="btn btn-outline" onclick="closeModal()">' + esc(t('cancel')) + '</button>' +
+    '<button class="btn btn-primary" onclick="submitBatchAddToPlaylist()">' + esc(t('addToListConfirmBtn')) + '</button></div>'
   );
 }
 
@@ -1604,7 +1703,7 @@ async function submitBatchAddToPlaylist() {
     await api('/api/playlists/items/add', { method: 'POST', json: { playlistId: plId, itemIds: ids } });
     closeModal();
     await loadPlaylists();
-    showToast('已加入列表');
+    showToast(t('toastAddedToPlaylist'));
   } catch (e) { alert(e.message); }
 }
 
@@ -1612,7 +1711,7 @@ async function importM3uFile(file) {
   if (!file) return;
   try {
     const content = await file.text();
-    const fallback = file.name.replace(/\.(m3u8|m3u)$/i, '') || '导入列表';
+    const fallback = file.name.replace(/\.(m3u8|m3u)$/i, '') || t('importedPlaylistFallback');
     const res = await api('/api/playlists/import', {
       method: 'POST',
       json: { name: fallback, content: content }
@@ -1620,7 +1719,7 @@ async function importM3uFile(file) {
     state.activePlaylistId = res.playlistId;
     await loadPlaylists();
     await refreshStatus();
-    showToast('成功导入「' + res.playlistName + '」: 匹配 ' + res.matchedCount + ' 首（未找到 ' + res.unmatchedCount + ' 首）');
+    showToast(t('toastImportedPlaylistTpl', res.playlistName, res.matchedCount, res.unmatchedCount));
   } catch (e) { alert(e.message); }
 }
 
@@ -1633,15 +1732,15 @@ function activeMediaEl() {
 function renderStudioTrackList() {
   document.getElementById('studio-track-count').textContent = String(state.items.length);
   const q = (document.getElementById('studio-search').value || '').trim().toLowerCase();
-  const filtered = state.items.filter(it => !q || ((it.title + ' ' + it.artist + ' ' + it.fileName).toLowerCase().includes(q)));
+  const filtered = state.items.filter(it => !q || ((it.title + ' ' + it.artist + ' ' + displayArtist(it.artist) + ' ' + it.fileName).toLowerCase().includes(q)));
   const el = document.getElementById('studio-track-list');
   el.innerHTML = filtered.map(it => {
     const sel = it.itemId === state.studioItemId ? ' selected' : '';
-    const bm = it.bookmarkCount > 0 ? ' <span class="badge badge-ok tnum">书签 ' + it.bookmarkCount + '</span>' : '';
+    const bm = it.bookmarkCount > 0 ? ' <span class="badge badge-ok tnum">' + esc(t('studioBookmarkShortBadgeTpl', it.bookmarkCount)) + '</span>' : '';
     return '<div class="list-item' + sel + '" onclick="loadStudioItem(' + it.itemId + ')">' +
       '<div style="min-width:0;"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-      (it.isVideo ? '[视频] ' : '') + esc(it.title) + bm + '</div>' +
-      '<div style="font-size:11px;opacity:0.78;">' + esc(it.artist) + ' · ' + fmtMs(it.durationMs, false) + '</div></div></div>';
+      (it.isVideo ? esc(t('videoTagPrefix')) : '') + esc(it.title) + bm + '</div>' +
+      '<div style="font-size:11px;opacity:0.78;">' + esc(displayArtist(it.artist)) + ' · ' + fmtMs(it.durationMs, false) + '</div></div></div>';
   }).join('');
 }
 
@@ -1663,7 +1762,7 @@ async function loadStudioItem(itemId) {
   document.getElementById('studio-empty').classList.add('hidden');
   document.getElementById('studio-main').classList.remove('hidden');
   document.getElementById('studio-title').textContent = it.title;
-  document.getElementById('studio-sub').textContent = it.artist + ' · ' + it.displayAlbum + ' · ' + it.fileName;
+  document.getElementById('studio-sub').textContent = displayArtist(it.artist) + ' · ' + displayAlbum(it.displayAlbum) + ' · ' + it.fileName;
 
   const token = sessionStorage.getItem('mp_lan_pin') || '';
   const streamUrl = '/api/stream?itemId=' + encodeURIComponent(itemId) + (token ? '&token=' + encodeURIComponent(token) : '');
@@ -1756,7 +1855,7 @@ function setPointB() {
 
 function toggleAbLoop() {
   if (state.pointAMs == null || state.pointBMs == null) {
-    showToast('请先用 [ 和 ] 设置 A 点与 B 点');
+    showToast(t('toastSetAbFirst'));
     return;
   }
   state.loopEnabled = !state.loopEnabled;
@@ -1805,7 +1904,7 @@ function updateTimelineOverlay() {
   document.getElementById('btn-b-label').textContent = state.pointBMs != null ? fmtMs(state.pointBMs, true) : '--:--';
 
   const loopBtn = document.getElementById('btn-loop-toggle');
-  loopBtn.textContent = state.loopEnabled ? '循环: 开启' : '循环: 挂起';
+  loopBtn.textContent = state.loopEnabled ? t('loopOn') : t('loopPaused');
   loopBtn.className = state.loopEnabled ? 'btn btn-primary' : 'btn btn-tonal';
 
   const readout = document.getElementById('studio-ab-readout');
@@ -1813,9 +1912,9 @@ function updateTimelineOverlay() {
     readout.textContent = 'A-B: ' + fmtMs(state.pointAMs, true) + ' → ' + fmtMs(state.pointBMs, true) +
       ' (' + ((state.pointBMs - state.pointAMs) / 1000).toFixed(1) + 's)';
   } else if (state.pointAMs != null) {
-    readout.textContent = '已设 A 点: ' + fmtMs(state.pointAMs, true) + '（请按 ] 设 B 点）';
+    readout.textContent = t('abPointASetTpl', fmtMs(state.pointAMs, true));
   } else {
-    readout.textContent = 'A-B 区间: 未设置';
+    readout.textContent = t('abRangeUnset');
   }
 
   const pct = dur > 0 ? Math.min(100, (curMs / dur) * 100) : 0;
@@ -1849,7 +1948,7 @@ function renderPresetLabelChips() {
 function renderStudioBookmarks() {
   const el = document.getElementById('studio-bookmarks-list');
   if (!state.studioBookmarks.length) {
-    el.innerHTML = '<div style="font-size:12px;color:var(--muted);">暂无段落书签。播放时按 [ 设起点、按 ] 设终点，选择标签点击「+ 保存段落书签」即可同步到手机！</div>';
+    el.innerHTML = '<div style="font-size:12px;color:var(--muted);">' + esc(t('bookmarksEmptyHint')) + '</div>';
     return;
   }
   el.innerHTML = state.studioBookmarks.map(b => {
@@ -1858,7 +1957,7 @@ function renderStudioBookmarks() {
       '<div onclick="activateBookmark(' + b.bookmarkId + ')" style="flex:1;">' +
       '<span class="badge badge-practice">' + esc(b.label) + '</span> ' +
       '<span class="tnum" style="font-size:12px;margin-left:6px;">' + fmtMs(b.aMs, true) + ' – ' + fmtMs(b.bMs, true) + spd + '</span></div>' +
-      '<button class="btn btn-danger btn-xs" onclick="deleteBookmarkById(' + b.bookmarkId + ')">删除</button></div>';
+      '<button class="btn btn-danger btn-xs" onclick="deleteBookmarkById(' + b.bookmarkId + ')">' + esc(t('delete')) + '</button></div>';
   }).join('');
 }
 
@@ -1877,10 +1976,10 @@ function activateBookmark(bookmarkId) {
 async function saveCurrentBookmark() {
   if (state.studioItemId == null) return;
   if (state.pointAMs == null || state.pointBMs == null) {
-    alert('请先使用 [ 和 ] 按钮（或键盘快捷键）设置循环 A 点与 B 点！');
+    alert(t('alertSetAbPointsFirst'));
     return;
   }
-  const label = (document.getElementById('bm-label-input').value || '').trim() || ('段落 ' + (state.studioBookmarks.length + 1));
+  const label = (document.getElementById('bm-label-input').value || '').trim() || t('defaultSectionNumberTpl', state.studioBookmarks.length + 1);
   const saveSpeed = document.getElementById('bm-save-speed').checked
     ? Number(document.getElementById('practice-speed-range').value) : null;
   try {
@@ -1900,7 +1999,7 @@ async function saveCurrentBookmark() {
     updateTimelineOverlay();
     await loadAllItems();
     await refreshStatus();
-    showToast('已保存段落书签: ' + label);
+    showToast(t('toastBookmarkSavedTpl', label));
   } catch (e) { alert(e.message); }
 }
 
@@ -1912,7 +2011,7 @@ async function deleteBookmarkById(bookmarkId) {
     updateTimelineOverlay();
     await loadAllItems();
     await refreshStatus();
-    showToast('已删除书签');
+    showToast(t('toastBookmarkDeleted'));
   } catch (e) { alert(e.message); }
 }
 
@@ -1966,7 +2065,7 @@ async function savePracticeStateToPhone() {
     }
     state.studioPractice = res.state;
     await loadAllItems();
-    showToast('练习参数已同步到手机数据库');
+    showToast(t('toastPracticeStateSaved'));
   } catch (e) { alert(e.message); }
 }
 

@@ -1,5 +1,6 @@
 package com.miniplayer.app.core.model
 
+import com.miniplayer.app.core.i18n.AppLanguage
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -133,6 +134,7 @@ data class AlbumSummary(
     companion object {
         const val UNKNOWN_ALBUM_KEY = "__unknown_album__"
         const val UNKNOWN_ALBUM_TITLE = "未知专辑"
+        const val VARIOUS_ARTISTS_KEY = "Various Artists"
     }
 }
 
@@ -229,7 +231,7 @@ enum class CountInMode {
 enum class StemType(val label: String) {
     VOCALS("人声"),
     GUITAR("吉他"),
-    BASS("Bass"),
+    BASS("贝斯"),
     DRUMS("鼓"),
     OTHER("其他"),
 }
@@ -720,6 +722,7 @@ data class AppSettings(
     val writeTagsToFileDefault: Boolean = false,
     val countInClickSound: Boolean = true,
     val keepScreenOnInPractice: Boolean = true,
+    val appLanguage: AppLanguage = AppLanguage.SYSTEM,
 )
 
 data class UpdateInfo(

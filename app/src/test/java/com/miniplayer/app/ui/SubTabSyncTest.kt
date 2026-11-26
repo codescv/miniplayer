@@ -1,5 +1,6 @@
 package com.miniplayer.app.ui
 
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.model.LibraryView
 import com.miniplayer.app.core.model.PlaylistFilter
 import com.miniplayer.app.core.model.PlaylistSummary
@@ -18,22 +19,44 @@ class SubTabSyncTest {
     // ---------------------------------------------------------------- tab order & clamping
 
     @Test
-    fun libraryTabs_areOrderedFoldersAlbumsArtistsVideos_withChineseLabels() {
+    fun libraryTabs_areOrderedFoldersAlbumsArtistsVideos_withLocalizedLabels() {
         assertEquals(
             listOf(LibraryView.FOLDERS, LibraryView.ALBUMS, LibraryView.ARTISTS, LibraryView.VIDEOS),
             SubTabOrder.LIBRARY,
         )
-        assertEquals(listOf("文件夹", "专辑", "歌手", "视频"), SubTabOrder.LIBRARY.map(SubTabOrder::libraryLabel))
+        assertEquals(
+            listOf("文件夹", "专辑", "歌手", "视频"),
+            SubTabOrder.LIBRARY.map { SubTabOrder.libraryLabel(it, AppStrings.ZH) },
+        )
+        assertEquals(
+            listOf("Folders", "Albums", "Artists", "Videos"),
+            SubTabOrder.LIBRARY.map { SubTabOrder.libraryLabel(it, AppStrings.EN) },
+        )
+        assertEquals(
+            listOf("フォルダ", "アルバム", "アーティスト", "動画"),
+            SubTabOrder.LIBRARY.map { SubTabOrder.libraryLabel(it, AppStrings.JA) },
+        )
         assertEquals(LibraryView.entries.toSet(), SubTabOrder.LIBRARY.toSet())
     }
 
     @Test
-    fun playlistTabs_areOrderedAllPracticeBookmarks_withChineseLabels() {
+    fun playlistTabs_areOrderedAllPracticeBookmarks_withLocalizedLabels() {
         assertEquals(
             listOf(PlaylistFilter.ALL, PlaylistFilter.PRACTICE_ONLY, PlaylistFilter.WITH_BOOKMARKS),
             SubTabOrder.PLAYLISTS,
         )
-        assertEquals(listOf("全部", "练习列表", "含段落书签"), SubTabOrder.PLAYLISTS.map(SubTabOrder::playlistLabel))
+        assertEquals(
+            listOf("全部", "练习列表", "含段落书签"),
+            SubTabOrder.PLAYLISTS.map { SubTabOrder.playlistLabel(it, AppStrings.ZH) },
+        )
+        assertEquals(
+            listOf("All", "Practice", "Bookmarks"),
+            SubTabOrder.PLAYLISTS.map { SubTabOrder.playlistLabel(it, AppStrings.EN) },
+        )
+        assertEquals(
+            listOf("すべて", "練習リスト", "ブックマーク"),
+            SubTabOrder.PLAYLISTS.map { SubTabOrder.playlistLabel(it, AppStrings.JA) },
+        )
         assertEquals(PlaylistFilter.entries.toSet(), SubTabOrder.PLAYLISTS.toSet())
     }
 
@@ -534,8 +557,12 @@ class SubTabSyncTest {
 
     @Test
     fun playlistEmptyTitles_andFabRules() {
-        assertEquals("暂无自建播放列表", playlistPageEmptyTitle(PlaylistFilter.ALL))
-        assertEquals("暂无练习列表", playlistPageEmptyTitle(PlaylistFilter.PRACTICE_ONLY))
+        assertEquals("暂无自建播放列表", playlistPageEmptyTitle(PlaylistFilter.ALL, AppStrings.ZH))
+        assertEquals("暂无练习列表", playlistPageEmptyTitle(PlaylistFilter.PRACTICE_ONLY, AppStrings.ZH))
+        assertEquals("No playlists yet", playlistPageEmptyTitle(PlaylistFilter.ALL, AppStrings.EN))
+        assertEquals("No practice playlists yet", playlistPageEmptyTitle(PlaylistFilter.PRACTICE_ONLY, AppStrings.EN))
+        assertEquals("プレイリストはまだありません", playlistPageEmptyTitle(PlaylistFilter.ALL, AppStrings.JA))
+        assertEquals("練習プレイリストはまだありません", playlistPageEmptyTitle(PlaylistFilter.PRACTICE_ONLY, AppStrings.JA))
         assertTrue(playlistFabVisible(PlaylistFilter.ALL))
         assertTrue(playlistFabVisible(PlaylistFilter.PRACTICE_ONLY))
         assertFalse(playlistFabVisible(PlaylistFilter.WITH_BOOKMARKS))

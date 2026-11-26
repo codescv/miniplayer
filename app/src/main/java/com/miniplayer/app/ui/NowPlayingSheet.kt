@@ -52,6 +52,7 @@ fun NowPlayingSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     val snapshot by viewModel.playbackSnapshot.collectAsState()
     val item = snapshot.currentItem ?: run {
         onDismiss()
@@ -323,7 +324,7 @@ fun NowPlayingSheet(
                                 )
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    text = "${item.artist} · ${item.displayAlbum}",
+                                    text = "${s.displayArtist(item.artist)} · ${s.displayAlbum(item.album)}",
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -333,7 +334,7 @@ fun NowPlayingSheet(
 
                             Spacer(Modifier.height(10.dp))
 
-                            // Casual Action Row: icon-only Practice Mode · centered `"词"` · icon-only Add to Playlist
+                            // Casual Action Row: icon-only Practice Mode · centered lyrics · icon-only Add to Playlist
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -358,7 +359,7 @@ fun NowPlayingSheet(
                                 ) {
                                     Icon(
                                         imageVector = GuitarIcon,
-                                        contentDescription = "练习模式",
+                                        contentDescription = s.practiceMode,
                                         modifier = Modifier.size(20.dp),
                                     )
                                 }
@@ -385,13 +386,14 @@ fun NowPlayingSheet(
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             Text(
-                                                text = "词",
+                                                text = s.lyricsButtonShort,
                                                 style = MaterialTheme.typography.labelLarge.copy(
                                                     lineHeight = MaterialTheme.typography.labelLarge.fontSize,
                                                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                                                 ),
                                                 fontWeight = FontWeight.SemiBold,
                                                 textAlign = TextAlign.Center,
+                                                maxLines = 1,
                                             )
                                         }
                                     }
@@ -407,7 +409,7 @@ fun NowPlayingSheet(
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
-                                        contentDescription = "加入播放列表",
+                                        contentDescription = s.addToPlaylistDesc,
                                         modifier = Modifier.size(20.dp),
                                     )
                                 }
@@ -460,7 +462,7 @@ fun NowPlayingSheet(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Outlined.Shuffle,
-                                        contentDescription = if (snapshot.shuffleEnabled) "随机播放：已开启" else "随机播放：已关闭",
+                                        contentDescription = if (snapshot.shuffleEnabled) s.shuffleOnDesc else s.shuffleOffDesc,
                                         tint = if (snapshot.shuffleEnabled) {
                                             MaterialTheme.colorScheme.primary
                                         } else {
@@ -474,7 +476,7 @@ fun NowPlayingSheet(
                                 ) {
                                     Icon(
                                         Icons.Outlined.SkipPrevious,
-                                        contentDescription = "上一首",
+                                        contentDescription = s.previousTrack,
                                         modifier = Modifier.size(30.dp),
                                     )
                                 }
@@ -485,7 +487,7 @@ fun NowPlayingSheet(
                                     val showPause = snapshot.isPlaying || countInProgress != null
                                     Icon(
                                         imageVector = if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                        contentDescription = if (showPause) "暂停" else "播放",
+                                        contentDescription = if (showPause) s.pause else s.play,
                                         modifier = Modifier.size(34.dp),
                                     )
                                 }
@@ -495,7 +497,7 @@ fun NowPlayingSheet(
                                 ) {
                                     Icon(
                                         Icons.Outlined.SkipNext,
-                                        contentDescription = "下一首",
+                                        contentDescription = s.nextTrack,
                                         modifier = Modifier.size(30.dp),
                                     )
                                 }
@@ -511,9 +513,9 @@ fun NowPlayingSheet(
                                     Icon(
                                         imageVector = repeatIcon,
                                         contentDescription = when (snapshot.repeatMode) {
-                                            CasualRepeatMode.REPEAT_ALL -> "列表循环"
-                                            CasualRepeatMode.REPEAT_ONE -> "单曲循环"
-                                            CasualRepeatMode.PLAY_ONCE -> "顺序播完即停"
+                                            CasualRepeatMode.REPEAT_ALL -> s.repeatAllDesc
+                                            CasualRepeatMode.REPEAT_ONE -> s.repeatOneDesc
+                                            CasualRepeatMode.PLAY_ONCE -> s.playOnceDesc
                                         },
                                         tint = if (repeatActive) {
                                             MaterialTheme.colorScheme.primary
@@ -525,7 +527,7 @@ fun NowPlayingSheet(
                             }
                         }
                     } else {
-                        // === LAYER 2: PRACTICE MODE (`练习工作台`, §4.3A Right & §5.2) ===
+                        // === LAYER 2: PRACTICE MODE (§4.3A Right & §5.2) ===
                         Column(
                             modifier = Modifier
                                 .weight(1f)
@@ -546,7 +548,7 @@ fun NowPlayingSheet(
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                                 Text(
-                                    text = "${item.title} · ${item.artist}",
+                                    text = "${item.title} · ${s.displayArtist(item.artist)}",
                                     style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -574,7 +576,7 @@ fun NowPlayingSheet(
                                             overflow = TextOverflow.Ellipsis,
                                         )
                                         Text(
-                                            text = "${item.artist} · ${item.displayAlbum}",
+                                            text = "${s.displayArtist(item.artist)} · ${s.displayAlbum(item.album)}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
@@ -582,7 +584,7 @@ fun NowPlayingSheet(
                                         )
                                     }
                                     if (completedLoops > 0) {
-                                        PracticeBadgePill("已练 $completedLoops 遍")
+                                        PracticeBadgePill(s.fmt(s.completedLoopsBadgeTpl, completedLoops))
                                     }
                                 }
 
@@ -690,7 +692,7 @@ fun NowPlayingSheet(
                                 ) {
                                     Icon(
                                         Icons.Outlined.SkipPrevious,
-                                        contentDescription = if (loopActive) "单击回到 A 点重练，双击跳回曲首" else "上一首",
+                                        contentDescription = if (loopActive) s.prevOrRestartADesc else s.previousTrack,
                                         modifier = Modifier.size(28.dp),
                                     )
                                 }
@@ -698,7 +700,7 @@ fun NowPlayingSheet(
                                     onClick = { playerController.seekByDelta(-5_000L) },
                                     modifier = Modifier.size(52.dp),
                                 ) {
-                                    Icon(Icons.Outlined.Replay5, contentDescription = "快退 5 秒", modifier = Modifier.size(28.dp))
+                                    Icon(Icons.Outlined.Replay5, contentDescription = s.rewind5sDesc, modifier = Modifier.size(28.dp))
                                 }
                                 FilledIconButton(
                                     onClick = { playerController.togglePlayPause() },
@@ -707,7 +709,7 @@ fun NowPlayingSheet(
                                     val showPause = snapshot.isPlaying || countInProgress != null
                                     Icon(
                                         imageVector = if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                        contentDescription = if (showPause) "暂停" else "播放",
+                                        contentDescription = if (showPause) s.pause else s.play,
                                         modifier = Modifier.size(32.dp),
                                     )
                                 }
@@ -715,13 +717,13 @@ fun NowPlayingSheet(
                                     onClick = { playerController.seekByDelta(5_000L) },
                                     modifier = Modifier.size(52.dp),
                                 ) {
-                                    Icon(Icons.Outlined.Forward5, contentDescription = "快进 5 秒", modifier = Modifier.size(28.dp))
+                                    Icon(Icons.Outlined.Forward5, contentDescription = s.forward5sDesc, modifier = Modifier.size(28.dp))
                                 }
                                 IconButton(
                                     onClick = { playerController.skipToNext() },
                                     modifier = Modifier.size(52.dp),
                                 ) {
-                                    Icon(Icons.Outlined.SkipNext, contentDescription = "下一首", modifier = Modifier.size(28.dp))
+                                    Icon(Icons.Outlined.SkipNext, contentDescription = s.nextTrack, modifier = Modifier.size(28.dp))
                                 }
                             }
                         }
@@ -764,26 +766,26 @@ fun NowPlayingSheet(
         if (showFileDetailsDialog) {
             AlertDialog(
                 onDismissRequest = { showFileDetailsDialog = false },
-                title = { Text("媒体文件详情") },
+                title = { Text(s.fileDetailsTitle) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("文件名：${item.fileName}", style = MaterialTheme.typography.bodyMedium)
-                        Text("相对路径：${item.parentRelPath.ifEmpty { "/" }}", style = MaterialTheme.typography.bodyMedium)
-                        Text("格式：${item.mimeType}", style = MaterialTheme.typography.bodyMedium)
+                        Text(s.fmt(s.fileDetailNameTpl, item.fileName), style = MaterialTheme.typography.bodyMedium)
+                        Text(s.fmt(s.fileDetailPathTpl, item.parentRelPath.ifEmpty { "/" }), style = MaterialTheme.typography.bodyMedium)
+                        Text(s.fmt(s.fileDetailFormatTpl, item.mimeType), style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "大小：${MiniPlayerViewModel.formatByteSize(item.sizeBytes)}",
+                            text = s.fmt(s.fileDetailSizeTpl, MiniPlayerViewModel.formatByteSize(item.sizeBytes)),
                             style = MaterialTheme.typography.bodyMedium.tnum(),
                         )
                         if (item.isVideo && item.width > 0 && item.height > 0) {
                             Text(
-                                text = "视频分辨率：${item.width} × ${item.height}",
+                                text = s.fmt(s.fileDetailResolutionTpl, item.width, item.height),
                                 style = MaterialTheme.typography.bodyMedium.tnum(),
                             )
                         }
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { showFileDetailsDialog = false }) { Text("关闭") }
+                    TextButton(onClick = { showFileDetailsDialog = false }) { Text(s.close) }
                 },
             )
         }
@@ -807,6 +809,7 @@ private fun NowPlayingTopBar(
     onShowFileDetails: () -> Unit,
     onSetVideoSeekMode: (VideoSeekMode) -> Unit,
 ) {
+    val s = LocalAppStrings.current
     var menuOpen by remember { mutableStateOf(false) }
 
     Row(
@@ -814,7 +817,7 @@ private fun NowPlayingTopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onCollapse, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "收起播放面板", modifier = Modifier.size(28.dp))
+            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = s.collapsePlayerDesc, modifier = Modifier.size(28.dp))
         }
 
         Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -837,7 +840,7 @@ private fun NowPlayingTopBar(
                             modifier = Modifier.size(16.dp),
                         )
                         Text(
-                            text = "练习模式",
+                            text = s.practiceMode,
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                         )
@@ -845,7 +848,7 @@ private fun NowPlayingTopBar(
                 }
             } else {
                 Text(
-                    text = "正在播放",
+                    text = s.nowPlayingTitle,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -854,29 +857,29 @@ private fun NowPlayingTopBar(
 
         if (item.isVideo) {
             IconButton(onClick = onEnterLandscapeVideo, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.Fullscreen, contentDescription = "横屏全屏播放")
+                Icon(Icons.Outlined.Fullscreen, contentDescription = s.enterLandscapeVideoDesc)
             }
         } else if (!practiceModeActive) {
             IconButton(onClick = onOpenSleepTimer, modifier = Modifier.size(48.dp)) {
                 Icon(
                     Icons.Outlined.Bedtime,
-                    contentDescription = "睡眠定时",
+                    contentDescription = s.sleepTimer,
                     tint = if (sleepTimerActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 )
             }
         }
 
         IconButton(onClick = onOpenQueue, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.AutoMirrored.Outlined.QueueMusic, contentDescription = "当前播放队列")
+            Icon(Icons.AutoMirrored.Outlined.QueueMusic, contentDescription = s.currentQueueDesc)
         }
 
         Box {
             IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.MoreVert, contentDescription = "更多选项")
+                Icon(Icons.Outlined.MoreVert, contentDescription = s.moreOptions)
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
-                    text = { Text("编辑标签信息") },
+                    text = { Text(s.editTrackTags) },
                     leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                     onClick = {
                         menuOpen = false
@@ -884,7 +887,7 @@ private fun NowPlayingTopBar(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("加入播放列表 / 练习列表") },
+                    text = { Text(s.addToPlaylistOrPractice) },
                     leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null) },
                     onClick = {
                         menuOpen = false
@@ -892,7 +895,7 @@ private fun NowPlayingTopBar(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("睡眠定时") },
+                    text = { Text(s.sleepTimer) },
                     leadingIcon = { Icon(Icons.Outlined.Bedtime, contentDescription = null) },
                     onClick = {
                         menuOpen = false
@@ -904,8 +907,8 @@ private fun NowPlayingTopBar(
                     val autoSelected = practiceState.videoSeekMode == VideoSeekMode.AUTO
                     DropdownMenuItem(
                         text = {
-                            val sub = if (usingFastVideoSeek) "（已启用关键帧极速防卡顿）" else ""
-                            Text((if (autoSelected) "✓ " else "") + "视频循环寻帧：自动极速$sub")
+                            val sub = if (usingFastVideoSeek) s.fastSeekActiveSuffix else ""
+                            Text((if (autoSelected) "✓ " else "") + s.fmt(s.videoSeekAutoTpl, sub))
                         },
                         onClick = {
                             menuOpen = false
@@ -914,7 +917,7 @@ private fun NowPlayingTopBar(
                     )
                     DropdownMenuItem(
                         text = {
-                            Text((if (!autoSelected) "✓ " else "") + "视频循环寻帧：强制精准帧")
+                            Text((if (!autoSelected) "✓ " else "") + s.videoSeekExact)
                         },
                         onClick = {
                             menuOpen = false
@@ -924,7 +927,7 @@ private fun NowPlayingTopBar(
                 }
                 HorizontalDivider()
                 DropdownMenuItem(
-                    text = { Text("文件详情") },
+                    text = { Text(s.fileDetails) },
                     leadingIcon = { Icon(Icons.Outlined.Info, contentDescription = null) },
                     onClick = {
                         menuOpen = false
@@ -945,6 +948,7 @@ private fun SyncedLyricsCanvas(
     onFetchOnline: () -> Unit,
     onTapBackground: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     val listState = rememberLazyListState()
     val lines = lyrics?.lines.orEmpty()
     val activeLineIdx = remember(lines, positionMs) {
@@ -1021,7 +1025,7 @@ private fun SyncedLyricsCanvas(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        text = "未检测到内嵌或同名 .lrc 歌词",
+                        text = s.noLyricsFound,
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1032,7 +1036,7 @@ private fun SyncedLyricsCanvas(
                     ) {
                         Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("从 LRCLIB 免 Key 获取同步歌词")
+                        Text(s.fetchLyricsLrclibBtn)
                     }
                 }
             }
@@ -1047,6 +1051,7 @@ private fun QueueBottomSheet(
     onSelectTrack: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -1055,7 +1060,7 @@ private fun QueueBottomSheet(
                 .padding(horizontal = 16.dp),
         ) {
             Text(
-                text = "当前播放队列 (${queue.size})",
+                text = s.fmt(s.queueHeaderTpl, queue.size),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
             )
@@ -1097,7 +1102,7 @@ private fun QueueBottomSheet(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    text = "${item.artist} · ${PracticeMath.formatTimeMs(item.durationMs)}",
+                                    text = "${s.displayArtist(item.artist)} · ${PracticeMath.formatTimeMs(item.durationMs)}",
                                     style = MaterialTheme.typography.labelMedium.tnum(),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -1119,6 +1124,7 @@ private fun SleepTimerBottomSheet(
     onSelectTrackEnd: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -1128,11 +1134,11 @@ private fun SleepTimerBottomSheet(
         ) {
             Text(
                 text = buildString {
-                    append("睡眠定时")
+                    append(s.sleepTimer)
                     if (remainingMs != null) {
-                        append(" · 剩余 ${PracticeMath.formatTimeMs(remainingMs)}")
+                        append(s.fmt(s.sleepTimerRemainingSuffixTpl, PracticeMath.formatTimeMs(remainingMs)))
                     } else if (pauseAtTrackEnd) {
-                        append(" · 播完当前曲目后暂停")
+                        append(s.sleepTimerTrackEndSuffix)
                     }
                 },
                 style = MaterialTheme.typography.titleMedium.tnum(),
@@ -1143,21 +1149,21 @@ private fun SleepTimerBottomSheet(
                     onClick = { onSelectMinutes(mins) },
                     modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("$mins 分钟后暂停", modifier = Modifier.fillMaxWidth())
+                    Text(s.fmt(s.sleepTimerMinutesTpl, mins), modifier = Modifier.fillMaxWidth())
                 }
             }
             TextButton(
                 onClick = { onSelectTrackEnd(true) },
                 modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
             ) {
-                Text("播完当前曲目后暂停", modifier = Modifier.fillMaxWidth())
+                Text(s.sleepTimerTrackEndOption, modifier = Modifier.fillMaxWidth())
             }
             if (remainingMs != null || pauseAtTrackEnd) {
                 OutlinedButton(
                     onClick = { onSelectMinutes(null) },
                     modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                 ) {
-                    Text("关闭睡眠定时")
+                    Text(s.sleepTimerOffBtn)
                 }
             }
         }

@@ -15,6 +15,9 @@ import com.miniplayer.app.core.MiniPlayerCoreProvider
 import com.miniplayer.app.core.db.MediaRepository
 import com.miniplayer.app.core.feedback.AgentFeedbackHelper
 import com.miniplayer.app.core.feedback.FeedbackDiagnostics
+import com.miniplayer.app.core.i18n.AppLanguage
+import com.miniplayer.app.core.i18n.AppLocaleHolder
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.metadata.DefaultMetadataEngine
 import com.miniplayer.app.core.metadata.SmartFilenameParser
 import com.miniplayer.app.core.model.*
@@ -391,16 +394,17 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
         viewModelScope.launch {
+            val s = AppStrings.current()
             when (val result = core.scanner.addSafRoot(uri)) {
                 is AddRootResult.Added -> {
-                    emitMessage("已添加文件夹「${result.root.displayName}」")
+                    emitMessage(s.fmt(s.msgFolderAddedTpl, result.root.displayName))
                 }
                 is AddRootResult.AlreadyCoveredByParent -> {
-                    emitMessage("该目录已包含在「${result.parentRoot.displayName}」中，已为你直接定位")
+                    emitMessage(s.fmt(s.msgFolderAlreadyCoveredTpl, result.parentRoot.displayName))
                     openFolder(result.parentRoot.rootId, result.childRelPath)
                 }
                 is AddRootResult.MergedChildRoots -> {
-                    emitMessage("已添加父目录「${result.root.displayName}」并无损归并 ${result.mergedCount} 个旧子目录")
+                    emitMessage(s.fmt(s.msgFolderMergedTpl, result.root.displayName, result.mergedCount))
                 }
                 is AddRootResult.Error -> {
                     emitMessage(result.message)
@@ -426,7 +430,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             core.scanner.rescanAllRoots(incremental = true)
             refreshActiveDrillDowns()
-            emitMessage("已完成增量刷新")
+            emitMessage(AppStrings.current().msgIncrementalRescanDone)
         }
     }
 
@@ -435,7 +439,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             core.scanner.rescanRoot(rootId, incremental = true)
             refreshActiveDrillDowns()
-            emitMessage("目录增量扫描完成")
+            emitMessage(AppStrings.current().msgRootRescanDone)
         }
     }
 
@@ -445,7 +449,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 closeFolderBrowse()
             }
             core.scanner.removeSafRoot(rootId)
-            emitMessage("已从媒体库移除该文件夹（未删除本地文件）")
+            emitMessage(AppStrings.current().msgRootRemoved)
         }
     }
 
@@ -489,7 +493,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             core.scanner.setFolderPracticeRule(rootId, relPath, folderUri, isPractice)
             refreshActiveDrillDowns()
-            emitMessage(if (isPractice) "已设为练习文件夹（点击曲目自动开启练习模式）" else "已恢复为普通文件夹")
+            val s = AppStrings.current()
+            emitMessage(if (isPractice) s.msgSetPracticeFolder else s.msgUnsetPracticeFolder)
         }
     }
 
@@ -502,7 +507,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             core.scanner.setFolderExcludeFromGroupingRule(rootId, relPath, folderUri, isExcluded)
             refreshActiveDrillDowns()
-            emitMessage(if (isExcluded) "已设为「不自动归类」（该目录下的文件不显示在专辑、歌手、视频中）" else "已取消「不自动归类」")
+            val s = AppStrings.current()
+            emitMessage(if (isExcluded) s.msgSetExcludeGrouping else s.msgUnsetExcludeGrouping)
         }
     }
 
@@ -515,7 +521,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             }
             .sortedWith { a, b -> SmartFilenameParser.naturalCompare(a.title, b.title) }
         if (folderItems.isEmpty()) {
-            emitMessage("该文件夹暂无可添加的媒体文件")
+            emitMessage(AppStrings.current().msgFolderNoMediaToAdd)
         } else {
             openAddToPlaylistPicker(folderItems)
         }
@@ -565,8 +571,13 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             if (initialItems.isNotEmpty()) {
                 core.library.addItemsToPlaylist(id, initialItems)
             }
+            val s = AppStrings.current()
             emitMessage(
-                if (isPracticePlaylist) "已创建练习列表「$trimmed」" else "已创建播放列表「$trimmed」",
+                if (isPracticePlaylist) {
+                    s.fmt(s.msgCreatedPracticePlaylistTpl, trimmed)
+                } else {
+                    s.fmt(s.msgCreatedPlaylistTpl, trimmed)
+                },
             )
         }
     }
@@ -584,7 +595,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             core.library.setPlaylistPracticeMode(playlistId, isPractice)
             refreshActiveDrillDowns()
-            emitMessage(if (isPractice) "已开启练习列表模式" else "已切换为普通播放列表")
+            val s = AppStrings.current()
+            emitMessage(if (isPractice) s.msgPlaylistPracticeEnabled else s.msgPlaylistPracticeDisabled)
         }
     }
 
@@ -594,7 +606,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 closePlaylist()
             }
             core.library.deletePlaylist(playlistId)
-            emitMessage("已删除播放列表")
+            emitMessage(AppStrings.current().msgPlaylistDeleted)
         }
     }
 
@@ -612,7 +624,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             core.library.addItemsToPlaylist(playlistId, itemIds)
             refreshActiveDrillDowns()
             _playlistPickerTargetItems.value = emptyList()
-            emitMessage("已加入 ${itemIds.size} 首曲目")
+            val s = AppStrings.current()
+            emitMessage(s.fmt(s.msgAddedTracksCountTpl, itemIds.size))
         }
     }
 
@@ -641,9 +654,14 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     fun importM3uPlaylist(uri: Uri) {
         viewModelScope.launch {
             val result = core.metadata.importPlaylistM3u8(uri)
+            val s = AppStrings.current()
             emitMessage(
-                "已导入「${result.playlistName}」：成功匹配 ${result.matchedCount} 首" +
-                    if (result.unmatchedCount > 0) "（${result.unmatchedCount} 首未在已添加文件夹中找到）" else "",
+                s.fmt(s.msgImportedPlaylistTpl, result.playlistName, result.matchedCount) +
+                    if (result.unmatchedCount > 0) {
+                        s.fmt(s.msgImportedPlaylistUnmatchedSuffixTpl, result.unmatchedCount)
+                    } else {
+                        ""
+                    },
             )
         }
     }
@@ -651,7 +669,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     fun exportM3uPlaylist(playlistId: Long, outputUri: Uri) {
         viewModelScope.launch {
             val ok = core.metadata.exportPlaylistM3u8(playlistId, outputUri)
-            emitMessage(if (ok) "已导出 .m3u8 播放列表" else "导出播放列表失败")
+            val s = AppStrings.current()
+            emitMessage(if (ok) s.msgExportedM3u8 else s.msgExportM3u8Failed)
         }
     }
 
@@ -689,23 +708,24 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         val normalized = PracticeMath.normalizeLoopPoints(aMs, bMs, playbackSnapshot.value.durationMs) ?: return
         val speedToSave = if (includeCurrentSpeed) practiceState.value.practiceSpeed else null
         viewModelScope.launch {
+            val s = AppStrings.current()
             val saved = core.library.saveBookmark(
                 itemId = current.itemId,
-                label = label.trim().ifEmpty { "段落" },
+                label = label.trim().ifEmpty { s.defaultSectionLabel },
                 aMs = normalized.first,
                 bMs = normalized.second,
                 savedSpeed = speedToSave,
                 bookmarkId = existingBookmarkId,
             )
             playerController.loopEngine.activateBookmark(saved)
-            emitMessage("已保存段落书签「${saved.label}」")
+            emitMessage(s.fmt(s.msgBookmarkSavedTpl, saved.label))
         }
     }
 
     fun deletePracticeBookmark(bookmarkId: Long) {
         viewModelScope.launch {
             core.library.deleteBookmark(bookmarkId)
-            emitMessage("已删除段落书签")
+            emitMessage(AppStrings.current().msgBookmarkDeleted)
         }
     }
 
@@ -750,7 +770,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 val lyrics = core.metadata.getLyrics(item, fetchOnlineIfMissing = true)
                 _currentLyrics.value = lyrics
                 if (lyrics == null) {
-                    emitMessage("未找到匹配的同步歌词")
+                    emitMessage(AppStrings.current().msgLyricsNotFound)
                 }
             } finally {
                 _isLoadingLyrics.value = false
@@ -788,10 +808,11 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 )
                 _onlineCandidates.value = results
                 if (results.isEmpty()) {
-                    emitMessage("未找到匹配的在线标签候选，可尝试修改关键词重试")
+                    emitMessage(AppStrings.current().msgOnlineCandidatesEmpty)
                 }
             } catch (e: Throwable) {
-                emitMessage("在线匹配请求失败：${e.message ?: "请检查网络连接"}")
+                val s = AppStrings.current()
+                emitMessage(s.fmt(s.msgOnlineSearchFailedTpl, e.message ?: s.msgCheckNetworkFallback))
             } finally {
                 _isSearchingCandidates.value = false
             }
@@ -818,11 +839,12 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             }
             closeMetadataEditor()
             refreshActiveDrillDowns()
+            val s = AppStrings.current()
             val msg = when (outcome) {
-                MetadataSaveOutcome.SAVED_DB_ONLY -> "已更新本地标签覆盖层"
-                MetadataSaveOutcome.SAVED_DB_AND_FILE -> "已更新标签并安全写入原音频文件"
-                MetadataSaveOutcome.SAVED_DB_DEFERRED_FILE -> "已立即生效，原文件标签将在切歌后静默写回"
-                MetadataSaveOutcome.SAVED_DB_READONLY_FALLBACK -> "目录为只读，已保存在本地覆盖层"
+                MetadataSaveOutcome.SAVED_DB_ONLY -> s.msgMetaSavedDbOnly
+                MetadataSaveOutcome.SAVED_DB_AND_FILE -> s.msgMetaSavedDbAndFile
+                MetadataSaveOutcome.SAVED_DB_DEFERRED_FILE -> s.msgMetaSavedDeferred
+                MetadataSaveOutcome.SAVED_DB_READONLY_FALLBACK -> s.msgMetaSavedReadonlyFallback
             }
             emitMessage(msg)
         }
@@ -848,7 +870,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             }
             closeMetadataEditor()
             refreshActiveDrillDowns()
-            emitMessage("已应用「${candidate.title} - ${candidate.artist}」标签与封面")
+            val s = AppStrings.current()
+            emitMessage(s.fmt(s.msgAppliedCandidateTpl, candidate.title, candidate.artist))
         }
     }
 
@@ -858,14 +881,14 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             core.metadata.resetMetadataOverride(items.map { it.itemId })
             closeMetadataEditor()
             refreshActiveDrillDowns()
-            emitMessage("已恢复原始文件标签")
+            emitMessage(AppStrings.current().msgResetMetadataDone)
         }
     }
 
     fun startBatchAutoCompletion(items: List<MediaItem>) {
         val audioTargets = items.filter { !it.isVideo }
         if (audioTargets.isEmpty()) {
-            emitMessage("没有可联网补全的音频曲目")
+            emitMessage(AppStrings.current().msgNoAudioForBatch)
             return
         }
         _batchProgress.value = 0 to audioTargets.size
@@ -878,7 +901,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 _batchMatchPreview.value = results
             } catch (e: Throwable) {
                 _batchMatchPreview.value = null
-                emitMessage("批量联网识别失败：${e.message ?: "网络异常"}")
+                val s = AppStrings.current()
+                emitMessage(s.fmt(s.msgBatchSearchFailedTpl, e.message ?: s.msgNetworkErrorFallback))
             } finally {
                 _batchProgress.value = null
             }
@@ -915,7 +939,8 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 )
                 _batchMatchPreview.value = null
                 refreshActiveDrillDowns()
-                emitMessage("批量补全完成，已更新 $updatedCount 首曲目")
+                val s = AppStrings.current()
+                emitMessage(s.fmt(s.msgBatchCommitDoneTpl, updatedCount))
             } finally {
                 _isCommittingBatch.value = false
             }
@@ -933,6 +958,11 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             core.library.updateSettings(transform)
         }
+    }
+
+    fun setAppLanguage(language: AppLanguage) {
+        AppLocaleHolder.setPreference(language)
+        updateAppSettings { it.copy(appLanguage = language) }
     }
 
     fun setKeepScreenOnInPractice(enabled: Boolean) {
@@ -965,7 +995,10 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             }
             val cleared = core.library.clearCaches() + extraFreed
             refreshCacheSize()
-            emitMessage("已清理本地封面与波形缓存" + if (cleared > 0) "（释放 ${formatByteSize(cleared)}）" else "")
+            val s = AppStrings.current()
+            emitMessage(
+                s.msgCacheCleared + if (cleared > 0) s.fmt(s.msgCacheClearedFreedSuffixTpl, formatByteSize(cleared)) else "",
+            )
         }
     }
 
@@ -1011,16 +1044,14 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 val info = core.updater.checkForUpdates(includePreRelease = false)
                 _updateState.value = UiUpdateState.Checked(info)
             } catch (e: Throwable) {
-                _updateState.value = UiUpdateState.Error(e.message ?: "检查更新失败，请检查网络连接")
+                _updateState.value = UiUpdateState.Error(e.message ?: AppStrings.current().msgUpdateCheckFailed)
             }
         }
     }
 
     /**
      * Downloads + verifies (SHA-256 + signing certificate) the update APK, then installs it directly
-     * without a second confirmation tap (`v1.0.16`). [onReadyToInstall] defaults to [requestInstallApk];
-     * the `UiUpdateState.ReadyToInstall` state is still published so `立即安装更新` can re-trigger
-     * installation if the user dismissed the system installer dialog.
+     * without a second confirmation tap (`v1.0.16`).
      */
     fun downloadAndVerifyUpdate(
         info: UpdateInfo,
@@ -1036,7 +1067,7 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                _updateState.value = UiUpdateState.Error(e.message ?: "下载或安全校验 APK 失败")
+                _updateState.value = UiUpdateState.Error(e.message ?: AppStrings.current().msgUpdateDownloadFailed)
                 return@launch
             }
             _updateState.value = UiUpdateState.ReadyToInstall(info, apkFile)
@@ -1055,11 +1086,12 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun performDirectInstallAction(action: DirectInstallAction, context: Context) {
+        val s = AppStrings.current()
         val intent = when (action) {
             is DirectInstallAction.None -> return
             is DirectInstallAction.LaunchInstaller -> runCatching { core.updater.buildInstallIntent(action.apkFile) }
                 .getOrElse { e ->
-                    emitMessage("无法启动安装程序：${e.message ?: e.javaClass.simpleName}")
+                    emitMessage(s.fmt(s.msgInstallLaunchFailedTpl, e.message ?: e.javaClass.simpleName))
                     return
                 }
             is DirectInstallAction.RequestInstallPermission -> buildUnknownSourcesSettingsIntent()
@@ -1072,12 +1104,12 @@ class MiniPlayerViewModel(application: Application) : AndroidViewModel(applicati
         runCatching { launchContext.startActivity(intent) }
             .onSuccess {
                 if (action is DirectInstallAction.RequestInstallPermission) {
-                    emitMessage("请允许 Play 安装未知应用，返回后将自动安装更新")
+                    emitMessage(s.msgGrantInstallPermission)
                 }
             }
             .onFailure { e ->
                 if (action is DirectInstallAction.RequestInstallPermission) directInstallCoordinator.clearPending()
-                emitMessage("无法启动安装程序：${e.message ?: e.javaClass.simpleName}")
+                emitMessage(s.fmt(s.msgInstallLaunchFailedTpl, e.message ?: e.javaClass.simpleName))
             }
     }
 

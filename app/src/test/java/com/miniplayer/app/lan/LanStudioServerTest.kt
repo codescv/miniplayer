@@ -7,6 +7,7 @@ import com.miniplayer.app.core.FolderScannerContract
 import com.miniplayer.app.core.MediaLibraryContract
 import com.miniplayer.app.core.MetadataEngineContract
 import com.miniplayer.app.core.MiniPlayerCoreProvider
+import com.miniplayer.app.core.i18n.AppLanguage
 import com.miniplayer.app.core.model.AddRootResult
 import com.miniplayer.app.core.model.AlbumSummary
 import com.miniplayer.app.core.model.AppSettings
@@ -105,21 +106,45 @@ class LanStudioServerTest {
 
     @Test
     fun getRootServesSelfContainedWebStudioSpaHtml() {
-        val resp = httpRequest("GET", "/")
-        assertEquals(200, resp.status)
-        assertTrue(resp.contentType.contains("text/html", ignoreCase = true))
-        val html = resp.bodyUtf8
-        assertTrue(html.contains("MiniPlayer · PC 局域网 Web 管理台"))
-        assertTrue(html.contains("ws-folders"))
-        assertTrue(html.contains("ws-metadata"))
-        assertTrue(html.contains("ws-playlists"))
-        assertTrue(html.contains("ws-studio"))
-        assertTrue(html.contains("/api/upload"))
-        assertTrue(html.contains("/api/stream"))
-        assertFalse("SPA must be 100% offline with zero external CDN scripts", html.contains("https://cdn."))
-        assertFalse("UI strings must strictly use 练习模式/练习列表/练习伴奏 instead of 练琴", html.contains("练琴"))
-        assertTrue("escJs must HTML-escape via esc() to prevent attribute DOM XSS", html.contains("return esc(jsEsc);"))
-        assertTrue("SPA must sync ?token= into sessionStorage on load", html.contains("syncUrlToken();"))
+        kotlinx.coroutines.runBlocking {
+            fakeCore.library.updateSettings { it.copy(appLanguage = AppLanguage.ZH) }
+        }
+        val respZh = httpRequest("GET", "/")
+        assertEquals(200, respZh.status)
+        assertTrue(respZh.contentType.contains("text/html", ignoreCase = true))
+        val htmlZh = respZh.bodyUtf8
+        assertTrue(htmlZh.contains("<html lang=\"zh-CN\">"))
+        assertTrue(htmlZh.contains("MiniPlayer · PC 局域网 Web 管理台"))
+        assertTrue(htmlZh.contains("音频预听"))
+        assertFalse(htmlZh.contains("AUDIO PREVIEW"))
+        assertTrue(htmlZh.contains("ws-folders"))
+        assertTrue(htmlZh.contains("ws-metadata"))
+        assertTrue(htmlZh.contains("ws-playlists"))
+        assertTrue(htmlZh.contains("ws-studio"))
+        assertTrue(htmlZh.contains("/api/upload"))
+        assertTrue(htmlZh.contains("/api/stream"))
+        assertFalse("SPA must be 100% offline with zero external CDN scripts", htmlZh.contains("https://cdn."))
+        assertFalse("UI strings must strictly use 练习模式/练习列表/练习伴奏 instead of 练琴", htmlZh.contains("练琴"))
+        assertTrue("escJs must HTML-escape via esc() to prevent attribute DOM XSS", htmlZh.contains("return esc(jsEsc);"))
+        assertTrue("SPA must sync ?token= into sessionStorage on load", htmlZh.contains("syncUrlToken();"))
+
+        // Switching app language immediately localizes served LAN Web Studio HTML
+        kotlinx.coroutines.runBlocking {
+            fakeCore.library.updateSettings { it.copy(appLanguage = AppLanguage.EN) }
+        }
+        val htmlEn = httpRequest("GET", "/").bodyUtf8
+        assertTrue(htmlEn.contains("<html lang=\"en\">"))
+        assertTrue(htmlEn.contains("MiniPlayer · PC LAN Web Studio"))
+        assertTrue(htmlEn.contains("AUDIO PREVIEW"))
+
+        kotlinx.coroutines.runBlocking {
+            fakeCore.library.updateSettings { it.copy(appLanguage = AppLanguage.JA) }
+        }
+        val htmlJa = httpRequest("GET", "/").bodyUtf8
+        assertTrue(htmlJa.contains("<html lang=\"ja\">"))
+        assertTrue(htmlJa.contains("MiniPlayer · PC LAN Web スタジオ"))
+        assertTrue(htmlJa.contains("オーディオ試聴"))
+        assertFalse(htmlJa.contains("AUDIO PREVIEW"))
     }
 
     @Test
@@ -236,6 +261,24 @@ class LanStudioServerTest {
             headers = mapOf("Content-Type" to "application/octet-stream"),
         )
         assertEquals(400, badExtResp.status)
+
+        // Unsupported-extension error is user-facing (drag & drop bypasses accept=), so it follows the app language
+        val expectedBadExt = mapOf(
+            AppLanguage.ZH to "不支持上传该类型的文件：.txt",
+            AppLanguage.EN to "Unsupported file type for upload: .txt",
+            AppLanguage.JA to "この種類のファイルはアップロードできません：.txt",
+        )
+        for ((lang, expected) in expectedBadExt) {
+            kotlinx.coroutines.runBlocking { fakeCore.library.updateSettings { it.copy(appLanguage = lang) } }
+            val resp = httpRequest(
+                method = "POST",
+                path = "/api/upload?rootId=1&relPath=&name=notes.txt",
+                rawBody = ByteArray(16),
+                headers = mapOf("Content-Type" to "application/octet-stream"),
+            )
+            assertEquals(400, resp.status)
+            assertEquals(expected, LanJson.parseObject(resp.bodyUtf8).str("error"))
+        }
     }
 
     @Test

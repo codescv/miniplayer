@@ -32,6 +32,7 @@ fun MiniPlayerBar(
     modifier: Modifier = Modifier,
 ) {
     val item = snapshot.currentItem ?: return
+    val strings = LocalAppStrings.current
     val progress = if (snapshot.durationMs > 0L) {
         (snapshot.positionMs.toFloat() / snapshot.durationMs.toFloat()).coerceIn(0f, 1f)
     } else {
@@ -72,7 +73,7 @@ fun MiniPlayerBar(
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "${item.title} · ${item.artist}",
+                        text = "${item.title} · ${strings.displayArtist(item.artist)}",
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
@@ -89,9 +90,9 @@ fun MiniPlayerBar(
                                 append(" · $sign${practiceState.pitchSemitones}st")
                             }
                             if (loopActive) {
-                                append(" · A-B 循环中")
+                                append(" · ${strings.abLoopActive}")
                             } else {
-                                append(" · 练习模式")
+                                append(" · ${strings.practiceMode}")
                             }
                         }
                         Text(
@@ -102,7 +103,7 @@ fun MiniPlayerBar(
                         )
                     } else {
                         Text(
-                            text = item.displayAlbum,
+                            text = strings.displayAlbum(item.album),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -118,7 +119,7 @@ fun MiniPlayerBar(
                     val showPause = snapshot.isPlaying || isCountingIn
                     Icon(
                         imageVector = if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                        contentDescription = if (showPause) "暂停" else "播放",
+                        contentDescription = if (showPause) strings.pause else strings.play,
                     )
                 }
                 IconButton(
@@ -127,7 +128,7 @@ fun MiniPlayerBar(
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.SkipNext,
-                        contentDescription = "下一首",
+                        contentDescription = strings.nextTrack,
                     )
                 }
             }

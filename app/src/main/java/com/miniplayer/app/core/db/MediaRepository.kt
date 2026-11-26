@@ -1,6 +1,8 @@
 package com.miniplayer.app.core.db
 
 import com.miniplayer.app.core.MediaLibraryContract
+import com.miniplayer.app.core.i18n.AppLocaleHolder
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.metadata.ArtistSplitter
 import com.miniplayer.app.core.metadata.SmartFilenameParser
 import com.miniplayer.app.core.model.*
@@ -338,7 +340,10 @@ class MediaRepository(
     }
 
     override suspend fun createPlaylist(name: String, isPracticePlaylist: Boolean): Long = withContext(ioDispatcher) {
-        val cleanName = name.trim().ifEmpty { if (isPracticePlaylist) "新建练习列表" else "新建播放列表" }
+        val strings = AppStrings.current()
+        val cleanName = name.trim().ifEmpty {
+            if (isPracticePlaylist) strings.defaultPracticePlaylistName else strings.defaultPlaylistName
+        }
         val id = backend.createPlaylist(cleanName, isPracticePlaylist, System.currentTimeMillis())
         refreshNow()
         id
@@ -417,7 +422,10 @@ class MediaRepository(
         val durationMs = computedFlow.value.itemsById[itemId]?.durationMs ?: 0L
         val (normA, normB) = PracticeMath.normalizeLoopPoints(aMs, bMs, durationMs)
             ?: (minOf(aMs, bMs).coerceAtLeast(0L) to (minOf(aMs, bMs).coerceAtLeast(0L) + PracticeMath.MIN_LOOP_SPAN_MS))
-        val cleanLabel = label.trim().ifEmpty { "段落 ${PracticeMath.formatTimeMs(normA)}" }
+        val strings = AppStrings.current()
+        val cleanLabel = label.trim().ifEmpty {
+            strings.fmt(strings.sectionWithTimeTpl, PracticeMath.formatTimeMs(normA))
+        }
         val cleanSpeed = savedSpeed?.let { PracticeMath.clampSpeed(it) }
         val saved = backend.upsertBookmark(
             itemId = itemId,
@@ -450,6 +458,7 @@ class MediaRepository(
     override suspend fun updateSettings(transform: (AppSettings) -> AppSettings) = withContext(ioDispatcher) {
         val updated = transform(_settings.value)
         backend.saveSettings(updated)
+        AppLocaleHolder.setPreference(updated.appLanguage)
         refreshNow()
     }
 
@@ -653,10 +662,11 @@ class MediaRepository(
             val sortedTracks = list.sortedWith(trackOrderComparator)
             sortedAlbumMap[key] = sortedTracks
             if (key == AlbumSummary.UNKNOWN_ALBUM_KEY) {
+                val strings = AppStrings.current()
                 unknownAlbumSummary = AlbumSummary(
                     albumKey = AlbumSummary.UNKNOWN_ALBUM_KEY,
                     title = AlbumSummary.UNKNOWN_ALBUM_TITLE,
-                    artist = "${sortedTracks.size} 首待整理",
+                    artist = strings.fmt(strings.unknownAlbumPendingTracksTpl, sortedTracks.size),
                     year = null,
                     coverPathOrUri = sortedTracks.firstNotNullOfOrNull { it.coverPathOrUri },
                     trackCount = sortedTracks.size,
@@ -668,7 +678,7 @@ class MediaRepository(
                 val explicitAlbArt = sortedTracks.firstNotNullOfOrNull { it.albumArtist?.trim()?.takeIf { s -> s.isNotEmpty() } }
                 val distinctTrackArtists = sortedTracks.map { it.artist }.distinct()
                 val repArtist = explicitAlbArt
-                    ?: if (distinctTrackArtists.size == 1) distinctTrackArtists[0] else "Various Artists"
+                    ?: if (distinctTrackArtists.size == 1) distinctTrackArtists[0] else AlbumSummary.VARIOUS_ARTISTS_KEY
                 val repYear = sortedTracks.mapNotNull { it.year }.maxOrNull()
                 val repCover = sortedTracks.firstNotNullOfOrNull { it.coverPathOrUri }
                 knownAlbumSummaries.add(

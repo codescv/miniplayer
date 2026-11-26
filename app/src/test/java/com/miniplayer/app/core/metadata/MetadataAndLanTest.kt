@@ -441,12 +441,20 @@ class MetadataAndLanTest {
             val baseUrl = "http://127.0.0.1:${server.boundPort}"
             val itemId = repo.allMediaItems.value.single().itemId
 
-            // 1. Check WebApp HTML has staging UI & zero forbidden terminology
-            val html = LanStudioWebApp.renderHtml()
-            assertTrue(html.contains("在线自动补全当前曲目"))
-            assertTrue(html.contains("ed-candidates-box"))
-            assertTrue(html.contains("保存更改"))
-            assertFalse(html.contains("练琴"))
+            // 1. Check WebApp HTML has staging UI & zero forbidden terminology across all 3 languages
+            val htmlZh = LanStudioWebApp.renderHtml(com.miniplayer.app.core.i18n.ResolvedLanguage.ZH)
+            assertTrue(htmlZh.contains("在线自动补全当前曲目"))
+            assertTrue(htmlZh.contains("ed-candidates-box"))
+            assertTrue(htmlZh.contains("保存更改"))
+            assertFalse(htmlZh.contains("练琴"))
+            val htmlEn = LanStudioWebApp.renderHtml(com.miniplayer.app.core.i18n.ResolvedLanguage.EN)
+            assertTrue(htmlEn.contains("Auto-Complete This Track Online"))
+            assertTrue(htmlEn.contains("ed-candidates-box"))
+            assertTrue(htmlEn.contains("Save Changes"))
+            val htmlJa = LanStudioWebApp.renderHtml(com.miniplayer.app.core.i18n.ResolvedLanguage.JA)
+            assertTrue(htmlJa.contains("この曲をオンライン自動補完"))
+            assertTrue(htmlJa.contains("ed-candidates-box"))
+            assertTrue(htmlJa.contains("変更を保存"))
 
             // 2. GET /api/metadata/candidates?itemId=... returns candidates WITHOUT modifying DB
             val getCandJson = LanJson.parseObject(httpJson(baseUrl, "GET", "/api/metadata/candidates?itemId=$itemId", null))

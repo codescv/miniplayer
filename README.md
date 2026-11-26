@@ -39,6 +39,16 @@ Minimalist, offline-first **Android Local Music & Video Player** built with **Je
 
 ---
 
+## What's New in `v1.0.18` (`versionCode = 10018`)
+
+1. **Single-Language UI in 简体中文 / English / 日本語 with Live Switching (`core/i18n/`, `ui/LocalAppStrings.kt`, `SettingsScreen.kt`)**:
+   - **New Language setting** at the top of Settings with 4 options: `跟随系统` / `System Default` / `システムに従う` (default), `中文`, `English`, `日本語`. System Default maps `zh*` → Simplified Chinese, `ja*` → Japanese, and everything else → English. The choice is persisted in `app_settings` and applies instantly without restarting the app.
+   - **No more mixed-language chrome**: every screen, sheet, dialog, snackbar, error, notification-facing string and Agent Feedback summary/diagnostic is now shown in exactly one language. Bilingual labels such as `标题 (Title)`, the English `Bass` stem label in Chinese, English-only bookmark presets, and the `Various Artists` / `未知专辑` mix are gone; stem labels, section presets and unknown album/artist placeholders are localized per language.
+   - **PC LAN Web Studio follows the app language**: the served page sets `<html lang="zh-CN|en|ja">` and localizes all HTML, JS toasts, modals, PIN and upload flows (including the unsupported-file-type error).
+   - Music metadata, `.lrc` lyrics, folder/file names and technical units (`BPM`, `st`, `ct`, `Hz`, `dB`, `HTDemucs`) are left untouched. Android `res/values{,-zh-rCN,-ja}` and `locales_config.xml` register the 3 locales with the system.
+
+---
+
 ## What's New in `v1.0.17` (`versionCode = 10017`)
 
 1. **Horizontal Swipe Navigation for Sub-Tabs on Both Library & Playlists Screens (`SubTabSync.kt`, `SwipeableSubTabs.kt`, `LibraryScreen.kt`, `PlaylistsScreen.kt`)**:
@@ -182,7 +192,7 @@ Download the latest signed APK from [**GitHub Releases**](https://github.com/cod
 
 | Asset | Description |
 |---|---|
-| `MiniPlayer-v1.0.17.apk` | Signed Android Release APK (`versionCode = 10017`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
+| `MiniPlayer-v1.0.18.apk` | Signed Android Release APK (`versionCode = 10018`, app label `Play`, `minSdk 26` / Android 8.0+, `targetSdk 35` / Android 15) |
 | `htdemucs_6s.onnx` | Meta Research `htdemucs_6s` hybrid transformer ONNX model (`105.1 MB` / `110,242,365` bytes) downloaded on-demand in-app for 5-stem offline separation (hosted on `v1.0.10` release) |
 | `SHA256SUMS.txt` | SHA-256 checksum manifest verified by the in-app auto-updater |
 

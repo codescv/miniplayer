@@ -1,5 +1,6 @@
 package com.miniplayer.app.ui
 
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.model.LibraryView
 import com.miniplayer.app.core.model.PlaylistFilter
 import com.miniplayer.app.core.model.PlaylistSummary
@@ -26,18 +27,11 @@ internal object SubTabOrder {
         PlaylistFilter.WITH_BOOKMARKS,
     )
 
-    fun libraryLabel(view: LibraryView): String = when (view) {
-        LibraryView.FOLDERS -> "文件夹"
-        LibraryView.ALBUMS -> "专辑"
-        LibraryView.ARTISTS -> "歌手"
-        LibraryView.VIDEOS -> "视频"
-    }
+    fun libraryLabel(view: LibraryView, strings: AppStrings = AppStrings.current()): String =
+        strings.libraryViewLabel(view)
 
-    fun playlistLabel(filter: PlaylistFilter): String = when (filter) {
-        PlaylistFilter.ALL -> "全部"
-        PlaylistFilter.PRACTICE_ONLY -> "练习列表"
-        PlaylistFilter.WITH_BOOKMARKS -> "含段落书签"
-    }
+    fun playlistLabel(filter: PlaylistFilter, strings: AppStrings = AppStrings.current()): String =
+        strings.playlistFilterLabel(filter)
 }
 
 /** Clamps [page] into `[0, pageCount - 1]` (returns 0 for an empty pager). */
@@ -233,9 +227,12 @@ internal fun playlistsForPage(
 }
 
 /** Empty-state title of a playlist pager page. */
-internal fun playlistPageEmptyTitle(pageFilter: PlaylistFilter): String = when (pageFilter) {
-    PlaylistFilter.PRACTICE_ONLY -> "暂无练习列表"
-    else -> "暂无自建播放列表"
+internal fun playlistPageEmptyTitle(
+    pageFilter: PlaylistFilter,
+    strings: AppStrings = AppStrings.current(),
+): String = when (pageFilter) {
+    PlaylistFilter.PRACTICE_ONLY -> strings.emptyPracticePlaylists
+    else -> strings.emptyPlaylists
 }
 
 /** Whether the `新建播放列表` FAB is shown for the active playlist tab. */

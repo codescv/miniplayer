@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.miniplayer.app.core.i18n.AppStrings
 import com.miniplayer.app.core.model.*
 import com.miniplayer.app.player.AbLoopUiState
 import com.miniplayer.app.player.CountInProgress
@@ -63,6 +64,7 @@ fun VideoPracticeSurface(
     cornerRadiusDp: Int = 18,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     var panOffset by remember { mutableStateOf(Offset.Zero) }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
 
@@ -181,7 +183,7 @@ fun VideoPracticeSurface(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(
-                        text = String.format("%.1fx · 重置", zoom),
+                        text = s.fmt(s.videoZoomResetTpl, String.format("%.1f", zoom)),
                         style = MaterialTheme.typography.labelLarge.tnum(),
                         color = Color.White,
                     )
@@ -198,7 +200,7 @@ fun VideoPracticeSurface(
                     .padding(10.dp),
             ) {
                 Text(
-                    text = "镜像中",
+                    text = s.videoMirroredBadge,
                     style = MaterialTheme.typography.labelMedium,
                     color = Color.White,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -247,6 +249,7 @@ fun LandscapeVideoPlayerView(
     onSaveQuickBookmark: (String) -> Unit,
 ) {
     val item = snapshot.currentItem ?: return
+    val s = LocalAppStrings.current
     val loopEngine = playerController.loopEngine
     var hudVisible by remember { mutableStateOf(true) }
     var lastInteractionTick by remember { mutableIntStateOf(0) }
@@ -306,7 +309,7 @@ fun LandscapeVideoPlayerView(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = Color.White)
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = s.back, tint = Color.White)
                         }
                         Text(
                             text = item.title,
@@ -337,15 +340,15 @@ fun LandscapeVideoPlayerView(
                         ) {
                             Icon(
                                 imageVector = GuitarIcon,
-                                contentDescription = "练习模式",
+                                contentDescription = s.practiceMode,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
                         IconButton(onClick = onOpenSleepTimer, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.Bedtime, contentDescription = "睡眠定时", tint = Color.White)
+                            Icon(Icons.Outlined.Bedtime, contentDescription = s.sleepTimer, tint = Color.White)
                         }
                         IconButton(onClick = onExitFullscreenOrientation, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.FullscreenExit, contentDescription = "退出全屏", tint = Color.White)
+                            Icon(Icons.Outlined.FullscreenExit, contentDescription = s.exitFullscreenDesc, tint = Color.White)
                         }
                     }
 
@@ -388,23 +391,23 @@ fun LandscapeVideoPlayerView(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             IconButton(onClick = { bumpInteraction(); playerController.skipToPreviousOrRestartA() }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.SkipPrevious, contentDescription = "上一首", tint = Color.White)
+                                Icon(Icons.Outlined.SkipPrevious, contentDescription = s.previousTrack, tint = Color.White)
                             }
                             IconButton(onClick = { bumpInteraction(); playerController.seekByDelta(-10_000L) }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.Replay10, contentDescription = "快退 10 秒", tint = Color.White)
+                                Icon(Icons.Outlined.Replay10, contentDescription = s.rewind10sDesc, tint = Color.White)
                             }
                             FilledIconButton(onClick = { bumpInteraction(); playerController.togglePlayPause() }, modifier = Modifier.size(54.dp)) {
                                 val showPause = snapshot.isPlaying || countInProgress != null
                                 Icon(
                                     if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                    contentDescription = if (showPause) "暂停" else "播放",
+                                    contentDescription = if (showPause) s.pause else s.play,
                                 )
                             }
                             IconButton(onClick = { bumpInteraction(); playerController.seekByDelta(10_000L) }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.Forward10, contentDescription = "快进 10 秒", tint = Color.White)
+                                Icon(Icons.Outlined.Forward10, contentDescription = s.forward10sDesc, tint = Color.White)
                             }
                             IconButton(onClick = { bumpInteraction(); playerController.skipToNext() }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.SkipNext, contentDescription = "下一首", tint = Color.White)
+                                Icon(Icons.Outlined.SkipNext, contentDescription = s.nextTrack, tint = Color.White)
                             }
                         }
                     }
@@ -431,7 +434,7 @@ fun LandscapeVideoPlayerView(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = Color.White)
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = s.back, tint = Color.White)
                         }
                         Text(
                             text = item.title,
@@ -443,7 +446,7 @@ fun LandscapeVideoPlayerView(
                         if (practiceState.videoZoom > 1.03f) {
                             AssistChip(
                                 onClick = { bumpInteraction(); loopEngine.setVideoZoom(1.0f, true) },
-                                label = { Text(String.format("%.1fx 重置", practiceState.videoZoom), color = Color.White) },
+                                label = { Text(s.fmt(s.videoZoomResetCompactTpl, String.format("%.1f", practiceState.videoZoom)), color = Color.White) },
                             )
                         }
                         FilledTonalIconButton(
@@ -464,7 +467,7 @@ fun LandscapeVideoPlayerView(
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.Flip,
-                                contentDescription = if (practiceState.videoMirror) "关闭视频镜像" else "开启视频镜像",
+                                contentDescription = if (practiceState.videoMirror) s.disableVideoMirrorDesc else s.enableVideoMirrorDesc,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -482,7 +485,7 @@ fun LandscapeVideoPlayerView(
                                 } else {
                                     Icons.Outlined.VerticalAlignTop
                                 },
-                                contentDescription = if (practiceState.hudDockTop) "置底避让" else "移至顶部",
+                                contentDescription = if (practiceState.hudDockTop) s.dockHudBottomDesc else s.dockHudTopDesc,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -496,12 +499,12 @@ fun LandscapeVideoPlayerView(
                         ) {
                             Icon(
                                 imageVector = GuitarIcon,
-                                contentDescription = "退出练习模式",
+                                contentDescription = s.exitPracticeModeDesc,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
                         IconButton(onClick = onExitFullscreenOrientation, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.FullscreenExit, contentDescription = "竖屏模式", tint = Color.White)
+                            Icon(Icons.Outlined.FullscreenExit, contentDescription = s.portraitModeDesc, tint = Color.White)
                         }
                     }
 
@@ -555,7 +558,7 @@ fun LandscapeVideoPlayerView(
                                         val showPause = snapshot.isPlaying || countInProgress != null
                                         Icon(
                                             if (showPause) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                            contentDescription = if (showPause) "暂停" else "播放",
+                                            contentDescription = if (showPause) s.pause else s.play,
                                         )
                                     }
                                 }
@@ -632,9 +635,9 @@ fun LandscapeVideoPlayerView(
                                     val countInActive = practiceState.countInMode != CountInMode.OFF
                                     DeckIconToggleButton(
                                         icon = Icons.Outlined.Timer,
-                                        contentDescription = if (countInActive) "预备拍：4拍（已开启）" else "预备拍：已关闭",
+                                        contentDescription = if (countInActive) s.countInOnDesc else s.countInOffDesc,
                                         highlighted = countInActive,
-                                        badgeText = if (countInActive) "4拍" else null,
+                                        badgeText = if (countInActive) s.countInBadge4 else null,
                                         onClick = { bumpInteraction(); loopEngine.cycleCountInMode() },
                                         onLongClick = { bumpInteraction(); showBpmDrawer = !showBpmDrawer },
                                         modifier = Modifier.size(44.dp),
@@ -651,7 +654,7 @@ fun LandscapeVideoPlayerView(
                                 item {
                                     DeckIconToggleButton(
                                         icon = Icons.Outlined.LightMode,
-                                        contentDescription = if (keepScreenOn) "练习常亮：已开启" else "练习常亮：已关闭",
+                                        contentDescription = if (keepScreenOn) s.keepScreenOnEnabledDesc else s.keepScreenOnDisabledDesc,
                                         highlighted = keepScreenOn,
                                         onClick = { bumpInteraction(); onToggleKeepScreenOn() },
                                         modifier = Modifier.size(44.dp),
@@ -730,7 +733,7 @@ fun LandscapeVideoPlayerView(
                         text = buildString {
                             if (activeBmLabel != null) append("$activeBmLabel · ")
                             append(String.format("%.2fx", practiceState.practiceSpeed))
-                            if (completedLoopCount > 0) append(" (第 ${completedLoopCount + 1} 遍)")
+                            if (completedLoopCount > 0) append(s.fmt(s.loopCounterCapsuleTpl, completedLoopCount + 1))
                         },
                         style = MaterialTheme.typography.labelMedium.tnum(),
                         color = Color.White,
@@ -755,6 +758,7 @@ fun CountInOverlayBadge(
     onSkip: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     Surface(
         onClick = onSkip,
         shape = RoundedCornerShape(24.dp),
@@ -776,7 +780,7 @@ fun CountInOverlayBadge(
             Column {
                 val headline = when (progress.mode) {
                     CountInMode.OFF -> ""
-                    else -> "预备拍 ${progress.currentBeat.coerceAtLeast(1)} / 4"
+                    else -> s.fmt(s.countInHeadlineTpl, progress.currentBeat.coerceAtLeast(1))
                 }
                 Text(
                     text = headline,
@@ -784,7 +788,7 @@ fun CountInOverlayBadge(
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                 )
                 Text(
-                    text = "轻触跳过立即起播",
+                    text = s.countInSkipHint,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
                 )
@@ -793,7 +797,5 @@ fun CountInOverlayBadge(
     }
 }
 
-internal fun countInLabel(mode: CountInMode): String = when (mode) {
-    CountInMode.OFF -> "关"
-    else -> "4拍"
-}
+internal fun countInLabel(mode: CountInMode, strings: AppStrings = AppStrings.current()): String =
+    strings.countInShortLabel(mode)

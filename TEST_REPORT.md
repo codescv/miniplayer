@@ -1,9 +1,10 @@
-# MiniPlayer v1.0.17 — Verification, Security Audit & Release Report
+# MiniPlayer v1.0.18 — Verification, Security Audit & Release Report
 
-**Version:** `1.0.17` (`versionCode = 10017`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
+**Version:** `1.0.18` (`versionCode = 10018`, `applicationId = "com.miniplayer.app"`, app label `Play`)  
 **Repository:** `https://github.com/codescv/miniplayer`  
-**Branch / Worktree Verified (`v1.0.17`):** `/tmp/wt-play-e785d7d6` (`vibe/e785d7d6`, stacked on `main` @ `51a4383`; **`177` unit, BeatGrid v2 DSP/Viterbi & cross-module integration tests across `19` suites**, `176` executed, `0` failures, `0` errors, `1` optional local-model E2E skipped when `/tmp/htdemucs-export/htdemucs_6s.onnx` is absent)  
-**Release APK (`v1.0.17`):** `MiniPlayer-v1.0.17.apk` (`app/build/outputs/apk/release/app-release.apk`) — **`85,337,373` bytes**, SHA-256 **`5cf207ebdb1927411465bd429679628ac6a843c2afd561167f8309bcdac89727`**  
+**Branch / Worktree Verified (`v1.0.18`):** `/tmp/wt-miniplayer-i18n` (`feat/i18n-unify`, stacked on `main` @ `1c75313`; **`184` unit & integration tests**, `183` executed, `0` failures, `0` errors, `1` optional local-model E2E skipped; debug + release variants)  
+**Release APK (`v1.0.18`):** `MiniPlayer-v1.0.18.apk` (`app/build/outputs/apk/release/app-release.apk`) — **`85,436,125` bytes**, SHA-256 **`df9f05f15dc0f2bb5673270c253ebc9c847c6dc0a70663db2f99e81460132975`**  
+**Previous Release APK (`v1.0.17`):** `MiniPlayer-v1.0.17.apk` — `85,337,373` bytes, SHA-256 `5cf207ebdb1927411465bd429679628ac6a843c2afd561167f8309bcdac89727`  
 **Previous Release APK (`v1.0.16`):** `MiniPlayer-v1.0.16.apk` — `85,320,989` bytes, SHA-256 `bcb17b5ae87671548155902df54b04000e3ea959ee33350dde8593b018b14b7e`  
 **Previous Release APK (`v1.0.15`):** `MiniPlayer-v1.0.15.apk` — `85,320,989` bytes, SHA-256 `d4c6dcaa6e2fefd989ad73d311ae647b92c30c6d2bd8262d3da53d9e3d2d60a7`  
 **Previous Release APK (`v1.0.14`):** `MiniPlayer-v1.0.14.apk` — `85,304,465` bytes, SHA-256 `4fb71d4622584674b37f1bb99891332d2940ab837fbd412a4c03e23477474018`  
@@ -17,6 +18,14 @@
 **Previous Release APK (`v1.0.7`):** `MiniPlayer-v1.0.7.apk` — `14,274,563` bytes, SHA-256 `5bd30fbac643f5741ac920380e2a6b0f9bf025902f92fa7fa6d01a594505d4f2`
 
 ---
+
+## 0000000. `v1.0.18` Single-Language UI (zh / en / ja) Verification
+
+- **Language resolution & persistence (`AppI18nTest`)**: `AppLanguage.SYSTEM` (default) resolves `zh_CN`/`zh_TW`/`zh_HK`/`zh-Hans` → Simplified Chinese, `ja`/`ja_JP` → Japanese, `en_US`/`en_GB`/`fr_FR`/`de_DE`/`ko_KR` → English; explicit `ZH`/`EN`/`JA` override the OS locale. `appLanguage` round-trips through `app_settings` across repository re-open and syncs `AppLocaleHolder` immediately (no restart).
+- **String tables**: `AppStrings` 470/470/470 and `LanWebStrings` 247/247/247 keys (compile-time parity via interfaces), 0 blank values, identical `{n}` placeholders per key, 0 CJK/Kana in English (except the `中文`/`日本語` autonyms), 0 bilingual `(Title)`/`(Artist)`/`(Album)`/`(Year)` labels, 0 `练琴`, no `AUDIO PREVIEW` in zh/ja; every JS `t('key')` in `LanStudioWebApp.kt` exists in the injected `I18N` dictionary.
+- **LAN Web Studio**: `GET /` serves `<html lang="zh-CN|en|ja">` following the live app language; unsupported upload extensions (drag & drop) return a localized 400 error in zh/en/ja; XSS (`return esc(jsEsc);`), offline (no `https://cdn.`) and `syncUrlToken()` invariants preserved.
+- **Release APK (`MiniPlayer-v1.0.18.apk`)**: `aapt2 dump badging`: `package: name='com.miniplayer.app' versionCode='10018' versionName='1.0.18' compileSdkVersion='35'`; `apksigner` signer certificate SHA-256 `a2be41f8d6d8ade3f4c4cc618259114bc1c50a98f94032ea5ac94c310628dcf5` (identical to `v1.0.5`–`v1.0.17` for seamless in-place upgrades).
+- **Gradle**: `./gradlew test assembleDebug assembleRelease` → BUILD SUCCESSFUL (`testDebugUnitTest` & `testReleaseUnitTest`: 184 tests, 0 failures, 0 errors, 1 skipped each).
 
 ## 000000. `v1.0.17` Horizontal Swipe Sub-Tab Navigation Verification
 

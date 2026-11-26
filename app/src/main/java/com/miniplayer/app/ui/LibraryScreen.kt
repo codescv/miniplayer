@@ -46,6 +46,7 @@ fun LibraryScreen(
     onAddFolderClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     val folderMode by viewModel.folderDisplayMode.collectAsState()
     val searchQuery by viewModel.librarySearchQuery.collectAsState()
     val safRoots by viewModel.safRoots.collectAsState()
@@ -143,14 +144,14 @@ fun LibraryScreen(
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
                 TopAppBar(
                     title = {
-                        Text("Play", style = MaterialTheme.typography.titleLarge)
+                        Text(s.appName, style = MaterialTheme.typography.titleLarge)
                     },
                     actions = {
                         IconButton(
                             onClick = { viewModel.setSettingsVisible(true) },
                             modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                         ) {
-                            Icon(Icons.Outlined.Settings, contentDescription = "设置")
+                            Icon(Icons.Outlined.Settings, contentDescription = s.settings)
                         }
                     },
                 )
@@ -159,7 +160,7 @@ fun LibraryScreen(
                 SubTabChipRow(
                     tabs = libraryTabs,
                     activeTab = displayedView,
-                    label = SubTabOrder::libraryLabel,
+                    label = { SubTabOrder.libraryLabel(it, s) },
                     onChipClick = subTabs::onChipClick,
                 )
 
@@ -173,7 +174,7 @@ fun LibraryScreen(
                 FloatingActionButton(
                     onClick = onAddFolderClick,
                 ) {
-                    Icon(Icons.Outlined.CreateNewFolder, contentDescription = "添加文件夹")
+                    Icon(Icons.Outlined.CreateNewFolder, contentDescription = s.addFolder)
                 }
             }
         },
@@ -361,11 +362,12 @@ private fun FoldersRootList(
     onRescanRoot: (SafRoot) -> Unit,
     onRemoveRoot: (SafRoot) -> Unit,
 ) {
+    val s = LocalAppStrings.current
     if (roots.isEmpty()) {
         EmptyLibraryPlaceholder(
-            title = "只扫描你指定的本地文件夹",
-            subtitle = "绝不申请全局存储权限，绝不把系统铃声、语音碎片混入曲库。",
-            actionLabel = "+ 添加本地文件夹",
+            title = s.emptyFoldersTitle,
+            subtitle = s.emptyFoldersSubtitle,
+            actionLabel = s.addLocalFolderCta,
             onAction = onAddFolder,
         )
         return
@@ -391,7 +393,7 @@ private fun FoldersRootList(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "已添加的文件夹 (${roots.size})",
+                    text = s.fmt(s.addedFoldersHeaderTpl, roots.size),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -406,9 +408,9 @@ private fun FoldersRootList(
                             Icons.AutoMirrored.Outlined.ViewList
                         },
                         contentDescription = if (folderMode == FolderDisplayMode.TREE) {
-                            "当前层级目录树，点击切换平铺视图"
+                            s.switchToFlatViewDesc
                         } else {
-                            "当前平铺视图，点击切换层级目录树"
+                            s.switchToTreeViewDesc
                         },
                     )
                 }
@@ -454,14 +456,14 @@ private fun FoldersRootList(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             if (root.isPracticeFolder) {
-                                PracticeBadgePill("练习")
+                                PracticeBadgePill(s.badgePractice)
                             }
                             if (root.isExcludedFromAutoGrouping) {
-                                PracticeBadgePill("不自动归类")
+                                PracticeBadgePill(s.badgeExcludeGrouping)
                             }
                             when (root.mountState) {
-                                MountState.OFFLINE_UNMOUNTED -> OfflineWarningPill("未挂载")
-                                MountState.PERMISSION_REVOKED -> OfflineWarningPill("需重新授权")
+                                MountState.OFFLINE_UNMOUNTED -> OfflineWarningPill(s.badgeOffline)
+                                MountState.PERMISSION_REVOKED -> OfflineWarningPill(s.badgePermissionRevoked)
                                 MountState.MOUNTED -> Unit
                             }
                         }
@@ -470,8 +472,8 @@ private fun FoldersRootList(
                             text = buildString {
                                 append(root.treeDocId.replace(':', ' ').trim())
                                 append(" · ")
-                                append("${root.itemCount} 个媒体")
-                                if (!root.isWritable) append(" · 只读")
+                                append(s.fmt(s.mediaCountTpl, root.itemCount))
+                                if (!root.isWritable) append(" · ${s.readOnlyTag}")
                             },
                             style = MaterialTheme.typography.bodyMedium.tnum(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -484,7 +486,7 @@ private fun FoldersRootList(
                             onClick = { menuExpanded = true },
                             modifier = Modifier.size(48.dp),
                         ) {
-                            Icon(Icons.Outlined.MoreVert, contentDescription = "文件夹菜单")
+                            Icon(Icons.Outlined.MoreVert, contentDescription = s.folderMenuDesc)
                         }
                         DropdownMenu(
                             expanded = menuExpanded,
@@ -492,7 +494,7 @@ private fun FoldersRootList(
                         ) {
                             DropdownMenuItem(
                                 text = {
-                                    Text(if (root.isPracticeFolder) "取消练习文件夹" else "设为练习文件夹")
+                                    Text(if (root.isPracticeFolder) s.unsetPracticeFolder else s.setPracticeFolder)
                                 },
                                 leadingIcon = { Icon(GuitarIcon, contentDescription = null) },
                                 onClick = {
@@ -502,7 +504,7 @@ private fun FoldersRootList(
                             )
                             DropdownMenuItem(
                                 text = {
-                                    Text(if (root.isExcludedFromAutoGrouping) "取消不自动归类" else "设为不自动归类")
+                                    Text(if (root.isExcludedFromAutoGrouping) s.unsetExcludeGrouping else s.setExcludeGrouping)
                                 },
                                 leadingIcon = { Icon(Icons.Outlined.FolderOff, contentDescription = null) },
                                 onClick = {
@@ -511,7 +513,7 @@ private fun FoldersRootList(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("全部添加到播放列表") },
+                                text = { Text(s.addAllToPlaylist) },
                                 leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
@@ -519,7 +521,7 @@ private fun FoldersRootList(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("批量自动补全标签与封面") },
+                                text = { Text(s.batchAutoMatchTagsAndCover) },
                                 leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
@@ -527,7 +529,7 @@ private fun FoldersRootList(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("批量编辑标签") },
+                                text = { Text(s.batchEditTags) },
                                 leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
@@ -535,7 +537,7 @@ private fun FoldersRootList(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("增量重新扫描") },
+                                text = { Text(s.incrementalRescan) },
                                 leadingIcon = { Icon(Icons.Outlined.Refresh, contentDescription = null) },
                                 onClick = {
                                     menuExpanded = false
@@ -545,7 +547,7 @@ private fun FoldersRootList(
                             HorizontalDivider()
                             DropdownMenuItem(
                                 text = {
-                                    Text("移除此根文件夹", color = MaterialTheme.colorScheme.error)
+                                    Text(s.removeRootFolder, color = MaterialTheme.colorScheme.error)
                                 },
                                 leadingIcon = {
                                     Icon(
@@ -567,8 +569,8 @@ private fun FoldersRootList(
             if (confirmRemove) {
                 AlertDialog(
                     onDismissRequest = { confirmRemove = false },
-                    title = { Text("移除「${root.displayName}」？") },
-                    text = { Text("仅从 MiniPlayer 媒体库索引移除，绝不会删除手机或存储盘上的任何物理文件。") },
+                    title = { Text(s.fmt(s.removeRootConfirmTitleTpl, root.displayName)) },
+                    text = { Text(s.removeRootConfirmBody) },
                     confirmButton = {
                         TextButton(
                             onClick = {
@@ -576,11 +578,11 @@ private fun FoldersRootList(
                                 onRemoveRoot(root)
                             },
                         ) {
-                            Text("移除索引", color = MaterialTheme.colorScheme.error)
+                            Text(s.removeFromIndex, color = MaterialTheme.colorScheme.error)
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { confirmRemove = false }) { Text("取消") }
+                        TextButton(onClick = { confirmRemove = false }) { Text(s.cancel) }
                     },
                 )
             }
@@ -609,6 +611,7 @@ private fun FolderBrowseView(
     onEditTrack: (MediaItem) -> Unit,
     onAddToPlaylist: (MediaItem) -> Unit,
 ) {
+    val s = LocalAppStrings.current
     val filteredSubfolders = remember(browse.subfolders, searchQuery, folderMode) {
         if (folderMode == FolderDisplayMode.FLAT) emptyList()
         else browse.subfolders
@@ -640,7 +643,7 @@ private fun FolderBrowseView(
                         onClick = onNavigateUp,
                         modifier = Modifier.size(48.dp),
                     ) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回上级目录")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = s.navigateUpDirDesc)
                     }
                     Row(
                         modifier = Modifier
@@ -672,7 +675,7 @@ private fun FolderBrowseView(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
-                            contentDescription = "全部添加到播放列表",
+                            contentDescription = s.addAllToPlaylist,
                         )
                     }
                     IconButton(
@@ -686,9 +689,9 @@ private fun FolderBrowseView(
                                 Icons.AutoMirrored.Outlined.ViewList
                             },
                             contentDescription = if (folderMode == FolderDisplayMode.TREE) {
-                                "当前层级目录树，点击切换平铺视图"
+                                s.switchToFlatViewDesc
                             } else {
-                                "当前平铺视图，点击切换层级目录树"
+                                s.switchToTreeViewDesc
                             },
                         )
                     }
@@ -712,7 +715,7 @@ private fun FolderBrowseView(
                                 modifier = Modifier.size(18.dp),
                             )
                             Text(
-                                text = "当前为练习文件夹：点播任意曲目/视频将自动展开练习工作台",
+                                text = s.practiceFolderBanner,
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                             )
@@ -736,7 +739,7 @@ private fun FolderBrowseView(
                                 modifier = Modifier.size(18.dp),
                             )
                             Text(
-                                text = "当前文件夹已开启「不自动归类」：此目录下的文件不会显示在专辑、歌手、视频中",
+                                text = s.excludedGroupingBanner,
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                             )
@@ -784,14 +787,14 @@ private fun FolderBrowseView(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             if (sub.isPracticeFolder) {
-                                PracticeBadgePill("练习")
+                                PracticeBadgePill(s.badgePractice)
                             }
                             if (sub.isExcludedFromAutoGrouping) {
-                                PracticeBadgePill("不自动归类")
+                                PracticeBadgePill(s.badgeExcludeGrouping)
                             }
                         }
                         Text(
-                            text = "${sub.itemCount} 首媒体",
+                            text = s.fmt(s.subfolderItemCountTpl, sub.itemCount),
                             style = MaterialTheme.typography.bodyMedium.tnum(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -801,7 +804,7 @@ private fun FolderBrowseView(
                             onClick = { menuOpen = true },
                             modifier = Modifier.size(48.dp),
                         ) {
-                            Icon(Icons.Outlined.MoreVert, contentDescription = "子文件夹菜单")
+                            Icon(Icons.Outlined.MoreVert, contentDescription = s.subfolderMenuDesc)
                         }
                         DropdownMenu(
                             expanded = menuOpen,
@@ -809,7 +812,7 @@ private fun FolderBrowseView(
                         ) {
                             DropdownMenuItem(
                                 text = {
-                                    Text(if (sub.isPracticeFolder) "取消练习文件夹" else "设为练习文件夹")
+                                    Text(if (sub.isPracticeFolder) s.unsetPracticeFolder else s.setPracticeFolder)
                                 },
                                 leadingIcon = { Icon(GuitarIcon, contentDescription = null) },
                                 onClick = {
@@ -819,7 +822,7 @@ private fun FolderBrowseView(
                             )
                             DropdownMenuItem(
                                 text = {
-                                    Text(if (sub.isExcludedFromAutoGrouping) "取消不自动归类" else "设为不自动归类")
+                                    Text(if (sub.isExcludedFromAutoGrouping) s.unsetExcludeGrouping else s.setExcludeGrouping)
                                 },
                                 leadingIcon = { Icon(Icons.Outlined.FolderOff, contentDescription = null) },
                                 onClick = {
@@ -828,7 +831,7 @@ private fun FolderBrowseView(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("全部添加到播放列表") },
+                                text = { Text(s.addAllToPlaylist) },
                                 leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -836,7 +839,7 @@ private fun FolderBrowseView(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("批量自动补全标签与封面") },
+                                text = { Text(s.batchAutoMatchTagsAndCover) },
                                 leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -844,7 +847,7 @@ private fun FolderBrowseView(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("批量编辑标签") },
+                                text = { Text(s.batchEditTags) },
                                 leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -876,7 +879,7 @@ private fun FolderBrowseView(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "此目录暂无匹配的本地音频或视频文件",
+                        text = s.emptyDirMessage,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -896,11 +899,12 @@ private fun AlbumsGridContent(
     onOpenAlbum: (AlbumSummary) -> Unit,
     onAddFolder: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     if (albums.isEmpty()) {
         EmptyLibraryPlaceholder(
-            title = "暂无专辑归类",
-            subtitle = "添加本地音乐文件夹后，将按 Album + AlbumArtist 自动聚合并分离「未知专辑」。",
-            actionLabel = "+ 添加本地文件夹",
+            title = s.emptyAlbumsTitle,
+            subtitle = s.emptyAlbumsSubtitle,
+            actionLabel = s.addLocalFolderCta,
             onAction = onAddFolder,
         )
         return
@@ -969,7 +973,7 @@ private fun AlbumsGridContent(
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.fillMaxSize(),
                             iconSize = 40.dp,
-                            contentDescription = album.title,
+                            contentDescription = s.displayAlbumTitle(album),
                         )
                         if (album.isUnknownAlbum) {
                             Surface(
@@ -980,7 +984,7 @@ private fun AlbumsGridContent(
                                     .padding(8.dp),
                             ) {
                                 Text(
-                                    text = "待补全",
+                                    text = s.badgePendingTag,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -990,13 +994,21 @@ private fun AlbumsGridContent(
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = if (album.isUnknownAlbum) "${album.title} (${album.trackCount} 首)" else album.title,
+                        text = if (album.isUnknownAlbum) {
+                            s.fmt(s.unknownAlbumCardTitleTpl, album.trackCount)
+                        } else {
+                            s.displayAlbumTitle(album)
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = if (album.isUnknownAlbum) "无内嵌专辑标签 · 点击批量识别" else "${album.artist} · ${album.trackCount} 首",
+                        text = if (album.isUnknownAlbum) {
+                            s.unknownAlbumCardSubtitle
+                        } else {
+                            s.fmt(s.albumCardSubtitleTpl, s.displayArtist(album.artist), album.trackCount)
+                        },
                         style = MaterialTheme.typography.bodyMedium.tnum(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -1017,11 +1029,12 @@ private fun ArtistsListContent(
     onOpenArtist: (ArtistSummary) -> Unit,
     onAddFolder: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     if (artists.isEmpty()) {
         EmptyLibraryPlaceholder(
-            title = "暂无歌手索引",
-            subtitle = "添加音乐文件夹后，将自动智能拆分合唱与多歌手标签。",
-            actionLabel = "+ 添加本地文件夹",
+            title = s.emptyArtistsTitle,
+            subtitle = s.emptyArtistsSubtitle,
+            actionLabel = s.addLocalFolderCta,
             onAction = onAddFolder,
         )
         return
@@ -1045,6 +1058,7 @@ private fun ArtistsListContent(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(sorted, key = { it.artistNorm }) { artist ->
+            val artistLabel = s.displayArtist(artist.displayName)
             Surface(
                 onClick = { onOpenArtist(artist) },
                 shape = RoundedCornerShape(16.dp),
@@ -1062,18 +1076,18 @@ private fun ArtistsListContent(
                         shape = CircleShape,
                         modifier = Modifier.size(48.dp),
                         fallbackIcon = Icons.Outlined.Person,
-                        contentDescription = artist.displayName,
+                        contentDescription = artistLabel,
                     )
                     Spacer(Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = artist.displayName,
+                            text = artistLabel,
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = "${artist.albumCount} 张专辑 · ${artist.trackCount} 首单曲",
+                            text = s.fmt(s.artistStatsTpl, artist.albumCount, artist.trackCount),
                             style = MaterialTheme.typography.bodyMedium.tnum(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1102,11 +1116,12 @@ private fun VideosListContent(
     onAddToPlaylist: (MediaItem) -> Unit,
     onAddFolder: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     if (videos.isEmpty()) {
         EmptyLibraryPlaceholder(
-            title = "暂无本地教学或音乐视频",
-            subtitle = "支持 .mp4 / .mkv / .webm / .mov，提供双指 4x 放大看指板、镜像翻转与 A-B 段落循环。",
-            actionLabel = "+ 添加视频文件夹",
+            title = s.emptyVideosTitle,
+            subtitle = s.emptyVideosSubtitle,
+            actionLabel = s.addVideoFolderCta,
             onAction = onAddFolder,
         )
         return
@@ -1206,9 +1221,9 @@ private fun VideosListContent(
                                 )
                             }
                             if (video.bookmarkCount > 0) {
-                                PracticeBadgePill("${video.bookmarkCount} 段书签")
+                                PracticeBadgePill(s.fmt(s.bookmarkCountBadgeTpl, video.bookmarkCount))
                             } else if (video.hasPracticeRecord || video.isInPracticeFolder) {
-                                PracticeBadgePill("练习记录")
+                                PracticeBadgePill(s.practiceHistoryBadge)
                             }
                         }
                         if (progressFraction > 0.01f) {
@@ -1218,7 +1233,7 @@ private fun VideosListContent(
                                 modifier = Modifier.fillMaxWidth().height(3.dp),
                             )
                             Text(
-                                text = "已看 ${PracticeMath.formatTimeMs(video.lastPositionMs)}",
+                                text = s.fmt(s.watchedProgressTpl, PracticeMath.formatTimeMs(video.lastPositionMs)),
                                 style = MaterialTheme.typography.labelMedium.tnum(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1230,14 +1245,14 @@ private fun VideosListContent(
                             onClick = { menuOpen = true },
                             modifier = Modifier.size(48.dp),
                         ) {
-                            Icon(Icons.Outlined.MoreVert, contentDescription = "视频菜单")
+                            Icon(Icons.Outlined.MoreVert, contentDescription = s.videoMenuDesc)
                         }
                         DropdownMenu(
                             expanded = menuOpen,
                             onDismissRequest = { menuOpen = false },
                         ) {
                             DropdownMenuItem(
-                                text = { Text("以练习模式打开") },
+                                text = { Text(s.openInPracticeMode) },
                                 leadingIcon = { Icon(GuitarIcon, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -1245,7 +1260,7 @@ private fun VideosListContent(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("加入播放列表 / 练习列表") },
+                                text = { Text(s.addToPlaylistOrPractice) },
                                 leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -1253,7 +1268,7 @@ private fun VideosListContent(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("编辑标签信息") },
+                                text = { Text(s.editTrackTags) },
                                 leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -1282,6 +1297,8 @@ private fun AlbumDetailContent(
     onBatchAutoMatchAlbum: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
+    val albumTitle = s.displayAlbumTitle(album)
     var menuOpen by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -1290,24 +1307,24 @@ private fun AlbumDetailContent(
             TopAppBar(
                 title = {
                     Text(
-                        text = album.title,
+                        text = albumTitle,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = s.back)
                     }
                 },
                 actions = {
                     Box {
                         IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.MoreVert, contentDescription = "专辑菜单")
+                            Icon(Icons.Outlined.MoreVert, contentDescription = s.albumMenuDesc)
                         }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
-                                text = { Text("批量自动联网补全") },
+                                text = { Text(s.batchAutoComplete) },
                                 leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -1315,7 +1332,7 @@ private fun AlbumDetailContent(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("批量编辑专辑标签") },
+                                text = { Text(s.batchEditAlbumTags) },
                                 leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
@@ -1337,7 +1354,7 @@ private fun AlbumDetailContent(
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // Prominent Auto-Match Banner for `未知专辑` (§4.1B)
+                    // Prominent Auto-Match Banner for Unknown Album (§4.1B)
                     if (album.isUnknownAlbum && tracks.isNotEmpty()) {
                         Surface(
                             onClick = onBatchAutoMatchAlbum,
@@ -1357,12 +1374,12 @@ private fun AlbumDetailContent(
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "自动联网识别全部曲目",
+                                        text = s.unknownAlbumBannerTitle,
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                                     )
                                     Text(
-                                        text = "免 Key 检索 MusicBrainz / iTunes / LRCLIB，一键补齐标题、专辑与高清封面",
+                                        text = s.unknownAlbumBannerSubtitle,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                                     )
@@ -1381,12 +1398,12 @@ private fun AlbumDetailContent(
                                 iconSize = 36.dp,
                             )
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(album.title, style = MaterialTheme.typography.titleLarge)
+                                Text(albumTitle, style = MaterialTheme.typography.titleLarge)
                                 Text(
                                     text = buildString {
-                                        append(album.artist)
+                                        append(s.displayArtist(album.artist))
                                         album.year?.let { append(" · $it") }
-                                        append(" · ${tracks.size} 首")
+                                        append(" · ${s.fmt(s.trackCountShortTpl, tracks.size)}")
                                     },
                                     style = MaterialTheme.typography.bodyMedium.tnum(),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1405,7 +1422,7 @@ private fun AlbumDetailContent(
                         ) {
                             Icon(Icons.Outlined.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("全部播放")
+                            Text(s.playAll)
                         }
                         FilledTonalButton(
                             onClick = onPracticePlayAll,
@@ -1413,7 +1430,7 @@ private fun AlbumDetailContent(
                         ) {
                             Icon(GuitarIcon, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("练习播放")
+                            Text(s.practicePlayAll)
                         }
                     }
                 }
@@ -1444,14 +1461,15 @@ private fun ArtistDetailContent(
     onAddToPlaylist: (MediaItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     Scaffold(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text(detail.artist.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text(s.displayArtist(detail.artist.displayName), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = s.back)
                     }
                 },
             )
@@ -1468,7 +1486,7 @@ private fun ArtistDetailContent(
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "参与专辑 (${detail.albums.size})",
+                            text = s.fmt(s.artistAlbumsHeaderTpl, detail.albums.size),
                             style = MaterialTheme.typography.titleMedium,
                         )
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1487,14 +1505,14 @@ private fun ArtistDetailContent(
                                         )
                                         Spacer(Modifier.height(6.dp))
                                         Text(
-                                            text = alb.title,
+                                            text = s.displayAlbumTitle(alb),
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.Medium,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
                                         Text(
-                                            text = "${alb.trackCount} 首",
+                                            text = s.fmt(s.trackCountShortTpl, alb.trackCount),
                                             style = MaterialTheme.typography.labelMedium.tnum(),
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
@@ -1508,7 +1526,7 @@ private fun ArtistDetailContent(
 
             item {
                 Text(
-                    text = "全部单曲 (${detail.tracks.size})",
+                    text = s.fmt(s.artistAllTracksHeaderTpl, detail.tracks.size),
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(top = 6.dp),
                 )
@@ -1538,6 +1556,7 @@ fun MediaTrackRow(
     onAddToPlaylist: () -> Unit,
     extraMenuContent: (@Composable ColumnScope.(() -> Unit) -> Unit)? = null,
 ) {
+    val s = LocalAppStrings.current
     var menuOpen by remember { mutableStateOf(false) }
 
     Surface(
@@ -1595,8 +1614,8 @@ fun MediaTrackRow(
                 ) {
                     Text(
                         text = buildString {
-                            if (item.isVideo) append("视频 · ")
-                            append(item.artist)
+                            if (item.isVideo) append("${s.video} · ")
+                            append(s.displayArtist(item.artist))
                             if (item.durationMs > 0L) {
                                 append(" · ")
                                 append(PracticeMath.formatTimeMs(item.durationMs))
@@ -1609,7 +1628,7 @@ fun MediaTrackRow(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     if (item.bookmarkCount > 0) {
-                        PracticeBadgePill("${item.bookmarkCount} 段")
+                        PracticeBadgePill(s.fmt(s.bookmarkCountShortTpl, item.bookmarkCount))
                     } else if (item.savedPracticeSpeed != 1.0f || item.savedSemitones != 0) {
                         PracticeBadgePill(String.format("%.2fx", item.savedPracticeSpeed).trimEnd('0').trimEnd('.'))
                     }
@@ -1621,11 +1640,11 @@ fun MediaTrackRow(
                     onClick = { menuOpen = true },
                     modifier = Modifier.size(48.dp),
                 ) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = "更多操作")
+                    Icon(Icons.Outlined.MoreVert, contentDescription = s.moreActions)
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
-                        text = { Text("加入播放列表 / 练习列表") },
+                        text = { Text(s.addToPlaylistOrPractice) },
                         leadingIcon = { Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = null) },
                         onClick = {
                             menuOpen = false
@@ -1633,7 +1652,7 @@ fun MediaTrackRow(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("编辑标签信息") },
+                        text = { Text(s.editTrackTags) },
                         leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                         onClick = {
                             menuOpen = false

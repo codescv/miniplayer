@@ -56,6 +56,7 @@ fun MetadataEditorSheet(
     onDismiss: () -> Unit,
 ) {
     if (targets.isEmpty()) return
+    val s = LocalAppStrings.current
     val isBatch = targets.size > 1
     val first = targets.first()
     val context = LocalContext.current
@@ -160,7 +161,7 @@ fun MetadataEditorSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (isBatch) "批量编辑标签 (${targets.size} 首)" else "编辑标签信息",
+                    text = if (isBatch) s.fmt(s.batchEditTagsTitleTpl, targets.size) else s.editTrackTags,
                     style = MaterialTheme.typography.titleLarge,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -187,10 +188,10 @@ fun MetadataEditorSheet(
                         enabled = !isBatch || dirtyFields.isNotEmpty(),
                         modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                     ) {
-                        Text("保存")
+                        Text(s.save)
                     }
                     IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.Close, contentDescription = "关闭")
+                        Icon(Icons.Outlined.Close, contentDescription = s.close)
                     }
                 }
             }
@@ -224,11 +225,11 @@ fun MetadataEditorSheet(
                             if (isSearchingOnline) {
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(8.dp))
-                                Text("正在检索开放曲库…")
+                                Text(s.searchingOpenLibrary)
                             } else {
                                 Icon(Icons.Outlined.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("自动联网匹配标签/封面")
+                                Text(s.autoMatchOnlineBtn)
                             }
                         }
                     }
@@ -238,7 +239,7 @@ fun MetadataEditorSheet(
                             modifier = Modifier.weight(1f).defaultMinSize(minHeight = 44.dp),
                             contentPadding = PaddingValues(horizontal = 8.dp),
                         ) {
-                            Text("从相册选图", maxLines = 1)
+                            Text(s.pickFromGallery, maxLines = 1)
                         }
                         if (targets.any { it.hasMetadataOverride }) {
                             OutlinedButton(
@@ -246,7 +247,7 @@ fun MetadataEditorSheet(
                                 modifier = Modifier.weight(1f).defaultMinSize(minHeight = 44.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp),
                             ) {
-                                Text("恢复默认", maxLines = 1)
+                                Text(s.restoreDefault, maxLines = 1)
                             }
                         }
                     }
@@ -264,7 +265,7 @@ fun MetadataEditorSheet(
                             .clickable { updatePreserveBackingSuffix(!preserveBackingSuffix) },
                     ) {
                         Text(
-                            text = "标题保留「(伴奏)」后缀，避免与原唱混淆",
+                            text = s.preserveBackingSuffixLabel,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f).padding(end = 8.dp),
                         )
@@ -276,7 +277,7 @@ fun MetadataEditorSheet(
                 }
 
                 Text(
-                    text = "已匹配 ${candidates.size} 个结果（点击填入表单，确认后点右上角保存）：",
+                    text = s.fmt(s.candidatesMatchedHintTpl, candidates.size),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -342,9 +343,9 @@ fun MetadataEditorSheet(
                     dirtyFields = dirtyFields + MetadataField.TITLE
                 },
                 enabled = !isBatch,
-                label = { Text(if (isBatch) "标题 (Title) [批量编辑时锁定]" else "标题 (Title)") },
+                label = { Text(if (isBatch) s.fieldTitleBatchLocked else s.fieldTitle) },
                 placeholder = {
-                    if (isBatch) Text("(保持各曲原值 — 批量模式不覆盖)")
+                    if (isBatch) Text(s.fieldTitleBatchPlaceholder)
                 },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -356,9 +357,9 @@ fun MetadataEditorSheet(
                     artist = it
                     dirtyFields = dirtyFields + MetadataField.ARTIST
                 },
-                label = { Text("歌手 (Artist)") },
+                label = { Text(s.fieldArtist) },
                 placeholder = {
-                    if (isBatch && mixedArtist) Text("(多项不同 — 未改动则保持原值)")
+                    if (isBatch && mixedArtist) Text(s.fieldMixedPlaceholder)
                 },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -370,9 +371,9 @@ fun MetadataEditorSheet(
                     album = it
                     dirtyFields = dirtyFields + MetadataField.ALBUM
                 },
-                label = { Text("专辑 (Album)") },
+                label = { Text(s.fieldAlbum) },
                 placeholder = {
-                    if (isBatch && mixedAlbum) Text("(多项不同 — 未改动则保持原值)")
+                    if (isBatch && mixedAlbum) Text(s.fieldMixedPlaceholder)
                 },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -384,9 +385,9 @@ fun MetadataEditorSheet(
                     albumArtist = it
                     dirtyFields = dirtyFields + MetadataField.ALBUM_ARTIST
                 },
-                label = { Text("专辑歌手 (Album Artist)") },
+                label = { Text(s.fieldAlbumArtist) },
                 placeholder = {
-                    if (isBatch && mixedAlbumArtist) Text("(多项不同 — 未改动则保持原值)")
+                    if (isBatch && mixedAlbumArtist) Text(s.fieldMixedPlaceholder)
                 },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -403,8 +404,8 @@ fun MetadataEditorSheet(
                         dirtyFields = dirtyFields + MetadataField.TRACK_NUMBER
                     },
                     enabled = !isBatch,
-                    label = { Text(if (isBatch) "音轨号 (批量锁定)" else "音轨号 (Track #)") },
-                    placeholder = { if (isBatch) Text("(保持各曲原值)") },
+                    label = { Text(if (isBatch) s.fieldTrackNumberBatchLocked else s.fieldTrackNumber) },
+                    placeholder = { if (isBatch) Text(s.fieldKeepOriginalPlaceholder) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.weight(1f),
@@ -415,8 +416,8 @@ fun MetadataEditorSheet(
                         yearText = it.filter(Char::isDigit).take(4)
                         dirtyFields = dirtyFields + MetadataField.YEAR
                     },
-                    label = { Text("年份 (Year)") },
-                    placeholder = { if (isBatch && mixedYear) Text("(保持原值)") },
+                    label = { Text(s.fieldYear) },
+                    placeholder = { if (isBatch && mixedYear) Text(s.fieldKeepValuePlaceholder) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.weight(1f),
@@ -436,11 +437,7 @@ fun MetadataEditorSheet(
                     enabled = anyWritableAudio,
                 )
                 Text(
-                    text = if (anyWritableAudio) {
-                        "同时安全写入原音频文件标签 (ID3v2 / Vorbis / MP4 ilst)"
-                    } else {
-                        "仅保存至本地数据库覆盖层（视频格式或只读目录免改原文件）"
-                    },
+                    text = if (anyWritableAudio) s.writeBackAudioTags else s.writeDbOnlyHint,
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -454,6 +451,7 @@ private fun CandidateItemCard(
     isSelected: Boolean,
     onClick: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
@@ -491,7 +489,7 @@ private fun CandidateItemCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${cand.artist} · ${cand.album ?: "单曲"}",
+                    text = "${cand.artist} · ${cand.album ?: s.singleTrack}",
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -510,7 +508,7 @@ private fun CandidateItemCard(
                         style = MaterialTheme.typography.labelMedium.tnum(),
                     )
                     if (!cand.syncedLrc.isNullOrBlank()) {
-                        Text("歌词✓", style = MaterialTheme.typography.labelMedium)
+                        Text(s.lyricsTagCheck, style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 if (isSelected) {
@@ -520,7 +518,7 @@ private fun CandidateItemCard(
                         modifier = Modifier.padding(top = 2.dp),
                     ) {
                         Text(
-                            text = "已填入 · 请点上方保存",
+                            text = s.candidateStagedPill,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium,
@@ -534,10 +532,7 @@ private fun CandidateItemCard(
 }
 
 /**
- * Batch Folder / `未知专辑` Online Auto-Completion Confirmation Sheet (`DESIGN.md` §6.4 Stage 3):
- * - `>= 85%` confidence auto-checked
- * - `50%–84%` manual candidate selection
- * - `< 50%` cleaned filename fallback
+ * Batch Folder / Unknown Album Online Auto-Completion Confirmation Sheet (`DESIGN.md` §6.4 Stage 3)
  */
 @Composable
 fun BatchMetadataCompletionSheet(
@@ -551,6 +546,7 @@ fun BatchMetadataCompletionSheet(
     onDismiss: () -> Unit,
 ) {
     if (previewItems == null && progress == null) return
+    val s = LocalAppStrings.current
     var writeBack by remember { mutableStateOf(defaultWriteBack) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -561,7 +557,7 @@ fun BatchMetadataCompletionSheet(
                 .padding(start = 18.dp, end = 18.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("批量自动联网补全预览", style = MaterialTheme.typography.titleLarge)
+            Text(s.batchAutoCompleteTitle, style = MaterialTheme.typography.titleLarge)
 
             if (progress != null) {
                 val (done, total) = progress
@@ -569,7 +565,7 @@ fun BatchMetadataCompletionSheet(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     LinearProgressIndicator(progress = { frac }, modifier = Modifier.fillMaxWidth())
                     Text(
-                        text = "正在并发检索 MusicBrainz / iTunes / LRCLIB：$done / $total 首…",
+                        text = s.fmt(s.batchSearchingProgressTpl, done, total),
                         style = MaterialTheme.typography.bodyMedium.tnum(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -612,14 +608,14 @@ fun BatchMetadataCompletionSheet(
                                         )
                                         if (activeCand != null) {
                                             Text(
-                                                text = "→ ${activeCand.title} · ${activeCand.artist} (${activeCand.album ?: "单曲"})",
+                                                text = "→ ${activeCand.title} · ${activeCand.artist} (${activeCand.album ?: s.singleTrack})",
                                                 style = MaterialTheme.typography.bodyLarge,
                                                 fontWeight = FontWeight.Medium,
                                                 maxLines = 2,
                                             )
                                         } else {
                                             Text(
-                                                text = "清洗标题回退：${match.cleanedTitle}",
+                                                text = s.fmt(s.cleanedTitleFallbackTpl, match.cleanedTitle),
                                                 style = MaterialTheme.typography.bodyMedium,
                                             )
                                         }
@@ -636,14 +632,14 @@ fun BatchMetadataCompletionSheet(
                                 ) {
                                     if (match.candidates.size > 1) {
                                         TextButton(onClick = { showAlternatives = !showAlternatives }) {
-                                            Text("切换候选 (${match.candidates.size})")
+                                            Text(s.fmt(s.switchCandidatesTpl, match.candidates.size))
                                         }
                                     }
                                     if (match.mediaItem.isBackingTrack) {
                                         FilterChip(
                                             selected = match.preserveBackingSuffix,
                                             onClick = { onTogglePreserveBacking(idx) },
-                                            label = { Text("保留(伴奏)后缀") },
+                                            label = { Text(s.preserveBackingChip) },
                                         )
                                     }
                                 }
@@ -681,7 +677,7 @@ fun BatchMetadataCompletionSheet(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = writeBack, onCheckedChange = { writeBack = it })
-                    Text("具备写权限时同步写入原音频文件", style = MaterialTheme.typography.bodyMedium)
+                    Text(s.writeBackIfWritable, style = MaterialTheme.typography.bodyMedium)
                 }
 
                 Button(
@@ -689,7 +685,7 @@ fun BatchMetadataCompletionSheet(
                     enabled = !isCommitting && selectedCount > 0,
                     modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 52.dp),
                 ) {
-                    Text(if (isCommitting) "正在写入…" else "确认应用 (${previewItems.size} 首)")
+                    Text(if (isCommitting) s.writingProgress else s.fmt(s.confirmApplyCountTpl, previewItems.size))
                 }
             }
         }

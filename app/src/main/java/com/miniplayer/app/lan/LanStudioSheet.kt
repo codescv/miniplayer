@@ -75,6 +75,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.miniplayer.app.core.CoreRegistry
 import com.miniplayer.app.core.MiniPlayerCoreProvider
+import com.miniplayer.app.core.i18n.AppStrings
+import com.miniplayer.app.ui.LocalAppStrings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -94,11 +96,29 @@ import java.util.Collections
 import java.util.Locale
 import kotlin.math.floor
 
+enum class LanInterfaceKind {
+    WIFI,
+    HOTSPOT,
+    USB,
+    ETHERNET,
+    LAN,
+    ;
+
+    fun localizedLabel(strings: AppStrings): String = when (this) {
+        WIFI -> strings.lanIfaceWifi
+        HOTSPOT -> strings.lanIfaceHotspot
+        USB -> strings.lanIfaceUsb
+        ETHERNET -> strings.lanIfaceEthernet
+        LAN -> strings.lanIfaceLan
+    }
+}
+
 data class LanEndpoint(
     val interfaceName: String,
     val ipv4: String,
     val categoryLabel: String,
     val priority: Int,
+    val kind: LanInterfaceKind = LanInterfaceKind.LAN,
 )
 
 class LanAddressDetector(context: Context) {
@@ -128,13 +148,14 @@ class LanAddressDetector(context: Context) {
                 if (addr !is Inet4Address || addr.isLoopbackAddress) continue
                 if (!LanStudioServer.isAllowedLanAddress(addr)) continue
                 val ip = addr.hostAddress ?: continue
-                val (prio, label) = classifyInterface(name.lowercase(Locale.ROOT), addr.isSiteLocalAddress)
+                val (prio, kind) = classifyInterface(name.lowercase(Locale.ROOT), addr.isSiteLocalAddress)
                 result.add(
                     LanEndpoint(
                         interfaceName = name,
                         ipv4 = ip,
-                        categoryLabel = label,
+                        categoryLabel = kind.localizedLabel(AppStrings.current()),
                         priority = prio,
+                        kind = kind,
                     ),
                 )
             }
@@ -180,13 +201,13 @@ class LanAddressDetector(context: Context) {
         }
     }
 
-    private fun classifyInterface(lowerName: String, isSiteLocal: Boolean): Pair<Int, String> = when {
-        lowerName.startsWith("wlan") && isSiteLocal -> 0 to "Wi-Fi"
-        lowerName.startsWith("wlan") -> 1 to "Wi-Fi"
-        lowerName.startsWith("ap") || lowerName.startsWith("swlan") || lowerName.startsWith("softap") -> 2 to "热点"
-        lowerName.startsWith("rndis") || lowerName.startsWith("usb") || lowerName.startsWith("ncm") -> 3 to "USB 网络共享"
-        lowerName.startsWith("eth") -> 4 to "以太网"
-        else -> 5 to "局域网"
+    private fun classifyInterface(lowerName: String, isSiteLocal: Boolean): Pair<Int, LanInterfaceKind> = when {
+        lowerName.startsWith("wlan") && isSiteLocal -> 0 to LanInterfaceKind.WIFI
+        lowerName.startsWith("wlan") -> 1 to LanInterfaceKind.WIFI
+        lowerName.startsWith("ap") || lowerName.startsWith("swlan") || lowerName.startsWith("softap") -> 2 to LanInterfaceKind.HOTSPOT
+        lowerName.startsWith("rndis") || lowerName.startsWith("usb") || lowerName.startsWith("ncm") -> 3 to LanInterfaceKind.USB
+        lowerName.startsWith("eth") -> 4 to LanInterfaceKind.ETHERNET
+        else -> 5 to LanInterfaceKind.LAN
     }
 
     companion object {
@@ -280,10 +301,11 @@ class LanStudioController(
         try {
             instance.start()
         } catch (t: Throwable) {
+            val s = AppStrings.current()
             _uiState.update {
                 it.copy(
                     isRunning = false,
-                    errorMessage = "启动失败（端口 $port 可能被占用）：${t.message ?: "未知错误"}",
+                    errorMessage = s.fmt(s.lanStartFailedTpl, port, t.message ?: s.lanUnknownError),
                 )
             }
             return
@@ -295,7 +317,7 @@ class LanStudioController(
                 isRunning = true,
                 boundPort = instance.boundPort,
                 errorMessage = null,
-                lastActivity = "服务已就绪，请在电脑浏览器访问上述地址",
+                lastActivity = AppStrings.current().lanActivityReady,
             )
         }
 
@@ -319,11 +341,12 @@ class LanStudioController(
                         }
 
                         is LanServerEvent.FileUploaded -> {
+                            val s = AppStrings.current()
                             _uiState.update {
                                 it.copy(
                                     uploadedFilesCount = instance.totalUploadedFiles,
                                     uploadedBytes = instance.totalUploadedBytes,
-                                    lastActivity = "已接收上传: ${ev.relPath}",
+                                    lastActivity = s.fmt(s.lanActivityUploadedTpl, ev.relPath),
                                 )
                             }
                         }
@@ -349,7 +372,7 @@ class LanStudioController(
             it.copy(
                 isRunning = false,
                 activeClients = 0,
-                lastActivity = "局域网服务已停止",
+                lastActivity = AppStrings.current().lanActivityStopped,
             )
         }
     }
@@ -370,10 +393,11 @@ class LanStudioController(
             null
         }
         server?.sessionPin = newPin
+        val s = AppStrings.current()
         _uiState.update {
             it.copy(
                 sessionPin = newPin,
-                lastActivity = if (newPin != null) "已启用访问 PIN 码保护" else "已关闭访问 PIN 码保护",
+                lastActivity = if (newPin != null) s.lanActivityPinEnabled else s.lanActivityPinDisabled,
             )
         }
     }
@@ -456,6 +480,7 @@ fun LanStudioSheetContent(
     onRefreshAddresses: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     val context = LocalContext.current
     val urls = state.urls
     var selectedUrlIdx by remember(urls) { mutableIntStateOf(0) }
@@ -501,7 +526,7 @@ fun LanStudioSheetContent(
                 }
                 Column {
                     Text(
-                        text = "PC 局域网 Web 管理台",
+                        text = s.settingsLanStudioTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                     )
@@ -519,9 +544,9 @@ fun LanStudioSheetContent(
                         )
                         Text(
                             text = if (state.isRunning) {
-                                "运行中 · $activeBaseUrl"
+                                s.fmt(s.lanRunningSubtitleTpl, activeBaseUrl)
                             } else {
-                                "未启动 · 电脑浏览器免安装管理曲库与打点"
+                                s.lanStoppedSubtitle
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -532,11 +557,11 @@ fun LanStudioSheetContent(
 
             IconButton(
                 onClick = onRefreshAddresses,
-                modifier = Modifier.semantics { contentDescription = "刷新局域网 IP 地址" },
+                modifier = Modifier.semantics { contentDescription = s.lanRefreshIpDesc },
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Refresh,
-                    contentDescription = "刷新局域网 IP 地址",
+                    contentDescription = s.lanRefreshIpDesc,
                 )
             }
         }
@@ -565,13 +590,13 @@ fun LanStudioSheetContent(
                                 FilterChip(
                                     selected = selectedUrlIdx == idx,
                                     onClick = { selectedUrlIdx = idx },
-                                    label = { Text("${ep.categoryLabel}: ${ep.ipv4}") },
+                                    label = { Text("${ep.kind.localizedLabel(s)}: ${ep.ipv4}") },
                                 )
                             }
                         }
                     } else if (state.endpoints.isEmpty()) {
                         Text(
-                            text = "当前未检测到 Wi-Fi 或热点连接，请将手机与电脑接入同一局域网后点击右上角刷新",
+                            text = s.lanNoNetworkHint,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             textAlign = TextAlign.Center,
@@ -592,7 +617,7 @@ fun LanStudioSheetContent(
                                 .fillMaxWidth(0.56f)
                                 .aspectRatio(1f)
                                 .semantics {
-                                    contentDescription = "局域网管理台二维码 $activeBaseUrl"
+                                    contentDescription = s.fmt(s.lanQrDescTpl, activeBaseUrl)
                                 },
                         ) {
                             Canvas(
@@ -636,7 +661,7 @@ fun LanStudioSheetContent(
 
                     if (!state.sessionPin.isNullOrBlank()) {
                         Text(
-                            text = "访问 PIN 码: ${state.sessionPin}",
+                            text = s.fmt(s.lanPinLabelTpl, state.sessionPin),
                             style = MaterialTheme.typography.labelLarge,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.primary,
@@ -656,7 +681,7 @@ fun LanStudioSheetContent(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text(if (copiedFeedback) "已复制地址 ✓" else "复制地址")
+                        Text(if (copiedFeedback) s.lanCopiedAddress else s.lanCopyAddress)
                     }
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
@@ -666,11 +691,11 @@ fun LanStudioSheetContent(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        StatMetricColumn(label = "活跃连接", value = state.activeClients.toString())
-                        StatMetricColumn(label = "累计请求", value = state.totalRequests.toString())
+                        StatMetricColumn(label = s.lanStatClients, value = state.activeClients.toString())
+                        StatMetricColumn(label = s.lanStatRequests, value = state.totalRequests.toString())
                         StatMetricColumn(
-                            label = "无线接收",
-                            value = "${state.uploadedFilesCount} 个 (${formatLanBytes(state.uploadedBytes)})",
+                            label = s.lanStatUploads,
+                            value = s.fmt(s.lanUploadedValueTpl, state.uploadedFilesCount, formatLanBytes(state.uploadedBytes)),
                         )
                     }
                 }
@@ -688,15 +713,12 @@ fun LanStudioSheetContent(
                     modifier = Modifier.padding(14.dp),
                 ) {
                     Text(
-                        text = "电脑浏览器打开即可使用四大工作台：",
+                        text = s.lanFeaturesHeader,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "• 无线拖拽传歌/教学视频与练习文件夹标记\n" +
-                            "• 曲库大表格行内改标签与免 Key 批量联网补全\n" +
-                            "• 播放列表与练习列表拖拽编排及 .m3u8 导入导出\n" +
-                            "• PC 在线预听与键盘 [ / ] 键极速 A-B 段落书签打点",
+                        text = s.lanFeaturesBullets,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -725,12 +747,12 @@ fun LanStudioSheetContent(
                 )
                 Column {
                     Text(
-                        text = "访问 PIN 码验证（公共 Wi-Fi 推荐开启）",
+                        text = s.lanPinToggleTitle,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                     )
                     Text(
-                        text = "防火墙默认仅允许局域网私有 IP 访问，绝不暴露公网",
+                        text = s.lanPinToggleSubtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -771,7 +793,7 @@ fun LanStudioSheetContent(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = if (state.isRunning) "停止服务" else "启动服务 (端口 ${LanStudioServer.DEFAULT_PORT})",
+                text = if (state.isRunning) s.lanStopServerBtn else s.fmt(s.lanStartServerBtnTpl, LanStudioServer.DEFAULT_PORT),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
             )
